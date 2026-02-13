@@ -210,6 +210,96 @@ kubectl get cm -n alloy alloy-config -o yaml | grep -c logtap  # should be 0
 
 ---
 
+### WO-05a: Network connectivity modes
+
+**Goal**: Make logtap recv reachable from inside the cluster without VPN.
+
+**Modes**:
+
+Mode 1 — In-cluster receiver (simplest):
+```
+logtap recv --in-cluster
+```
+- Deploys logtap as a temporary Pod + Service in cluster
+- Dev connects via `kubectl port-forward svc/logtap 9000:9000`
+- Logs written to PVC or emptyDir (ephemeral)
+- `logtap uninstall` removes it
+
+Mode 2 — Reverse port-forward (laptop):
+```
+logtap recv --listen :9000 --tunnel
+```
+- Starts local receiver
+- Creates a temporary in-cluster Service pointing back to dev machine via kubectl port-forward reverse
+- Alloy writes to `logtap.logtap:9000` inside cluster → tunneled to laptop
+
+Mode 3 — Direct IP (requires network access):
+```
+logtap recv --listen :9000
+logtap install --target 10.0.0.5:9000
+```
+- Only works if cluster can reach dev IP (VPN, same network)
+
+**Files**:
+- `internal/k8s/tunnel.go` — port-forward management
+- `internal/k8s/deploy.go` — temporary pod/service deployment
+- `cmd/logtap/recv.go` — `--in-cluster` and `--tunnel` flags
+
+---
+
+### WO-05b: Status command
+
+**Goal**: Show what's currently tapped.
+
+**CLI interface**:
+```
+logtap status
+```
+
+**Output**:
+```
+Agent:     alloy (grafana-agent namespace)
+Config:    patched (logtap block present)
+Target:    logtap.logtap:9000
+
+Tapped workloads:
+  deployment/api-gateway    (default)     logtap.dev/enabled=true
+  deployment/payments       (default)     logtap.dev/enabled=true
+
+Receiver: not running locally
+```
+
+**Behavior**:
+- Check if logtap block exists in agent configmap
+- List all resources with `logtap.dev/enabled` annotation
+- Check if local receiver is running (optional)
+
+**Files**:
+- `cmd/logtap/status.go`
+- `internal/k8s/status.go`
+
+---
+
+### WO-05c: Helm-managed agent detection
+
+**Goal**: Detect Helm-managed logging agents and warn appropriately.
+
+**Behavior**:
+- Check for `app.kubernetes.io/managed-by: Helm` label on configmap
+- Check for `meta.helm.sh/release-name` annotation
+- If Helm-managed:
+  - Warn: "Config is Helm-managed. Next `helm upgrade` will overwrite logtap patch."
+  - Suggest: "Add logtap config to your Helm values instead. Example below."
+  - Print example Helm values snippet for Alloy/Vector
+  - Proceed only with `--force`
+- If ArgoCD/Flux managed: refuse unless `--force`
+
+**Files**:
+- `internal/k8s/helm.go` — Helm detection
+- Update `internal/k8s/gitops.go` — unified managed-config detection
+
+---
+
 ## Phase 3: Hardening (Week 3)
 
 ### WO-06: Backpressure and stress testing
