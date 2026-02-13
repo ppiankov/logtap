@@ -92,8 +92,19 @@ logtap v0.1.0 | :9000 | ./capture
 - Top pane: stats + top talkers (update every 1s)
 - Bottom pane: scrolling log lines as they arrive (tail -f style)
 - Drop counter shown in red if > 0
-- Keyboard: `q` or Ctrl+C to quit, `f` to toggle follow, `/` to filter
-- On exit: flush buffers, close files, offer export (see WO-02a)
+- On exit: flush buffers, close files
+
+**Keyboard (vim-style)**:
+| Key | Action |
+|-----|--------|
+| `j` / `k` | Scroll down / up one line |
+| `d` / `u` | Half-page down / up |
+| `G` | Jump to bottom (latest) |
+| `gg` | Jump to top (oldest in buffer) |
+| `f` | Toggle follow mode (auto-scroll to new lines) |
+| `/` | Enter search mode (regex) |
+| `n` / `N` | Next / previous search match |
+| `q` / Ctrl+C | Quit |
 
 **Dependencies**: `github.com/charmbracelet/bubbletea` + `lipgloss`
 
@@ -106,47 +117,81 @@ logtap v0.1.0 | :9000 | ./capture
 
 ---
 
-### WO-02a: Export and replay
+### WO-02a: Capture directory and replay
 
-**Goal**: On exit, export capture to tar.gz. Second user opens archive with same TUI.
+**Goal**: Capture directory IS the portable artifact. Second user opens it with same TUI.
 
-**Export (on recv exit)**:
+The receiver already writes zstd-compressed rotated JSONL files. Double-compressing
+into tar.gz is wasteful and breaks at 20-100GB. Instead, the capture directory itself
+is the shareable artifact — just `tar` (no compression), `rsync`, or `scp` to transfer.
+
+**Capture directory layout**:
+```
+./capture/
+  metadata.json                          # written on recv start, updated on exit
+  2024-01-15T103201-000.jsonl.zst       # rotated + compressed by WO-01
+  2024-01-15T103201-001.jsonl.zst
+  2024-01-15T103512-000.jsonl.zst
+```
+
+`metadata.json`:
+```json
+{
+  "version": 1,
+  "started": "2024-01-15T10:32:01Z",
+  "stopped": "2024-01-15T12:45:33Z",
+  "total_lines": 14832901,
+  "total_bytes": 8432901234,
+  "labels_seen": ["api-service", "worker-service", "gateway"]
+}
+```
+
+**On recv exit**:
 ```
 Flushing buffers... done
-Export capture to ./capture-2024-01-15T103201.tar.gz? [Y/n]
+Capture: ./capture (8.4 GB, 14.8M lines)
+Transfer: tar cf - ./capture | ssh user@host 'tar xf -'
+         or: rsync -av ./capture user@host:~/
 ```
-
-Creates tar.gz containing:
-- All JSONL files (uncompressed inside archive for streaming replay)
-- `metadata.json`: start time, end time, total lines, total bytes, labels seen
 
 **Replay**:
 ```
-logtap open ./capture-2024-01-15T103201.tar.gz
+logtap open ./capture
+logtap open ./capture --speed 10x
+logtap open ./capture --speed 0         # instant load, no time simulation
 ```
 
 **Behavior**:
-- Extracts to temp dir, reads JSONL files in timestamp order
-- Renders same TUI as live mode (stats pane + log pane)
+- Reads JSONL files from directory in timestamp order (decompresses zstd on the fly)
+- Renders same TUI as live mode (stats pane + log pane, vim keys)
 - Replays at original speed by default
-- `--speed 10x` to fast-forward, `--speed 0` for instant load
-- Keyboard: arrow keys to scrub, `space` to pause/resume
+- `--speed 10x` to fast-forward, `--speed 0` for instant load (all lines at once)
+- Same vim-style navigation as live mode plus:
+
+| Key | Action |
+|-----|--------|
+| `space` | Pause / resume replay |
+| `]` / `[` | Speed up / slow down (2x steps) |
+
 - Read-only -- no receiver, no disk writes
 
 **Files**:
-- `internal/archive/export.go` -- tar.gz creation with metadata
-- `internal/archive/replay.go` -- timestamp-ordered JSONL reader
+- `internal/archive/metadata.go` -- metadata.json read/write
+- `internal/archive/replay.go` -- timestamp-ordered JSONL reader with zstd decompression
 - `cmd/logtap/open.go` -- open subcommand
 
 **Verification**:
 ```bash
 # Capture some data
 logtap recv --dir /tmp/capture --max-disk 100MB
-# (send data, then Ctrl+C, answer Y to export)
+# (send data, then Ctrl+C)
 
-# Replay on another machine
-logtap open ./capture-2024-01-15T103201.tar.gz
-logtap open --speed 10x ./capture-2024-01-15T103201.tar.gz
+# Replay locally
+logtap open /tmp/capture
+
+# Transfer and replay on another machine
+tar cf - /tmp/capture | ssh colleague@host 'tar xf -'
+# colleague runs: logtap open ./capture
 ```
 
 ---
