@@ -26,5 +26,6 @@ func execute() error {
 	root.AddCommand(newOpenCmd())
 	root.AddCommand(newInspectCmd())
 	root.AddCommand(newSliceCmd())
+	root.AddCommand(newExportCmd())
 	return root.Execute()
 }
