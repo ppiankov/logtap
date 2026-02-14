@@ -11,6 +11,7 @@ import (
 	"syscall"
 	"time"
 
+	tea "github.com/charmbracelet/bubbletea"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/spf13/cobra"
 
@@ -28,6 +29,7 @@ func newRecvCmd() *cobra.Command {
 		redactFlag     string
 		redactPatterns string
 		bufSize        int
+		headless       bool
 	)
 
 	cmd := &cobra.Command{
@@ -35,7 +37,7 @@ func newRecvCmd() *cobra.Command {
 		Short: "Start the log receiver",
 		Long:  "Accept Loki push API payloads, optionally redact PII, write compressed JSONL to disk.",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runRecv(listen, dir, maxFileStr, maxDiskStr, compress, redactFlag, redactPatterns, bufSize)
+			return runRecv(listen, dir, maxFileStr, maxDiskStr, compress, redactFlag, redactPatterns, bufSize, headless)
 		},
 	}
 
@@ -47,12 +49,13 @@ func newRecvCmd() *cobra.Command {
 	cmd.Flags().StringVar(&redactFlag, "redact", "", "enable PII redaction (true or comma-separated pattern names)")
 	cmd.Flags().StringVar(&redactPatterns, "redact-patterns", "", "path to custom redaction patterns YAML file")
 	cmd.Flags().IntVar(&bufSize, "buffer", 65536, "internal channel buffer size")
+	cmd.Flags().BoolVar(&headless, "headless", false, "disable TUI, log to stderr")
 	_ = cmd.MarkFlagRequired("dir")
 
 	return cmd
 }
 
-func runRecv(listen, dir, maxFileStr, maxDiskStr string, compress bool, redactFlag, redactPatterns string, bufSize int) error {
+func runRecv(listen, dir, maxFileStr, maxDiskStr string, compress bool, redactFlag, redactPatterns string, bufSize int, headless bool) error {
 	maxFile, err := parseByteSize(maxFileStr)
 	if err != nil {
 		return fmt.Errorf("invalid --max-file: %w", err)
@@ -110,15 +113,54 @@ func runRecv(listen, dir, maxFileStr, maxDiskStr string, compress bool, redactFl
 	// writer
 	writer := recv.NewWriter(bufSize, rot, rot.TrackLine)
 
+	// stats and ring (needed by both TUI and server hooks)
+	stats := recv.NewStats()
+	ring := recv.NewLogRing(0)
+
 	// write initial metadata
 	if err := recv.WriteMetadata(dir, meta); err != nil {
 		return fmt.Errorf("write metadata: %w", err)
 	}
 
 	// server
-	srv := recv.NewServer(listen, writer, redactor, metrics, nil, nil)
+	srv := recv.NewServer(listen, writer, redactor, metrics, stats, ring)
 
-	// signal handling
+	// shutdown performs graceful teardown of all components
+	shutdown := func() {
+		shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer shutdownCancel()
+		_ = srv.Shutdown(shutdownCtx)
+
+		writer.Close()
+		if err := rot.Close(); err != nil {
+			fmt.Fprintf(os.Stderr, "rotator close: %v\n", err)
+		}
+
+		meta.Stopped = time.Now()
+		meta.TotalLines = writer.LinesWritten()
+		meta.TotalBytes = writer.BytesWritten()
+		if err := recv.WriteMetadata(dir, meta); err != nil {
+			fmt.Fprintf(os.Stderr, "update metadata: %v\n", err)
+		}
+
+		metrics.DiskUsage.Set(float64(rot.DiskUsage()))
+	}
+
+	// start HTTP server in background
+	errCh := make(chan error, 1)
+	go func() {
+		if err := srv.ListenAndServe(); err != nil {
+			errCh <- err
+		}
+	}()
+
+	if headless {
+		return runHeadless(listen, dir, writer, errCh, shutdown)
+	}
+	return runTUI(stats, ring, rot, maxDisk, writer, listen, dir, errCh, shutdown)
+}
+
+func runHeadless(listen, dir string, writer *recv.Writer, errCh <-chan error, shutdown func()) error {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
@@ -135,45 +177,38 @@ func runRecv(listen, dir, maxFileStr, maxDiskStr string, compress bool, redactFl
 
 	fmt.Fprintf(os.Stderr, "logtap recv listening on %s, writing to %s\n", listen, dir)
 
-	errCh := make(chan error, 1)
-	go func() {
-		if err := srv.ListenAndServe(); err != nil {
-			errCh <- err
-		}
-	}()
-
 	select {
 	case <-ctx.Done():
 	case err := <-errCh:
-		// http.ErrServerClosed is expected during shutdown
 		if err.Error() != "http: Server closed" {
 			return err
 		}
 	}
 
-	// graceful shutdown
 	fmt.Fprintln(os.Stderr, "shutting down...")
-	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer shutdownCancel()
-	_ = srv.Shutdown(shutdownCtx)
-
-	writer.Close()
-	if err := rot.Close(); err != nil {
-		fmt.Fprintf(os.Stderr, "rotator close: %v\n", err)
-	}
-
-	// update metadata with final counts
-	meta.Stopped = time.Now()
-	meta.TotalLines = writer.LinesWritten()
-	meta.TotalBytes = writer.BytesWritten()
-	if err := recv.WriteMetadata(dir, meta); err != nil {
-		fmt.Fprintf(os.Stderr, "update metadata: %v\n", err)
-	}
-
-	// update disk usage metric
-	metrics.DiskUsage.Set(float64(rot.DiskUsage()))
-
+	shutdown()
 	fmt.Fprintf(os.Stderr, "done: %d lines, %d bytes written\n", writer.LinesWritten(), writer.BytesWritten())
+	return nil
+}
+
+func runTUI(stats *recv.Stats, ring *recv.LogRing, disk recv.DiskReporter, diskCap int64, writer *recv.Writer, listen, dir string, errCh <-chan error, shutdown func()) error {
+	model := recv.NewTUIModel(stats, ring, disk, diskCap, writer, listen, dir)
+	p := tea.NewProgram(model, tea.WithAltScreen())
+
+	// forward server errors to TUI quit
+	go func() {
+		if err := <-errCh; err != nil {
+			if err.Error() != "http: Server closed" {
+				p.Quit()
+			}
+		}
+	}()
+
+	if _, err := p.Run(); err != nil {
+		return fmt.Errorf("TUI: %w", err)
+	}
+
+	shutdown()
 	return nil
 }
 
