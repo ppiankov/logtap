@@ -241,8 +241,8 @@ func (s *Summary) WriteText(w io.Writer) {
 		}
 	}
 
-	tw.printf("Size:    %s (%d files)\n", formatBytes(s.DiskSize), s.Files)
-	tw.printf("Lines:   %s\n", formatCount(s.TotalLines))
+	tw.printf("Size:    %s (%d files)\n", FormatBytes(s.DiskSize), s.Files)
+	tw.printf("Lines:   %s\n", FormatCount(s.TotalLines))
 
 	// labels
 	if len(s.Labels) > 0 {
@@ -264,7 +264,7 @@ func (s *Summary) WriteText(w io.Writer) {
 					pct = float64(v.Lines) / float64(s.TotalLines) * 100
 				}
 				tw.printf("    %-20s %s lines   %s   (%.1f%%)\n",
-					v.Value, formatCount(v.Lines), formatBytes(v.Bytes), pct)
+					v.Value, FormatCount(v.Lines), FormatBytes(v.Bytes), pct)
 			}
 			tw.println()
 		}
@@ -335,8 +335,8 @@ func writeSparkline(tw *textWriter, buckets []Bucket) {
 	}
 }
 
-// formatBytes formats byte counts in human-readable form.
-func formatBytes(b int64) string {
+// FormatBytes formats byte counts in human-readable form.
+func FormatBytes(b int64) string {
 	switch {
 	case b >= 1<<30:
 		return fmt.Sprintf("%.1f GB", float64(b)/float64(1<<30))
@@ -349,8 +349,8 @@ func formatBytes(b int64) string {
 	}
 }
 
-// formatCount formats large numbers with comma separators.
-func formatCount(n int64) string {
+// FormatCount formats large numbers with comma separators.
+func FormatCount(n int64) string {
 	s := fmt.Sprintf("%d", n)
 	if len(s) <= 3 {
 		return s
