@@ -1,7 +1,6 @@
 package archive
 
 import (
-	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -301,7 +300,9 @@ func TestFeederErrorOnBadDir(t *testing.T) {
 	writeMetadata(t, dir, base, base, 0)
 	// write an unreadable data file
 	badFile := filepath.Join(dir, "2024-01-15T100000-000.jsonl.zst")
-	os.WriteFile(badFile, []byte("not valid zstd"), 0o644)
+	if err := os.WriteFile(badFile, []byte("not valid zstd"), 0o644); err != nil {
+		t.Fatal(err)
+	}
 	writeIndex(t, dir, []rotate.IndexEntry{{
 		File:  "2024-01-15T100000-000.jsonl.zst",
 		From:  base,
@@ -336,20 +337,3 @@ func TestFeederErrorOnBadDir(t *testing.T) {
 }
 
 // writeMetadata, writeIndex, writeDataFile are defined in reader_test.go
-
-// writeFeederMetadata writes a simple metadata.json (avoiding redeclaration)
-func writeFeederMeta(t *testing.T, dir string, started, stopped time.Time, lines int64) {
-	t.Helper()
-	meta := recv.Metadata{
-		Version:    1,
-		Format:     "jsonl",
-		Started:    started,
-		Stopped:    stopped,
-		TotalLines: lines,
-	}
-	data, err := json.MarshalIndent(meta, "", "  ")
-	if err != nil {
-		t.Fatal(err)
-	}
-	os.WriteFile(filepath.Join(dir, "metadata.json"), data, 0o644)
-}
