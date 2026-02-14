@@ -53,8 +53,13 @@ func TestBuildContainer_EnvVars(t *testing.T) {
 	c := BuildContainer(cfg)
 
 	envMap := make(map[string]string)
+	envFieldRef := make(map[string]string)
 	for _, e := range c.Env {
-		envMap[e.Name] = e.Value
+		if e.ValueFrom != nil && e.ValueFrom.FieldRef != nil {
+			envFieldRef[e.Name] = e.ValueFrom.FieldRef.FieldPath
+		} else {
+			envMap[e.Name] = e.Value
+		}
 	}
 
 	if envMap["LOGTAP_TARGET"] != "logtap.logtap:9000" {
@@ -62,6 +67,12 @@ func TestBuildContainer_EnvVars(t *testing.T) {
 	}
 	if envMap["LOGTAP_SESSION"] != "lt-a3f9" {
 		t.Errorf("LOGTAP_SESSION = %q, want %q", envMap["LOGTAP_SESSION"], "lt-a3f9")
+	}
+	if envFieldRef["LOGTAP_POD_NAME"] != "metadata.name" {
+		t.Errorf("LOGTAP_POD_NAME fieldRef = %q, want %q", envFieldRef["LOGTAP_POD_NAME"], "metadata.name")
+	}
+	if envFieldRef["LOGTAP_NAMESPACE"] != "metadata.namespace" {
+		t.Errorf("LOGTAP_NAMESPACE fieldRef = %q, want %q", envFieldRef["LOGTAP_NAMESPACE"], "metadata.namespace")
 	}
 }
 
