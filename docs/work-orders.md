@@ -387,20 +387,31 @@ logtap tap --dry-run
 ```
 
 **How it works**:
-1. Patch target deployment/statefulset/daemonset spec:
-   - Add annotation `logtap.dev/tapped: "true"`
-   - Add sidecar container `logtap-forwarder` to pod template
+1. Pre-check: HTTP GET `--target` /metrics — warn if receiver unreachable, require `--force` to proceed
+2. Generate session ID (short random, e.g. `lt-a3f9`) stored in annotations for multi-user isolation
+3. Patch target deployment/statefulset/daemonset spec:
+   - Add annotation `logtap.dev/tapped: "<session-id>"`
+   - Add annotation `logtap.dev/target: "<target-address>"`
+   - Add sidecar container `logtap-forwarder-<session-id>` to pod template
    - Sidecar shares the pod's log volumes via `emptyDir` or reads from
      `/var/log/containers` (hostPath, same as logging agents)
-2. Sidecar container:
+4. Sidecar container:
    - Minimal image: `ghcr.io/ppiankov/logtap-forwarder:latest`
    - Reads container stdout/stderr via shared volume or Kubernetes API log endpoint
    - Forwards to receiver via Loki push API (`POST /loki/api/v1/push`)
    - Labels: namespace, pod, container, app (from pod labels)
    - No buffering beyond 1MB -- drop if receiver unreachable
    - Resource limits: 32Mi memory, 50m CPU
-3. Triggers rolling restart (new pod spec = new pods)
-4. Show diff before applying (`--dry-run` is default for first run)
+5. Triggers rolling restart (new pod spec = new pods)
+6. Show diff before applying (`--dry-run` is default for first run)
+
+**Multi-user safety**:
+- Each `logtap tap` generates a unique session ID (e.g. `lt-a3f9`)
+- Annotation stores session ID: `logtap.dev/tapped: "lt-a3f9"` (not just `"true"`)
+- `logtap untap` only removes YOUR session's sidecar (matches by session ID)
+- `logtap untap --all` removes all sessions (requires confirmation)
+- `logtap status` shows all active sessions with their targets
+- Two devs can tap the same deployment — each gets their own sidecar + target
 
 **Why sidecar over config patching**:
 - Works with ANY logging agent (Alloy, Vector, Fluent Bit, none)
@@ -448,13 +459,15 @@ logtap untap --dry-run
 ```
 
 **Behavior**:
-- Find all workloads with `logtap.dev/tapped: "true"` annotation
-- Remove `logtap-forwarder` container from pod spec
-- Remove `logtap.dev/tapped` annotation
+- Default: removes only YOUR session's sidecar (matches by session ID from last `tap`)
+- `--session lt-a3f9` to remove a specific session
+- `--all` removes ALL sessions from matching workloads (requires confirmation)
+- Find workloads by `logtap.dev/tapped` annotation matching session ID
+- Remove `logtap-forwarder-<session-id>` container from pod spec
+- Remove `logtap.dev/tapped` and `logtap.dev/target` annotations
 - Remove any shared volumes added by tap
 - Triggers rolling restart
 - Show diff before applying
-- `--all` removes from every tapped workload in cluster
 
 **Files**:
 - `internal/sidecar/remove.go` -- sidecar removal patch
@@ -510,6 +523,49 @@ logtap tap --deployment api-gateway --target 10.0.0.5:9000
 - `internal/k8s/tunnel.go` -- port-forward management
 - `internal/k8s/deploy.go` -- temporary pod/service deployment
 - `cmd/logtap/recv.go` -- `--in-cluster` and `--tunnel` flags
+
+---
+
+### WO-05a: Forwarder container image
+
+**Goal**: Build and publish the `logtap-forwarder` sidecar image to GHCR.
+
+**Image**: `ghcr.io/ppiankov/logtap-forwarder:<version>`
+
+**Requirements**:
+- Scratch-based or distroless (no shell, no package manager)
+- Single static binary: `cmd/logtap-forwarder/main.go`
+- Multi-arch: linux/amd64, linux/arm64
+- Image size target: < 10MB
+- Tags: `latest`, semver (`v0.1.0`), git SHA
+
+**Dockerfile**:
+```dockerfile
+FROM golang:1.25 AS build
+WORKDIR /src
+COPY go.mod go.sum ./
+RUN go mod download
+COPY . .
+RUN CGO_ENABLED=0 go build -ldflags="-s -w" -o /logtap-forwarder ./cmd/logtap-forwarder
+
+FROM scratch
+COPY --from=build /logtap-forwarder /logtap-forwarder
+ENTRYPOINT ["/logtap-forwarder"]
+```
+
+**CI**: Update `.github/workflows/release.yml` to build and push container image on tag.
+
+**Files**:
+- `Dockerfile.forwarder` -- multi-stage build for sidecar image
+- `.github/workflows/release.yml` -- add container image build + push step
+
+**Verification**:
+```bash
+docker build -f Dockerfile.forwarder -t logtap-forwarder:test .
+docker run --rm logtap-forwarder:test --help
+docker images logtap-forwarder:test --format '{{.Size}}'
+# should be < 10MB
+```
 
 ---
 
@@ -695,6 +751,24 @@ logtap status
 | `logtap tap` | Inject sidecar into workloads |
 | `logtap untap` | Remove sidecar from workloads |
 | `logtap status` | Show tapped workloads and stats |
+
+## Session Lifecycle
+
+```
+logtap check                                    # 1. verify cluster + no leftovers
+logtap recv --tunnel                            # 2. start receiver (keep running)
+logtap tap --deployment api-gateway \
+  --target logtap.logtap:9000                   # 3. inject sidecar (session lt-a3f9)
+# ... watch TUI, investigate ...
+logtap untap --deployment api-gateway           # 4. remove YOUR sidecar
+# Ctrl+C receiver                               # 5. stop receiver, capture dir ready
+logtap inspect ./capture                        # 6. see what you got
+logtap check                                    # 7. verify cluster is clean
+```
+
+**Important**: always `untap` BEFORE stopping the receiver. If you kill the receiver
+first, the sidecars keep running and dropping logs until you clean up. `logtap check`
+will detect these as orphans.
 
 ## Deliberate Non-Goals (v1)
 
