@@ -1,0 +1,205 @@
+package k8s
+
+import (
+	"context"
+	"strings"
+	"testing"
+
+	appsv1 "k8s.io/api/apps/v1"
+	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/api/resource"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/client-go/kubernetes/fake"
+)
+
+func makeTestDeployment(name string, containers ...corev1.Container) *appsv1.Deployment {
+	return &appsv1.Deployment{
+		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: "default"},
+		Spec: appsv1.DeploymentSpec{
+			Replicas: int32Ptr(2),
+			Template: corev1.PodTemplateSpec{
+				Spec: corev1.PodSpec{
+					Containers: containers,
+				},
+			},
+		},
+	}
+}
+
+func sidecarContainer(name string) corev1.Container {
+	return corev1.Container{
+		Name:  name,
+		Image: "ghcr.io/ppiankov/logtap-forwarder:latest",
+		Env: []corev1.EnvVar{
+			{Name: "LOGTAP_TARGET", Value: "logtap:9000"},
+			{Name: "LOGTAP_SESSION", Value: "lt-a3f9"},
+		},
+		Resources: corev1.ResourceRequirements{
+			Requests: corev1.ResourceList{
+				corev1.ResourceMemory: resource.MustParse("16Mi"),
+				corev1.ResourceCPU:    resource.MustParse("25m"),
+			},
+			Limits: corev1.ResourceList{
+				corev1.ResourceMemory: resource.MustParse("32Mi"),
+				corev1.ResourceCPU:    resource.MustParse("50m"),
+			},
+		},
+	}
+}
+
+func TestApplyPatch_AddContainer(t *testing.T) {
+	app := corev1.Container{Name: "app", Image: "myapp:v1"}
+	deploy := makeTestDeployment("api-gw", app)
+	cs := fake.NewSimpleClientset(deploy) //nolint:staticcheck // NewClientset requires generated apply configs
+	c := NewClientFromInterface(cs, "default")
+
+	w, err := DiscoverByName(context.Background(), c, KindDeployment, "api-gw")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	ps := PatchSpec{
+		Container: sidecarContainer("logtap-forwarder-lt-a3f9"),
+		Annotations: map[string]string{
+			"logtap.dev/tapped": "lt-a3f9",
+			"logtap.dev/target": "logtap:9000",
+		},
+	}
+
+	diff, err := ApplyPatch(context.Background(), c, w, ps, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if diff == "" {
+		t.Error("diff is empty")
+	}
+
+	// Verify update was applied
+	updated, err := cs.AppsV1().Deployments("default").Get(context.Background(), "api-gw", metav1.GetOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(updated.Spec.Template.Spec.Containers) != 2 {
+		t.Errorf("containers = %d, want 2", len(updated.Spec.Template.Spec.Containers))
+	}
+	if updated.Spec.Template.Annotations["logtap.dev/tapped"] != "lt-a3f9" {
+		t.Error("annotation not set")
+	}
+}
+
+func TestApplyPatch_MultiSession(t *testing.T) {
+	app := corev1.Container{Name: "app", Image: "myapp:v1"}
+	first := sidecarContainer("logtap-forwarder-lt-a3f9")
+	deploy := makeTestDeployment("api-gw", app, first)
+	deploy.Spec.Template.Annotations = map[string]string{
+		"logtap.dev/tapped": "lt-a3f9",
+		"logtap.dev/target": "logtap:9000",
+	}
+
+	cs := fake.NewSimpleClientset(deploy) //nolint:staticcheck // NewClientset requires generated apply configs
+	c := NewClientFromInterface(cs, "default")
+
+	w, err := DiscoverByName(context.Background(), c, KindDeployment, "api-gw")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	ps := PatchSpec{
+		Container: sidecarContainer("logtap-forwarder-lt-b2c1"),
+		Annotations: map[string]string{
+			"logtap.dev/tapped": "lt-a3f9,lt-b2c1",
+			"logtap.dev/target": "logtap:9000",
+		},
+	}
+
+	_, err = ApplyPatch(context.Background(), c, w, ps, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	updated, err := cs.AppsV1().Deployments("default").Get(context.Background(), "api-gw", metav1.GetOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(updated.Spec.Template.Spec.Containers) != 3 {
+		t.Errorf("containers = %d, want 3", len(updated.Spec.Template.Spec.Containers))
+	}
+}
+
+func TestApplyPatch_DryRun(t *testing.T) {
+	app := corev1.Container{Name: "app", Image: "myapp:v1"}
+	deploy := makeTestDeployment("api-gw", app)
+	cs := fake.NewSimpleClientset(deploy) //nolint:staticcheck // NewClientset requires generated apply configs
+	c := NewClientFromInterface(cs, "default")
+
+	w, err := DiscoverByName(context.Background(), c, KindDeployment, "api-gw")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	ps := PatchSpec{
+		Container: sidecarContainer("logtap-forwarder-lt-a3f9"),
+		Annotations: map[string]string{
+			"logtap.dev/tapped": "lt-a3f9",
+		},
+	}
+
+	diff, err := ApplyPatch(context.Background(), c, w, ps, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if diff == "" {
+		t.Error("dry-run diff is empty")
+	}
+	if !strings.Contains(diff, "logtap-forwarder") {
+		t.Error("diff does not mention sidecar container")
+	}
+
+	// Verify no actual update happened
+	original, err := cs.AppsV1().Deployments("default").Get(context.Background(), "api-gw", metav1.GetOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(original.Spec.Template.Spec.Containers) != 1 {
+		t.Errorf("containers = %d, want 1 (dry-run should not modify)", len(original.Spec.Template.Spec.Containers))
+	}
+}
+
+func TestApplyPatch_StatefulSet(t *testing.T) {
+	sts := &appsv1.StatefulSet{
+		ObjectMeta: metav1.ObjectMeta{Name: "redis", Namespace: "default"},
+		Spec: appsv1.StatefulSetSpec{
+			Replicas: int32Ptr(3),
+			Template: corev1.PodTemplateSpec{
+				Spec: corev1.PodSpec{
+					Containers: []corev1.Container{{Name: "redis", Image: "redis:7"}},
+				},
+			},
+		},
+	}
+	cs := fake.NewSimpleClientset(sts) //nolint:staticcheck // NewClientset requires generated apply configs
+	c := NewClientFromInterface(cs, "default")
+
+	w, err := DiscoverByName(context.Background(), c, KindStatefulSet, "redis")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	ps := PatchSpec{
+		Container:   sidecarContainer("logtap-forwarder-lt-a3f9"),
+		Annotations: map[string]string{"logtap.dev/tapped": "lt-a3f9"},
+	}
+
+	_, err = ApplyPatch(context.Background(), c, w, ps, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	updated, err := cs.AppsV1().StatefulSets("default").Get(context.Background(), "redis", metav1.GetOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(updated.Spec.Template.Spec.Containers) != 2 {
+		t.Errorf("containers = %d, want 2", len(updated.Spec.Template.Spec.Containers))
+	}
+}
