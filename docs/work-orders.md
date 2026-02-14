@@ -481,6 +481,7 @@ Mode 1 -- In-cluster receiver (simplest):
 logtap recv --in-cluster
 ```
 - Deploys logtap as a temporary Pod + Service (`logtap` namespace)
+- All created resources labeled `app.kubernetes.io/managed-by: logtap` (for orphan detection)
 - Dev connects via `kubectl port-forward svc/logtap 9000:9000`
 - Logs written to emptyDir (ephemeral)
 - `logtap untap --all` + deleting the namespace cleans up
@@ -514,21 +515,24 @@ logtap tap --deployment api-gateway --target 10.0.0.5:9000
 
 ### WO-06: Check command
 
-**Goal**: `logtap check` validates cluster readiness before tapping.
+**Goal**: `logtap check` validates cluster readiness AND detects leftovers from previous sessions.
+
+Two modes: pre-tap readiness check and post-session orphan detection.
 
 **CLI interface**:
 ```
 logtap check
 ```
 
-**Output**:
+**Output (clean cluster)**:
 ```
 logtap check
 
 Cluster:       aks-dev-westeurope (v1.29.2)
 Namespace:     default
 RBAC:          ok (can patch deployments, create pods)
-Connectivity:  ok (can reach logtap.logtap:9000)
+
+Leftovers:     none
 
 Candidate workloads:
   deployment/api-gateway       3 replicas   ready
@@ -536,28 +540,65 @@ Candidate workloads:
   deployment/worker            5 replicas   ready
   statefulset/postgres         1 replica    ready
 
-Already tapped:
-  (none)
-
 Ready to tap. Run: logtap tap --deployment api-gateway --target logtap.logtap:9000
+```
+
+**Output (leftovers found)**:
+```
+logtap check
+
+Cluster:       aks-dev-westeurope (v1.29.2)
+Namespace:     default
+RBAC:          ok (can patch deployments, create pods)
+
+Leftovers:
+  ! deployment/api-gateway      has logtap-forwarder sidecar (receiver unreachable)
+  ! deployment/payments          has logtap-forwarder sidecar (receiver unreachable)
+  ! pod/logtap-receiver-7f8b9    orphaned tunnel pod in namespace logtap
+  ! service/logtap               orphaned tunnel service in namespace logtap
+
+  Run: logtap untap --all          to remove sidecars
+  Run: kubectl delete ns logtap    to remove tunnel artifacts
+
+Candidate workloads:
+  deployment/worker            5 replicas   ready
+  statefulset/postgres         1 replica    ready
 ```
 
 **Checks**:
 - Cluster reachable (kubectl context valid)
 - RBAC permissions: can get/patch deployments, can create pods (for tunnel)
-- If receiver running: connectivity test (HTTP GET to receiver /metrics)
-- List candidate workloads (deployments, statefulsets, daemonsets)
-- Show already-tapped workloads
+- **Orphaned sidecars**: workloads with `logtap.dev/tapped` annotation or `logtap-forwarder` container
+  - For each: test if the sidecar's target receiver is reachable
+  - If unreachable: flag as orphan, suggest `logtap untap --all`
+- **Orphaned tunnel resources**: pods/services in `logtap` namespace left behind by `--in-cluster` or `--tunnel`
+  - Detect by label `app.kubernetes.io/managed-by: logtap`
+  - Suggest namespace deletion
+- **Stale annotations**: resources with `logtap.dev/tapped` but no sidecar container (partial cleanup)
+- List candidate workloads (not already tapped)
 - Warn if prod-labeled namespace without `--allow-prod`
 
 **Files**:
 - `cmd/logtap/check.go` -- check subcommand
-- `internal/k8s/check.go` -- permission and connectivity checks
+- `internal/k8s/check.go` -- permission checks, workload discovery
+- `internal/k8s/orphan.go` -- orphan detection (sidecars, tunnel pods, stale annotations)
 
 **Verification**:
 ```bash
+# Clean cluster
 logtap check
-# should show cluster info, RBAC ok, list workloads
+# should show "Leftovers: none"
+
+# After tapping then killing receiver without untapping
+logtap tap --deployment api-gateway --target logtap.logtap:9000
+# (kill receiver, don't untap)
+logtap check
+# should show api-gateway as orphaned sidecar with "receiver unreachable"
+
+# After cleanup
+logtap untap --all
+logtap check
+# should show "Leftovers: none" again
 ```
 
 ---
