@@ -76,6 +76,11 @@ func (r *Reader) Metadata() *recv.Metadata {
 	return r.meta
 }
 
+// Files returns the resolved file list for parallel scanning.
+func (r *Reader) Files() []FileInfo {
+	return r.files
+}
+
 // TotalLines returns the sum of lines from all indexed files.
 func (r *Reader) TotalLines() int64 {
 	var total int64
