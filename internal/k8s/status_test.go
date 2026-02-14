@@ -125,6 +125,85 @@ func TestGetTappedStatus_Partial(t *testing.T) {
 	}
 }
 
+func TestGetTappedStatus_DaemonSet(t *testing.T) {
+	labels := map[string]string{"app": "log-agent"}
+	ds := &appsv1.DaemonSet{
+		ObjectMeta: metav1.ObjectMeta{Name: "log-agent", Namespace: "default"},
+		Spec: appsv1.DaemonSetSpec{
+			Selector: &metav1.LabelSelector{MatchLabels: labels},
+			Template: corev1.PodTemplateSpec{
+				ObjectMeta: metav1.ObjectMeta{
+					Labels: labels,
+					Annotations: map[string]string{
+						"logtap.dev/tapped": "lt-a3f9",
+						"logtap.dev/target": "logtap:9000",
+					},
+				},
+				Spec: corev1.PodSpec{
+					Containers: []corev1.Container{
+						{Name: "agent", Image: "agent:v1"},
+						{Name: "logtap-forwarder-lt-a3f9", Image: "ghcr.io/ppiankov/logtap-forwarder:latest"},
+					},
+				},
+			},
+		},
+	}
+
+	now := metav1.NewTime(time.Now())
+	pod := makePod("log-agent-abc", labels, []corev1.ContainerStatus{
+		{Name: "agent", State: corev1.ContainerState{Running: &corev1.ContainerStateRunning{StartedAt: now}}},
+		{Name: "logtap-forwarder-lt-a3f9", State: corev1.ContainerState{Running: &corev1.ContainerStateRunning{StartedAt: now}}},
+	})
+
+	cs := fake.NewSimpleClientset(ds, pod) //nolint:staticcheck // NewClientset requires generated apply configs
+	c := NewClientFromInterface(cs, "default")
+
+	statuses, err := GetTappedStatus(context.Background(), c, "logtap.dev/tapped", "logtap.dev/target", "logtap-forwarder-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(statuses) != 1 {
+		t.Fatalf("statuses = %d, want 1", len(statuses))
+	}
+	if statuses[0].Ready != 1 {
+		t.Errorf("Ready = %d, want 1", statuses[0].Ready)
+	}
+}
+
+func TestGetTappedStatus_NilSelector(t *testing.T) {
+	// workload with no selector — should skip pod listing
+	deploy := &appsv1.Deployment{
+		ObjectMeta: metav1.ObjectMeta{Name: "api-gw", Namespace: "default"},
+		Spec: appsv1.DeploymentSpec{
+			Replicas: int32Ptr(2),
+			Template: corev1.PodTemplateSpec{
+				ObjectMeta: metav1.ObjectMeta{
+					Annotations: map[string]string{
+						"logtap.dev/tapped": "lt-a3f9",
+					},
+				},
+				Spec: corev1.PodSpec{
+					Containers: []corev1.Container{{Name: "app", Image: "myapp:v1"}},
+				},
+			},
+		},
+	}
+
+	cs := fake.NewSimpleClientset(deploy) //nolint:staticcheck // NewClientset requires generated apply configs
+	c := NewClientFromInterface(cs, "default")
+
+	statuses, err := GetTappedStatus(context.Background(), c, "logtap.dev/tapped", "logtap.dev/target", "logtap-forwarder-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(statuses) != 1 {
+		t.Fatalf("statuses = %d, want 1", len(statuses))
+	}
+	if statuses[0].Total != 0 {
+		t.Errorf("Total = %d, want 0 (nil selector)", statuses[0].Total)
+	}
+}
+
 func TestGetTappedStatus_NoTapped(t *testing.T) {
 	deploy := &appsv1.Deployment{
 		ObjectMeta: metav1.ObjectMeta{Name: "api-gw", Namespace: "default"},

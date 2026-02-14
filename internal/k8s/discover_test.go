@@ -2,12 +2,16 @@ package k8s
 
 import (
 	"context"
+	"fmt"
+	"strings"
 	"testing"
 
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/kubernetes/fake"
+	k8stesting "k8s.io/client-go/testing"
 )
 
 func int32Ptr(i int32) *int32 { return &i }
@@ -82,6 +86,19 @@ func TestDiscoverNotFound(t *testing.T) {
 	}
 }
 
+func TestDiscoverByName_InvalidKind(t *testing.T) {
+	cs := fake.NewSimpleClientset() //nolint:staticcheck // NewClientset requires generated apply configs
+	c := NewClientFromInterface(cs, "default")
+
+	_, err := DiscoverByName(context.Background(), c, WorkloadKind("CronJob"), "test")
+	if err == nil {
+		t.Fatal("expected error for unsupported kind")
+	}
+	if !strings.Contains(err.Error(), "unsupported") {
+		t.Errorf("err = %q, want 'unsupported'", err.Error())
+	}
+}
+
 func TestDiscoverBySelector(t *testing.T) {
 	cs := fake.NewSimpleClientset( //nolint:staticcheck // NewClientset requires generated apply configs
 		&appsv1.Deployment{
@@ -117,6 +134,19 @@ func TestDiscoverBySelector(t *testing.T) {
 	}
 	if len(workloads) != 2 {
 		t.Errorf("found %d workloads, want 2", len(workloads))
+	}
+}
+
+func TestDiscoverBySelector_ListError(t *testing.T) {
+	cs := fake.NewSimpleClientset() //nolint:staticcheck // NewClientset requires generated apply configs
+	cs.PrependReactor("list", "deployments", func(action k8stesting.Action) (bool, runtime.Object, error) {
+		return true, nil, fmt.Errorf("injected list error")
+	})
+	c := NewClientFromInterface(cs, "default")
+
+	_, err := DiscoverBySelector(context.Background(), c, "team=platform")
+	if err == nil {
+		t.Fatal("expected error for deployment list failure")
 	}
 }
 

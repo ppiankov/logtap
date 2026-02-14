@@ -2,6 +2,7 @@ package k8s
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -9,7 +10,9 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/kubernetes/fake"
+	k8stesting "k8s.io/client-go/testing"
 )
 
 func makeTestDeployment(name string, containers ...corev1.Container) *appsv1.Deployment {
@@ -336,6 +339,167 @@ func TestRemovePatch_DryRun(t *testing.T) {
 	}
 }
 
+func TestApplyPatch_UnsupportedKind(t *testing.T) {
+	w := &Workload{Kind: WorkloadKind("CronJob"), Name: "test"}
+	cs := fake.NewSimpleClientset() //nolint:staticcheck // NewClientset requires generated apply configs
+	c := NewClientFromInterface(cs, "default")
+
+	_, err := ApplyPatch(context.Background(), c, w, PatchSpec{}, false)
+	if err == nil {
+		t.Fatal("expected error for unsupported kind")
+	}
+	if !strings.Contains(err.Error(), "unsupported") {
+		t.Errorf("err = %q, want 'unsupported'", err.Error())
+	}
+}
+
+func TestRemovePatch_UnsupportedKind(t *testing.T) {
+	w := &Workload{Kind: WorkloadKind("CronJob"), Name: "test"}
+	cs := fake.NewSimpleClientset() //nolint:staticcheck // NewClientset requires generated apply configs
+	c := NewClientFromInterface(cs, "default")
+
+	_, err := RemovePatch(context.Background(), c, w, RemovePatchSpec{}, false)
+	if err == nil {
+		t.Fatal("expected error for unsupported kind")
+	}
+	if !strings.Contains(err.Error(), "unsupported") {
+		t.Errorf("err = %q, want 'unsupported'", err.Error())
+	}
+}
+
+func TestApplyPatch_DaemonSet(t *testing.T) {
+	ds := &appsv1.DaemonSet{
+		ObjectMeta: metav1.ObjectMeta{Name: "log-agent", Namespace: "default"},
+		Spec: appsv1.DaemonSetSpec{
+			Template: corev1.PodTemplateSpec{
+				Spec: corev1.PodSpec{
+					Containers: []corev1.Container{{Name: "agent", Image: "agent:v1"}},
+				},
+			},
+		},
+	}
+	cs := fake.NewSimpleClientset(ds) //nolint:staticcheck // NewClientset requires generated apply configs
+	c := NewClientFromInterface(cs, "default")
+
+	w, err := DiscoverByName(context.Background(), c, KindDaemonSet, "log-agent")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	ps := PatchSpec{
+		Container:   sidecarContainer("logtap-forwarder-lt-a3f9"),
+		Annotations: map[string]string{"logtap.dev/tapped": "lt-a3f9"},
+	}
+
+	diff, err := ApplyPatch(context.Background(), c, w, ps, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if diff == "" {
+		t.Error("diff is empty")
+	}
+
+	updated, err := cs.AppsV1().DaemonSets("default").Get(context.Background(), "log-agent", metav1.GetOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(updated.Spec.Template.Spec.Containers) != 2 {
+		t.Errorf("containers = %d, want 2", len(updated.Spec.Template.Spec.Containers))
+	}
+	if updated.Spec.Template.Annotations["logtap.dev/tapped"] != "lt-a3f9" {
+		t.Error("annotation not set")
+	}
+}
+
+func TestRemovePatch_DaemonSet(t *testing.T) {
+	ds := &appsv1.DaemonSet{
+		ObjectMeta: metav1.ObjectMeta{Name: "log-agent", Namespace: "default"},
+		Spec: appsv1.DaemonSetSpec{
+			Template: corev1.PodTemplateSpec{
+				ObjectMeta: metav1.ObjectMeta{
+					Annotations: map[string]string{
+						"logtap.dev/tapped": "lt-a3f9",
+						"logtap.dev/target": "logtap:9000",
+					},
+				},
+				Spec: corev1.PodSpec{
+					Containers: []corev1.Container{
+						{Name: "agent", Image: "agent:v1"},
+						sidecarContainer("logtap-forwarder-lt-a3f9"),
+					},
+				},
+			},
+		},
+	}
+	cs := fake.NewSimpleClientset(ds) //nolint:staticcheck // NewClientset requires generated apply configs
+	c := NewClientFromInterface(cs, "default")
+
+	w, err := DiscoverByName(context.Background(), c, KindDaemonSet, "log-agent")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	rs := RemovePatchSpec{
+		ContainerNames:    []string{"logtap-forwarder-lt-a3f9"},
+		DeleteAnnotations: []string{"logtap.dev/tapped", "logtap.dev/target"},
+	}
+
+	diff, err := RemovePatch(context.Background(), c, w, rs, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if diff == "" {
+		t.Error("diff is empty")
+	}
+
+	updated, err := cs.AppsV1().DaemonSets("default").Get(context.Background(), "log-agent", metav1.GetOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(updated.Spec.Template.Spec.Containers) != 1 {
+		t.Errorf("containers = %d, want 1", len(updated.Spec.Template.Spec.Containers))
+	}
+	if updated.Spec.Template.Spec.Containers[0].Name != "agent" {
+		t.Errorf("remaining = %q, want %q", updated.Spec.Template.Spec.Containers[0].Name, "agent")
+	}
+}
+
+func TestApplyPatch_DaemonSet_UpdateError(t *testing.T) {
+	ds := &appsv1.DaemonSet{
+		ObjectMeta: metav1.ObjectMeta{Name: "log-agent", Namespace: "default"},
+		Spec: appsv1.DaemonSetSpec{
+			Template: corev1.PodTemplateSpec{
+				Spec: corev1.PodSpec{
+					Containers: []corev1.Container{{Name: "agent", Image: "agent:v1"}},
+				},
+			},
+		},
+	}
+	cs := fake.NewSimpleClientset(ds) //nolint:staticcheck // NewClientset requires generated apply configs
+	cs.PrependReactor("update", "daemonsets", func(action k8stesting.Action) (bool, runtime.Object, error) {
+		return true, nil, fmt.Errorf("injected update error")
+	})
+	c := NewClientFromInterface(cs, "default")
+
+	w, err := DiscoverByName(context.Background(), c, KindDaemonSet, "log-agent")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	ps := PatchSpec{
+		Container:   sidecarContainer("logtap-forwarder-lt-a3f9"),
+		Annotations: map[string]string{"logtap.dev/tapped": "lt-a3f9"},
+	}
+
+	_, err = ApplyPatch(context.Background(), c, w, ps, false)
+	if err == nil {
+		t.Fatal("expected error for update failure")
+	}
+	if !strings.Contains(err.Error(), "update daemonset") {
+		t.Errorf("err = %q, want 'update daemonset'", err.Error())
+	}
+}
+
 func TestRemovePatch_MultiSession_KeepOne(t *testing.T) {
 	app := corev1.Container{Name: "app", Image: "myapp:v1"}
 	sc1 := sidecarContainer("logtap-forwarder-lt-a3f9")
@@ -377,5 +541,89 @@ func TestRemovePatch_MultiSession_KeepOne(t *testing.T) {
 	}
 	if updated.Spec.Template.Annotations["logtap.dev/target"] != "logtap:9000" {
 		t.Error("target annotation should be preserved")
+	}
+}
+
+func TestRemovePatch_DaemonSet_UpdateError(t *testing.T) {
+	ds := &appsv1.DaemonSet{
+		ObjectMeta: metav1.ObjectMeta{Name: "log-agent", Namespace: "default"},
+		Spec: appsv1.DaemonSetSpec{
+			Template: corev1.PodTemplateSpec{
+				ObjectMeta: metav1.ObjectMeta{
+					Annotations: map[string]string{"logtap.dev/tapped": "lt-a3f9"},
+				},
+				Spec: corev1.PodSpec{
+					Containers: []corev1.Container{
+						{Name: "agent", Image: "agent:v1"},
+						{Name: "logtap-forwarder-lt-a3f9", Image: "ghcr.io/ppiankov/logtap:latest"},
+					},
+				},
+			},
+		},
+	}
+	cs := fake.NewSimpleClientset(ds) //nolint:staticcheck // NewClientset requires generated apply configs
+	cs.PrependReactor("update", "daemonsets", func(action k8stesting.Action) (bool, runtime.Object, error) {
+		return true, nil, fmt.Errorf("injected update error")
+	})
+	c := NewClientFromInterface(cs, "default")
+
+	w, err := DiscoverByName(context.Background(), c, KindDaemonSet, "log-agent")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	rs := RemovePatchSpec{
+		ContainerNames:    []string{"logtap-forwarder-lt-a3f9"},
+		DeleteAnnotations: []string{"logtap.dev/tapped"},
+	}
+
+	_, err = RemovePatch(context.Background(), c, w, rs, false)
+	if err == nil {
+		t.Fatal("expected error for update failure")
+	}
+	if !strings.Contains(err.Error(), "update daemonset") {
+		t.Errorf("err = %q, want 'update daemonset'", err.Error())
+	}
+}
+
+func TestRemovePatch_StatefulSet_UpdateError(t *testing.T) {
+	ss := &appsv1.StatefulSet{
+		ObjectMeta: metav1.ObjectMeta{Name: "db", Namespace: "default"},
+		Spec: appsv1.StatefulSetSpec{
+			Template: corev1.PodTemplateSpec{
+				ObjectMeta: metav1.ObjectMeta{
+					Annotations: map[string]string{"logtap.dev/tapped": "lt-a3f9"},
+				},
+				Spec: corev1.PodSpec{
+					Containers: []corev1.Container{
+						{Name: "postgres", Image: "postgres:15"},
+						{Name: "logtap-forwarder-lt-a3f9", Image: "ghcr.io/ppiankov/logtap:latest"},
+					},
+				},
+			},
+		},
+	}
+	cs := fake.NewSimpleClientset(ss) //nolint:staticcheck // NewClientset requires generated apply configs
+	cs.PrependReactor("update", "statefulsets", func(action k8stesting.Action) (bool, runtime.Object, error) {
+		return true, nil, fmt.Errorf("injected update error")
+	})
+	c := NewClientFromInterface(cs, "default")
+
+	w, err := DiscoverByName(context.Background(), c, KindStatefulSet, "db")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	rs := RemovePatchSpec{
+		ContainerNames:    []string{"logtap-forwarder-lt-a3f9"},
+		DeleteAnnotations: []string{"logtap.dev/tapped"},
+	}
+
+	_, err = RemovePatch(context.Background(), c, w, rs, false)
+	if err == nil {
+		t.Fatal("expected error for update failure")
+	}
+	if !strings.Contains(err.Error(), "update statefulset") {
+		t.Errorf("err = %q, want 'update statefulset'", err.Error())
 	}
 }
