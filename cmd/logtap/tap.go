@@ -23,6 +23,7 @@ func newTapCmd() *cobra.Command {
 		target        string
 		dryRun        bool
 		force         bool
+		allowProd     bool
 		image         string
 		sidecarMemory string
 		sidecarCPU    string
@@ -42,6 +43,7 @@ func newTapCmd() *cobra.Command {
 				target:        target,
 				dryRun:        dryRun,
 				force:         force,
+				allowProd:     allowProd,
 				image:         image,
 				sidecarMemory: sidecarMemory,
 				sidecarCPU:    sidecarCPU,
@@ -57,6 +59,7 @@ func newTapCmd() *cobra.Command {
 	cmd.Flags().StringVar(&target, "target", "", "receiver address (required)")
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "show diff without applying")
 	cmd.Flags().BoolVar(&force, "force", false, "proceed despite warnings")
+	cmd.Flags().BoolVar(&allowProd, "allow-prod", false, "allow tapping production namespaces")
 	cmd.Flags().StringVar(&image, "image", sidecar.DefaultImage, "forwarder sidecar image")
 	cmd.Flags().StringVar(&sidecarMemory, "sidecar-memory", sidecar.DefaultMemReq, "sidecar memory request (limit = 2x)")
 	cmd.Flags().StringVar(&sidecarCPU, "sidecar-cpu", sidecar.DefaultCPUReq, "sidecar CPU request (limit = 2x)")
@@ -74,6 +77,7 @@ type tapOpts struct {
 	target        string
 	dryRun        bool
 	force         bool
+	allowProd     bool
 	image         string
 	sidecarMemory string
 	sidecarCPU    string
@@ -107,6 +111,18 @@ func runTap(opts tapOpts) error {
 	c, err := k8s.NewClient(opts.namespace)
 	if err != nil {
 		return fmt.Errorf("connect to cluster: %w", err)
+	}
+
+	// Prod namespace protection
+	isProd, err := k8s.IsProdNamespace(ctx, c)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Warning: could not check namespace labels: %v\n", err)
+	}
+	if isProd && !opts.allowProd {
+		return fmt.Errorf("namespace %q appears to be production (use --allow-prod to override)", c.NS)
+	}
+	if isProd && opts.allowProd {
+		fmt.Fprintf(os.Stderr, "WARNING: tapping production namespace %q\n", c.NS)
 	}
 
 	// Pre-check receiver reachability

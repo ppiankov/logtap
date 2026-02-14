@@ -170,6 +170,40 @@ func TestGetQuotaSummary_NoQuotas(t *testing.T) {
 	}
 }
 
+func TestIsProdNamespace(t *testing.T) {
+	tests := []struct {
+		name   string
+		labels map[string]string
+		want   bool
+	}{
+		{"env=prod", map[string]string{"env": "prod"}, true},
+		{"env=production", map[string]string{"env": "production"}, true},
+		{"environment=prod", map[string]string{"environment": "prod"}, true},
+		{"logtap.dev/prod=true", map[string]string{"logtap.dev/prod": "true"}, true},
+		{"env=staging", map[string]string{"env": "staging"}, false},
+		{"no labels", map[string]string{}, false},
+		{"unrelated", map[string]string{"team": "platform"}, false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ns := &corev1.Namespace{
+				ObjectMeta: metav1.ObjectMeta{Name: "test-ns", Labels: tt.labels},
+			}
+			cs := fake.NewSimpleClientset(ns) //nolint:staticcheck // NewClientset requires generated apply configs
+			c := NewClientFromInterface(cs, "test-ns")
+
+			got, err := IsProdNamespace(context.Background(), c)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got != tt.want {
+				t.Errorf("IsProdNamespace() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
 func TestCheckResources_MemoryPressure(t *testing.T) {
 	node := &corev1.Node{
 		ObjectMeta: metav1.ObjectMeta{Name: "node-1"},
