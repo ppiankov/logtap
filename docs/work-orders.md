@@ -26,7 +26,9 @@ logtap recv --listen :9000 --dir ./capture --max-disk 50GB
 - Parse Loki push payload -> extract log lines with labels
 - Write to JSONL: `{"ts":"...","labels":{...},"msg":"..."}`
 - Rotate files at `--max-file` size
-- Delete oldest files when `--max-disk` exceeded
+- On rotation: append entry to `index.jsonl` (file, time range, line count, labels seen)
+- Write `metadata.json` on start, update on exit
+- Delete oldest files when `--max-disk` exceeded (also prune index entries)
 - Never block sender -- return 200 immediately, drop if buffer full
 - Expose `/metrics` for own health (prometheus format)
 
@@ -129,6 +131,7 @@ is the shareable artifact — just `tar` (no compression), `rsync`, or `scp` to 
 ```
 ./capture/
   metadata.json                          # written on recv start, updated on exit
+  index.jsonl                            # label-to-file index, appended per rotation
   2024-01-15T103201-000.jsonl.zst       # rotated + compressed by WO-01
   2024-01-15T103201-001.jsonl.zst
   2024-01-15T103512-000.jsonl.zst
@@ -138,6 +141,7 @@ is the shareable artifact — just `tar` (no compression), `rsync`, or `scp` to 
 ```json
 {
   "version": 1,
+  "format": "jsonl+zstd",
   "started": "2024-01-15T10:32:01Z",
   "stopped": "2024-01-15T12:45:33Z",
   "total_lines": 14832901,
@@ -145,6 +149,15 @@ is the shareable artifact — just `tar` (no compression), `rsync`, or `scp` to 
   "labels_seen": ["api-service", "worker-service", "gateway"]
 }
 ```
+
+`index.jsonl` — one line per rotated file, written at rotation time:
+```json
+{"file":"2024-01-15T103201-000.jsonl.zst","from":"2024-01-15T10:32:01Z","to":"2024-01-15T10:35:12Z","lines":482901,"bytes":234567890,"labels":["api-service","worker-service"]}
+{"file":"2024-01-15T103512-000.jsonl.zst","from":"2024-01-15T10:35:12Z","to":"2024-01-15T10:41:33Z","lines":391002,"bytes":198234567,"labels":["api-service","gateway"]}
+```
+
+The index enables fast time-range and label filtering without scanning every file.
+At 100GB with 1GB rotation = 100 index lines. Negligible overhead.
 
 **On recv exit**:
 ```
@@ -158,8 +171,22 @@ Transfer: tar cf - ./capture | ssh user@host 'tar xf -'
 ```
 logtap open ./capture
 logtap open ./capture --speed 10x
-logtap open ./capture --speed 0         # instant load, no time simulation
+logtap open ./capture --speed 0                           # instant load
+logtap open ./capture --from 10:32 --to 10:45             # time window
+logtap open ./capture --label app=api-service             # label filter
+logtap open ./capture --from 10:32 --label app=gateway    # combined
 ```
+
+**Filter flags**:
+| Flag | Description |
+|------|-------------|
+| `--from` | Start time (absolute or relative: `10:32`, `2024-01-15T10:32:00Z`, `-30m`) |
+| `--to` | End time (same formats) |
+| `--label` | Label filter (`key=value`), repeatable |
+| `--grep` | Regex filter on message content |
+
+Filters use `index.jsonl` to skip irrelevant files entirely — at 100GB this means
+opening only the files that contain matching time ranges and labels.
 
 **Behavior**:
 - Reads JSONL files from directory in timestamp order (decompresses zstd on the fly)
@@ -192,6 +219,88 @@ logtap open /tmp/capture
 # Transfer and replay on another machine
 tar cf - /tmp/capture | ssh colleague@host 'tar xf -'
 # colleague runs: logtap open ./capture
+```
+
+---
+
+### WO-02b: Slice (extract subset)
+
+**Goal**: Extract a time range and/or label filter into a new smaller capture directory.
+
+**CLI interface**:
+```
+logtap slice ./capture --from 10:32 --to 10:45 --out ./incident-42
+logtap slice ./capture --label app=gateway --out ./gateway-only
+logtap slice ./capture --from 10:32 --to 10:45 --label app=gateway --out ./incident-42
+logtap slice ./capture --grep "timeout|5xx" --out ./errors-only
+```
+
+**Behavior**:
+- Reads source capture directory using index.jsonl to skip irrelevant files
+- Writes matching lines to new capture directory (same format: JSONL+zstd, new index, new metadata)
+- Output is a valid capture directory -- `logtap open` works on it
+- Shows progress: `Slicing: 482,901 / 14,832,901 lines (3.2%)`
+- Same filter flags as `logtap open`: `--from`, `--to`, `--label`, `--grep`
+
+**Use case**: captured 8 hours at 100GB, the bug window is 10 minutes. Slice to 500MB, send that to colleague.
+
+**Files**:
+- `cmd/logtap/slice.go` -- slice subcommand
+- `internal/archive/slice.go` -- filtered copy with index-aware file skipping
+
+**Verification**:
+```bash
+logtap slice ./capture --from 10:32 --to 10:45 --out /tmp/incident
+ls /tmp/incident/
+# metadata.json index.jsonl *.jsonl.zst
+logtap open /tmp/incident
+```
+
+---
+
+### WO-02c: Export to external formats
+
+**Goal**: Convert capture data to parquet/CSV for ingestion into analytics systems.
+
+**CLI interface**:
+```
+logtap export ./capture --format parquet --out ./capture.parquet
+logtap export ./capture --format csv --out ./capture.csv
+logtap export ./capture --format parquet --from 10:32 --to 10:45 --out ./incident.parquet
+```
+
+**Formats**:
+| Format | Use case |
+|--------|----------|
+| `parquet` | DuckDB, BigQuery, Clickhouse, Spark, pandas |
+| `csv` | Excel, any tool |
+| `jsonl` | Already native format, useful with filters to get uncompressed plaintext |
+
+**Parquet schema**:
+```
+ts:       TIMESTAMP (nanosecond)
+labels:   MAP<STRING, STRING>
+msg:      STRING
+```
+
+**Behavior**:
+- Same filter flags as open/slice: `--from`, `--to`, `--label`, `--grep`
+- Parquet: single file output, row-group per source JSONL file
+- CSV: `ts,labels,msg` columns, labels as `key=val;key=val`
+- Shows progress: `Exporting: 482,901 lines -> capture.parquet (124 MB)`
+
+**Dependencies**: `github.com/parquet-go/parquet-go` (pure Go, no C deps)
+
+**Files**:
+- `cmd/logtap/export.go` -- export subcommand
+- `internal/archive/parquet.go` -- parquet writer
+- `internal/archive/csv.go` -- csv writer
+
+**Verification**:
+```bash
+logtap export ./capture --format parquet --out /tmp/capture.parquet
+duckdb -c "SELECT count(*) FROM '/tmp/capture.parquet'"
+duckdb -c "SELECT labels['app'], count(*) FROM '/tmp/capture.parquet' GROUP BY 1"
 ```
 
 ---
@@ -475,7 +584,9 @@ logtap status
 | Command | Description |
 |---------|-------------|
 | `logtap recv` | Start receiver (local, in-cluster, or tunnel) |
-| `logtap open` | Open and replay a capture archive |
+| `logtap open` | Open and replay a capture directory |
+| `logtap slice` | Extract time/label subset to new capture directory |
+| `logtap export` | Convert capture to parquet/CSV |
 | `logtap check` | Validate cluster readiness |
 | `logtap tap` | Inject sidecar into workloads |
 | `logtap untap` | Remove sidecar from workloads |
@@ -485,7 +596,7 @@ logtap status
 
 - No metrics ingestion
 - No trace ingestion
-- No indexing or search engine
+- No full-text search engine (file-level index only, content search via rg/jq/grep)
 - No browser UI
 - No CRDs or operators
 - No long-term retention management
