@@ -152,12 +152,13 @@ is the shareable artifact — just `tar` (no compression), `rsync`, or `scp` to 
 
 `index.jsonl` — one line per rotated file, written at rotation time:
 ```json
-{"file":"2024-01-15T103201-000.jsonl.zst","from":"2024-01-15T10:32:01Z","to":"2024-01-15T10:35:12Z","lines":482901,"bytes":234567890,"labels":["api-service","worker-service"]}
-{"file":"2024-01-15T103512-000.jsonl.zst","from":"2024-01-15T10:35:12Z","to":"2024-01-15T10:41:33Z","lines":391002,"bytes":198234567,"labels":["api-service","gateway"]}
+{"file":"2024-01-15T103201-000.jsonl.zst","from":"2024-01-15T10:32:01Z","to":"2024-01-15T10:35:12Z","lines":482901,"bytes":234567890,"labels":{"app":{"api-service":312000,"worker-service":170901},"namespace":{"default":482901}}}
+{"file":"2024-01-15T103512-000.jsonl.zst","from":"2024-01-15T10:35:12Z","to":"2024-01-15T10:41:33Z","lines":391002,"bytes":198234567,"labels":{"app":{"api-service":201000,"gateway":190002},"namespace":{"payments":391002}}}
 ```
 
-The index enables fast time-range and label filtering without scanning every file.
-At 100GB with 1GB rotation = 100 index lines. Negligible overhead.
+`labels` is `map[key]map[value]line_count` — enables `logtap inspect` to show
+per-label breakdowns and `logtap slice --label` to skip files without scanning.
+At 100GB with 1GB rotation = ~100 index lines. Negligible overhead.
 
 **On recv exit**:
 ```
@@ -223,7 +224,68 @@ tar cf - /tmp/capture | ssh colleague@host 'tar xf -'
 
 ---
 
-### WO-02b: Slice (extract subset)
+### WO-02b: Inspect capture
+
+**Goal**: `logtap inspect` shows what's inside a capture directory without replaying it.
+
+**CLI interface**:
+```
+logtap inspect ./capture
+```
+
+**Output**:
+```
+Capture: ./capture
+Format:  jsonl+zstd (v1)
+Period:  2024-01-15 10:32:01 — 12:45:33 (2h 13m)
+Size:    8.4 GB (23 files)
+Lines:   14,832,901
+
+Labels:
+  app:
+    api-service          8,412,001 lines   4.2 GB   (56.7%)
+    worker-service       4,102,300 lines   2.8 GB   (27.7%)
+    gateway              2,318,600 lines   1.4 GB   (15.6%)
+
+  namespace:
+    default             12,514,301 lines   7.0 GB   (84.4%)
+    payments             2,318,600 lines   1.4 GB   (15.6%)
+
+  container:
+    app                 14,832,901 lines   8.4 GB  (100.0%)
+
+Timeline (1-min buckets):
+  10:32 ▂▃▅▇▇▇▇▇▇▇▇▇▆▅▅▅▅▅▅▅▅▅▅▅▅▅▅▅▅▅
+  11:02 ▅▅▅▅▅▅▅▅▅▅▅▅▅▅▅▅▅▅▅▅▅▅▅▅▅▅▅▅▅▅
+  11:32 ▅▅▅▅▅▅▅▅▇█████▇▇▅▅▅▅▅▅▅▅▅▅▅▅▅▅  <- spike
+  12:02 ▅▅▅▅▅▅▅▅▅▅▅▅▅▅▅▅▅▃▃▃▂▂▂▂▂▂▂▁▁▁
+  12:32 ▁▁▁▁▁▁▁▁▁▁▁▁▁
+```
+
+**Behavior**:
+- Reads `metadata.json` and `index.jsonl` only — no decompression, instant even at 100GB
+- Groups by each label key (app, namespace, container, pod, etc.)
+- Shows line count, size, and percentage per label value
+- Timeline: sparkline histogram from index time ranges (coarse, not per-line)
+- `--json` flag outputs machine-readable JSON for scripting
+
+**Use case**: colleague sends you a 50GB capture. Run `logtap inspect` to see which
+services are represented, time window, and where the volume spikes are — before
+committing to a full replay or slice.
+
+**Files**:
+- `cmd/logtap/inspect.go` -- inspect subcommand
+- `internal/archive/inspect.go` -- index-based summary aggregation
+
+**Verification**:
+```bash
+logtap inspect ./capture
+logtap inspect ./capture --json | jq '.labels.app'
+```
+
+---
+
+### WO-02c: Slice (extract subset)
 
 **Goal**: Extract a time range and/or label filter into a new smaller capture directory.
 
@@ -258,7 +320,7 @@ logtap open /tmp/incident
 
 ---
 
-### WO-02c: Export to external formats
+### WO-02d: Export to external formats
 
 **Goal**: Convert capture data to parquet/CSV for ingestion into analytics systems.
 
@@ -585,6 +647,7 @@ logtap status
 |---------|-------------|
 | `logtap recv` | Start receiver (local, in-cluster, or tunnel) |
 | `logtap open` | Open and replay a capture directory |
+| `logtap inspect` | Show labels, timeline, and stats of a capture |
 | `logtap slice` | Extract time/label subset to new capture directory |
 | `logtap export` | Convert capture to parquet/CSV |
 | `logtap check` | Validate cluster readiness |
