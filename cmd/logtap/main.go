@@ -30,5 +30,6 @@ func execute() error {
 	root.AddCommand(newTriageCmd())
 	root.AddCommand(newTapCmd())
 	root.AddCommand(newUntapCmd())
+	root.AddCommand(newCheckCmd())
 	return root.Execute()
 }

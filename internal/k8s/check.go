@@ -42,6 +42,42 @@ func CheckResources(ctx context.Context, c *Client, replicas int32, memReq, cpuR
 	return warnings, nil
 }
 
+// QuotaSummary describes a single ResourceQuota's usage for display.
+type QuotaSummary struct {
+	Name    string
+	MemHard string
+	MemUsed string
+	CPUHard string
+	CPUUsed string
+}
+
+// GetQuotaSummary returns structured quota data for the namespace.
+func GetQuotaSummary(ctx context.Context, c *Client) ([]QuotaSummary, error) {
+	quotas, err := c.CS.CoreV1().ResourceQuotas(c.NS).List(ctx, metav1.ListOptions{})
+	if err != nil {
+		return nil, fmt.Errorf("list quotas: %w", err)
+	}
+
+	var summaries []QuotaSummary
+	for _, q := range quotas.Items {
+		s := QuotaSummary{Name: q.Name}
+		if v, ok := q.Status.Hard[corev1.ResourceRequestsMemory]; ok {
+			s.MemHard = v.String()
+		}
+		if v, ok := q.Status.Used[corev1.ResourceRequestsMemory]; ok {
+			s.MemUsed = v.String()
+		}
+		if v, ok := q.Status.Hard[corev1.ResourceRequestsCPU]; ok {
+			s.CPUHard = v.String()
+		}
+		if v, ok := q.Status.Used[corev1.ResourceRequestsCPU]; ok {
+			s.CPUUsed = v.String()
+		}
+		summaries = append(summaries, s)
+	}
+	return summaries, nil
+}
+
 func checkQuotas(ctx context.Context, c *Client, replicas int32, memReq, cpuReq string) ([]ResourceWarning, error) {
 	quotas, err := c.CS.CoreV1().ResourceQuotas(c.NS).List(ctx, metav1.ListOptions{})
 	if err != nil {
