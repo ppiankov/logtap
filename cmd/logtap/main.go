@@ -24,5 +24,6 @@ func execute() error {
 	}
 	root.AddCommand(newRecvCmd())
 	root.AddCommand(newOpenCmd())
+	root.AddCommand(newInspectCmd())
 	return root.Execute()
 }
