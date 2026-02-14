@@ -113,6 +113,37 @@ func TestFindOrphans_StaleAnnotation(t *testing.T) {
 	}
 }
 
+func TestFindOrphans_ReceiverPod(t *testing.T) {
+	receiverPod := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      ReceiverName,
+			Namespace: "default",
+			Labels: map[string]string{
+				LabelManagedBy: ManagedByValue,
+				LabelName:      ReceiverName,
+			},
+			CreationTimestamp: metav1.Now(),
+		},
+	}
+	cs := fake.NewSimpleClientset(receiverPod) //nolint:staticcheck // NewClientset requires generated apply configs
+	c := NewClientFromInterface(cs, "default")
+
+	result, err := FindOrphans(context.Background(), c, "logtap.dev/tapped", "logtap.dev/target", "logtap-forwarder-", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if len(result.Receivers) != 1 {
+		t.Fatalf("receivers = %d, want 1", len(result.Receivers))
+	}
+	if result.Receivers[0].PodName != ReceiverName {
+		t.Errorf("PodName = %q, want %q", result.Receivers[0].PodName, ReceiverName)
+	}
+	if result.Receivers[0].Namespace != "default" {
+		t.Errorf("Namespace = %q, want %q", result.Receivers[0].Namespace, "default")
+	}
+}
+
 func TestFindOrphans_Clean(t *testing.T) {
 	deploy := &appsv1.Deployment{
 		ObjectMeta: metav1.ObjectMeta{Name: "api-gw", Namespace: "default"},
