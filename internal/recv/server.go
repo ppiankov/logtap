@@ -35,6 +35,7 @@ type Server struct {
 	metrics    *Metrics
 	stats      *Stats
 	ring       *LogRing
+	audit      *AuditLogger
 	activeConn atomic.Int64
 }
 
@@ -60,9 +61,19 @@ func NewServer(addr string, writer *Writer, redactor *Redactor, metrics *Metrics
 	return s
 }
 
+// SetAuditLogger attaches an audit logger to the server.
+func (s *Server) SetAuditLogger(a *AuditLogger) {
+	s.audit = a
+}
+
 // ListenAndServe starts the HTTP server.
 func (s *Server) ListenAndServe() error {
 	return s.httpSrv.ListenAndServe()
+}
+
+// ListenAndServeTLS starts the HTTP server with TLS.
+func (s *Server) ListenAndServeTLS(certFile, keyFile string) error {
+	return s.httpSrv.ListenAndServeTLS(certFile, keyFile)
 }
 
 // Serve accepts connections on a listener.
@@ -87,6 +98,8 @@ func (s *Server) handleLokiPush(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	var lineCount int
+	var byteCount int
 	for _, stream := range req.Streams {
 		for _, val := range stream.Values {
 			if len(val) < 2 {
@@ -98,6 +111,9 @@ func (s *Server) handleLokiPush(w http.ResponseWriter, r *http.Request) {
 			if s.redactor != nil {
 				msg = s.redactor.Redact(msg)
 			}
+
+			lineCount++
+			byteCount += len(msg)
 
 			entry := LogEntry{
 				Timestamp: ts,
@@ -127,6 +143,13 @@ func (s *Server) handleLokiPush(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
+
+	s.audit.Log(AuditEntry{
+		Event:    "push_received",
+		RemoteIP: stripPort(r.RemoteAddr),
+		Lines:    lineCount,
+		Bytes:    byteCount,
+	})
 
 	w.WriteHeader(http.StatusNoContent)
 }
@@ -199,6 +222,13 @@ func (s *Server) trackConnClose() {
 	if s.stats != nil {
 		s.stats.ActiveConns.Store(n)
 	}
+}
+
+func stripPort(addr string) string {
+	if host, _, ok := strings.Cut(addr, ":"); ok {
+		return host
+	}
+	return addr
 }
 
 func parseNanoTimestamp(s string) time.Time {
