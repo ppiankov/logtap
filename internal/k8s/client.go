@@ -1,6 +1,7 @@
 package k8s
 
 import (
+	"context"
 	"fmt"
 
 	"k8s.io/client-go/kubernetes"
@@ -48,4 +49,22 @@ func NewClient(namespace string) (*Client, error) {
 // NewClientFromInterface creates a Client from an existing clientset (for testing).
 func NewClientFromInterface(cs kubernetes.Interface, ns string) *Client {
 	return &Client{CS: cs, NS: ns}
+}
+
+// ClusterInfo holds basic cluster metadata for display.
+type ClusterInfo struct {
+	Version   string
+	Namespace string
+}
+
+// GetClusterInfo retrieves the cluster version and current namespace.
+func GetClusterInfo(ctx context.Context, c *Client) (*ClusterInfo, error) {
+	sv, err := c.CS.Discovery().ServerVersion()
+	if err != nil {
+		return nil, fmt.Errorf("get server version: %w", err)
+	}
+	return &ClusterInfo{
+		Version:   sv.GitVersion,
+		Namespace: c.NS,
+	}, nil
 }

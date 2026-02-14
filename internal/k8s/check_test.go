@@ -121,6 +121,55 @@ func TestCheckResources_NoQuotas(t *testing.T) {
 	}
 }
 
+func TestGetQuotaSummary(t *testing.T) {
+	quota := &corev1.ResourceQuota{
+		ObjectMeta: metav1.ObjectMeta{Name: "default-quota", Namespace: "default"},
+		Status: corev1.ResourceQuotaStatus{
+			Hard: corev1.ResourceList{
+				corev1.ResourceRequestsMemory: resource.MustParse("4Gi"),
+				corev1.ResourceRequestsCPU:    resource.MustParse("8"),
+			},
+			Used: corev1.ResourceList{
+				corev1.ResourceRequestsMemory: resource.MustParse("1Gi"),
+				corev1.ResourceRequestsCPU:    resource.MustParse("2"),
+			},
+		},
+	}
+
+	cs := fake.NewSimpleClientset(quota) //nolint:staticcheck // NewClientset requires generated apply configs
+	c := NewClientFromInterface(cs, "default")
+
+	summaries, err := GetQuotaSummary(context.Background(), c)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(summaries) != 1 {
+		t.Fatalf("summaries = %d, want 1", len(summaries))
+	}
+	if summaries[0].Name != "default-quota" {
+		t.Errorf("name = %q, want %q", summaries[0].Name, "default-quota")
+	}
+	if summaries[0].MemHard != "4Gi" {
+		t.Errorf("MemHard = %q, want %q", summaries[0].MemHard, "4Gi")
+	}
+	if summaries[0].MemUsed != "1Gi" {
+		t.Errorf("MemUsed = %q, want %q", summaries[0].MemUsed, "1Gi")
+	}
+}
+
+func TestGetQuotaSummary_NoQuotas(t *testing.T) {
+	cs := fake.NewSimpleClientset() //nolint:staticcheck // NewClientset requires generated apply configs
+	c := NewClientFromInterface(cs, "default")
+
+	summaries, err := GetQuotaSummary(context.Background(), c)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(summaries) != 0 {
+		t.Errorf("summaries = %d, want 0", len(summaries))
+	}
+}
+
 func TestCheckResources_MemoryPressure(t *testing.T) {
 	node := &corev1.Node{
 		ObjectMeta: metav1.ObjectMeta{Name: "node-1"},
