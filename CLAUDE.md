@@ -1,5 +1,8 @@
 # Project: logtap
 
+## New Agent? Start Here
+Run `/load-context` to read project context, work orders, and current status before doing anything.
+
 ## Commands
 - `make build` — Build binary
 - `make test` — Run tests with race detection
