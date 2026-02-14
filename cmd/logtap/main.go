@@ -28,5 +28,6 @@ func execute() error {
 	root.AddCommand(newSliceCmd())
 	root.AddCommand(newExportCmd())
 	root.AddCommand(newTriageCmd())
+	root.AddCommand(newTapCmd())
 	return root.Execute()
 }
