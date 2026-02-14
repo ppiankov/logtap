@@ -5,13 +5,15 @@ import (
 	"fmt"
 
 	"k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
 )
 
 // Client wraps a Kubernetes clientset and namespace.
 type Client struct {
-	CS kubernetes.Interface
-	NS string
+	CS         kubernetes.Interface
+	NS         string
+	RestConfig *rest.Config // nil for test clients
 }
 
 // NewClient creates a Client from the default kubeconfig.
@@ -43,7 +45,7 @@ func NewClient(namespace string) (*Client, error) {
 		return nil, fmt.Errorf("create clientset: %w", err)
 	}
 
-	return &Client{CS: cs, NS: ns}, nil
+	return &Client{CS: cs, NS: ns, RestConfig: restConfig}, nil
 }
 
 // NewClientFromInterface creates a Client from an existing clientset (for testing).
