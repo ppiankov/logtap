@@ -15,6 +15,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/spf13/cobra"
 
+	"github.com/ppiankov/logtap/internal/k8s"
 	"github.com/ppiankov/logtap/internal/recv"
 	"github.com/ppiankov/logtap/internal/rotate"
 )
@@ -30,6 +31,9 @@ func newRecvCmd() *cobra.Command {
 		redactPatterns string
 		bufSize        int
 		headless       bool
+		inCluster      bool
+		image          string
+		namespace      string
 	)
 
 	cmd := &cobra.Command{
@@ -37,6 +41,23 @@ func newRecvCmd() *cobra.Command {
 		Short: "Start the log receiver",
 		Long:  "Accept Loki push API payloads, optionally redact PII, write compressed JSONL to disk.",
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if inCluster {
+				if image == "" {
+					return fmt.Errorf("--image required with --in-cluster")
+				}
+				return runRecvInCluster(inClusterOpts{
+					image:      image,
+					namespace:  namespace,
+					maxFile:    maxFileStr,
+					maxDisk:    maxDiskStr,
+					compress:   compress,
+					redact:     redactFlag,
+					listenPort: 9000,
+				})
+			}
+			if dir == "" {
+				return fmt.Errorf("--dir is required (or use --in-cluster)")
+			}
 			return runRecv(listen, dir, maxFileStr, maxDiskStr, compress, redactFlag, redactPatterns, bufSize, headless)
 		},
 	}
@@ -50,7 +71,9 @@ func newRecvCmd() *cobra.Command {
 	cmd.Flags().StringVar(&redactPatterns, "redact-patterns", "", "path to custom redaction patterns YAML file")
 	cmd.Flags().IntVar(&bufSize, "buffer", 65536, "internal channel buffer size")
 	cmd.Flags().BoolVar(&headless, "headless", false, "disable TUI, log to stderr")
-	_ = cmd.MarkFlagRequired("dir")
+	cmd.Flags().BoolVar(&inCluster, "in-cluster", false, "deploy receiver as in-cluster pod")
+	cmd.Flags().StringVar(&image, "image", "", "container image for in-cluster receiver (required with --in-cluster)")
+	cmd.Flags().StringVarP(&namespace, "namespace", "n", "logtap", "namespace for in-cluster resources")
 
 	return cmd
 }
@@ -209,6 +232,130 @@ func runTUI(stats *recv.Stats, ring *recv.LogRing, disk recv.DiskReporter, diskC
 	}
 
 	shutdown()
+	return nil
+}
+
+type inClusterOpts struct {
+	image      string
+	namespace  string
+	maxFile    string
+	maxDisk    string
+	compress   bool
+	redact     string
+	listenPort int
+}
+
+func runRecvInCluster(opts inClusterOpts) error {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	sigCh := make(chan os.Signal, 1)
+	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
+	go func() {
+		<-sigCh
+		cancel()
+	}()
+
+	c, err := k8s.NewClient(opts.namespace)
+	if err != nil {
+		return fmt.Errorf("connect to cluster: %w", err)
+	}
+
+	labels := map[string]string{
+		k8s.LabelManagedBy: k8s.ManagedByValue,
+		k8s.LabelName:      k8s.ReceiverName,
+	}
+
+	podArgs := []string{
+		"recv", "--headless",
+		"--listen", fmt.Sprintf(":%d", opts.listenPort),
+		"--dir", "/data",
+		"--max-file", opts.maxFile,
+		"--max-disk", opts.maxDisk,
+	}
+	if !opts.compress {
+		podArgs = append(podArgs, "--compress=false")
+	}
+	if opts.redact != "" {
+		podArgs = append(podArgs, "--redact", opts.redact)
+	}
+
+	spec := k8s.ReceiverSpec{
+		Image:     opts.image,
+		Namespace: c.NS,
+		PodName:   k8s.ReceiverName,
+		SvcName:   k8s.ReceiverName,
+		Port:      int32(opts.listenPort),
+		Args:      podArgs,
+		Labels:    labels,
+	}
+
+	fmt.Fprintf(os.Stderr, "deploying receiver pod in %s...\n", c.NS)
+	res, err := k8s.DeployReceiver(ctx, c, spec)
+	if err != nil {
+		if res != nil {
+			_ = k8s.DeleteReceiver(context.Background(), c, res)
+		}
+		return fmt.Errorf("deploy receiver: %w", err)
+	}
+	defer func() {
+		fmt.Fprintln(os.Stderr, "cleaning up cluster resources...")
+		if err := k8s.DeleteReceiver(context.Background(), c, res); err != nil {
+			fmt.Fprintf(os.Stderr, "cleanup error: %v\n", err)
+		}
+	}()
+
+	fmt.Fprintln(os.Stderr, "waiting for pod ready...")
+	if err := k8s.WaitForPodReady(ctx, c, c.NS, k8s.ReceiverName, 60*time.Second); err != nil {
+		return fmt.Errorf("pod not ready: %w", err)
+	}
+
+	pfSpec := k8s.PortForwardSpec{
+		Namespace:  c.NS,
+		PodName:    k8s.ReceiverName,
+		RemotePort: opts.listenPort,
+		LocalPort:  0,
+	}
+
+	tunnel, err := k8s.NewPortForwardTunnel(c.RestConfig, c.CS, pfSpec, os.Stderr, os.Stderr)
+	if err != nil {
+		return fmt.Errorf("create port-forward: %w", err)
+	}
+
+	tunnelErrCh := make(chan error, 1)
+	go func() {
+		tunnelErrCh <- tunnel.Run()
+	}()
+
+	select {
+	case <-tunnel.ReadyCh():
+	case err := <-tunnelErrCh:
+		return fmt.Errorf("port-forward failed: %w", err)
+	case <-ctx.Done():
+		tunnel.Stop()
+		return ctx.Err()
+	}
+
+	localPort, err := tunnel.GetLocalPort()
+	if err != nil {
+		tunnel.Stop()
+		return fmt.Errorf("get local port: %w", err)
+	}
+
+	fmt.Fprintf(os.Stderr, "receiver ready — push logs to http://localhost:%d/loki/api/v1/push\n", localPort)
+	fmt.Fprintf(os.Stderr, "in-cluster service: %s.%s:%d\n", k8s.ReceiverName, c.NS, opts.listenPort)
+	fmt.Fprintln(os.Stderr, "press Ctrl+C to stop and clean up")
+
+	select {
+	case <-ctx.Done():
+	case err := <-tunnelErrCh:
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "port-forward error: %v\n", err)
+		}
+	}
+
+	tunnel.Stop()
+	fmt.Fprintln(os.Stderr, "shutting down...")
 	return nil
 }
 
