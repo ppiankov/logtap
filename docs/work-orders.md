@@ -371,6 +371,100 @@ duckdb -c "SELECT labels['app'], count(*) FROM '/tmp/capture.parquet' GROUP BY 1
 
 ---
 
+### WO-02e: Triage (background pre-scan)
+
+**Goal**: `logtap triage` scans a capture directory for anomalies and produces a summary report before manual investigation.
+
+**CLI interface**:
+```
+logtap triage ./capture --out ./triage
+logtap triage ./capture --out ./triage --jobs 8
+```
+
+**Use case**: somebody sends you a 500GB capture dump with no context. You don't know what's in it, what went wrong, or where to look. Triage runs in background and produces a "here's what looks wrong" report in 30 seconds to 5 minutes depending on size.
+
+**Output directory** (`./triage/`):
+| File | Content |
+|------|---------|
+| `summary.md` | Human-readable triage report |
+| `timeline.csv` | `minute,total_lines,error_lines` histogram |
+| `top_errors.txt` | Top 50 normalized error signatures with counts |
+| `top_talkers.txt` | Lines per label value (service/pod/namespace), sorted by volume |
+| `windows.json` | Recommended time windows: peak error, incident start, steady state |
+
+**Two-pass approach**:
+
+Pass 1 — streaming signal extraction (parallel, one pass over data):
+1. **Time histogram** — lines/min and errors/min, find spikes and cliff edges
+2. **Top error signatures** — normalize messages (strip UUIDs, IPs, durations, hex), count patterns, output top 50
+3. **Top talkers** — volume per label value (app, namespace, pod), plus which produce most errors
+4. **First occurrences** — first time each error signature appears (locate incident start)
+5. **Severe signals** — OOMKilled, CrashLoopBackOff, panic, segfault, x509 errors, connection refused, context deadline exceeded
+
+Pass 2 — focus windows (derived from Pass 1):
+1. Identify "peak error window" — highest error density
+2. Identify "incident start window" — where new error signatures cluster
+3. Identify "steady state window" — baseline for comparison
+4. Write `windows.json` with recommended `--from`/`--to` ranges for `logtap open` or `logtap slice`
+
+**Flags**:
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--out` | `./triage` | Output directory for triage artifacts |
+| `--jobs` | `runtime.NumCPU()` | Parallel decompression/scan workers |
+| `--window` | `1m` | Histogram bucket width |
+| `--top` | `50` | Number of top error signatures |
+
+**Behavior**:
+- Reads JSONL+zstd files in parallel (one goroutine per file)
+- Normalizes log messages for signature extraction (replace UUIDs, IPs, timestamps, hex with `<UUID>`, `<IP>`, `<TS>`, `<HEX>`)
+- Uses `index.jsonl` to skip files outside time range if `--from`/`--to` specified
+- Progress bar: `Triage: 14,832,901 / 14,832,901 lines (scanning errors.jsonl.zst)`
+- Produces `summary.md` that a human can read in 30 seconds
+
+**summary.md example**:
+```
+# Triage: ./capture
+
+Period:  2024-01-15 10:32 — 12:45 (2h 13m)
+Size:    8.4 GB (23 files, 14.8M lines)
+
+## Incident Signal
+Peak error rate: 10:44 — 10:52 (3,400 errors/min vs 12 baseline)
+First new error:  10:43:17 "connection refused to payments-service:8080"
+
+## Top Errors (of 23,401 total)
+  1. connection refused to payments-service:8080     8,412  (35.9%)
+  2. context deadline exceeded                       4,201  (17.9%)
+  3. upstream connect error or disconnect/reset      3,891  (16.6%)
+  4. 503 Service Unavailable                         2,102  (8.9%)
+
+## Top Talkers
+  api-service      8.4M lines  (56.7%)  ← 78% of errors
+  worker-service   4.1M lines  (27.7%)
+  gateway          2.3M lines  (15.6%)
+
+## Recommended Slices
+  logtap slice ./capture --from 10:43 --to 10:55 --out ./incident
+  logtap slice ./capture --label app=api-service --grep "refused|timeout" --out ./api-errors
+```
+
+**Files**:
+- `cmd/logtap/triage.go` — triage subcommand
+- `internal/archive/triage.go` — parallel scanner, signature normalizer, histogram builder
+- `internal/archive/normalize.go` — message normalization (strip UUIDs, IPs, etc.)
+
+**Verification**:
+```bash
+logtap triage ./capture --out /tmp/triage
+cat /tmp/triage/summary.md
+cat /tmp/triage/top_errors.txt | head -10
+logtap slice ./capture --from $(jq -r '.peak_error.from' /tmp/triage/windows.json) \
+  --to $(jq -r '.peak_error.to' /tmp/triage/windows.json) --out /tmp/incident
+```
+
+---
+
 ## Phase 2: Cluster Integration (Week 2)
 
 ### WO-03: Sidecar injection
