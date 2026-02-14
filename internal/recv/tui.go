@@ -17,13 +17,14 @@ type DiskReporter interface {
 
 // TUIModel is the bubbletea model for the live receiver dashboard.
 type TUIModel struct {
-	stats   *Stats
-	ring    *LogRing
-	disk    DiskReporter
-	diskCap int64
-	writer  *Writer
-	listen  string
-	dir     string
+	stats      *Stats
+	ring       *LogRing
+	disk       DiskReporter
+	diskCap    int64
+	writer     *Writer
+	listen     string
+	dir        string
+	redactInfo string
 
 	// snapshots
 	prev     Snapshot
@@ -67,18 +68,19 @@ func tickCmd() tea.Cmd {
 }
 
 // NewTUIModel creates a TUI model wired to the pipeline data sources.
-func NewTUIModel(stats *Stats, ring *LogRing, disk DiskReporter, diskCap int64, writer *Writer, listen, dir string) TUIModel {
+func NewTUIModel(stats *Stats, ring *LogRing, disk DiskReporter, diskCap int64, writer *Writer, listen, dir, redactInfo string) TUIModel {
 	return TUIModel{
-		stats:   stats,
-		ring:    ring,
-		disk:    disk,
-		diskCap: diskCap,
-		writer:  writer,
-		listen:  listen,
-		dir:     dir,
-		follow:  true,
-		width:   80,
-		height:  24,
+		stats:      stats,
+		ring:       ring,
+		disk:       disk,
+		diskCap:    diskCap,
+		writer:     writer,
+		listen:     listen,
+		dir:        dir,
+		redactInfo: redactInfo,
+		follow:     true,
+		width:      80,
+		height:     24,
 	}
 }
 
@@ -260,8 +262,8 @@ func (m *TUIModel) scrollToBottom() {
 }
 
 func (m TUIModel) logPaneHeight() int {
-	// header(1) + blank(1) + stats(5) + separator(1) = 8 lines overhead
-	h := m.height - 8
+	// header(1) + blank(1) + stats(6) + separator(1) = 9 lines overhead
+	h := m.height - 9
 	if h < 1 {
 		h = 1
 	}
@@ -414,6 +416,13 @@ func (m TUIModel) renderStats() string {
 	} else {
 		b.WriteString("0")
 	}
+	b.WriteString("\n")
+	b.WriteString(labelStyle.Render(" Redact:        "))
+	if m.redactInfo != "" {
+		b.WriteString(m.redactInfo)
+	} else {
+		b.WriteString(warnStyle.Render("OFF"))
+	}
 	return b.String()
 }
 
@@ -460,6 +469,7 @@ var (
 	logLineStyle = lipgloss.NewStyle()
 	matchStyle   = lipgloss.NewStyle().Background(lipgloss.Color("226")).Foreground(lipgloss.Color("0"))
 	droppedStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("196")).Bold(true)
+	warnStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("226")).Bold(true)
 	searchBadge  = lipgloss.NewStyle().Background(lipgloss.Color("226")).Foreground(lipgloss.Color("0")).Padding(0, 1)
 	followBadge  = lipgloss.NewStyle().Background(lipgloss.Color("34")).Foreground(lipgloss.Color("15")).Padding(0, 1)
 )

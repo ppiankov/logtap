@@ -78,6 +78,32 @@ func GetQuotaSummary(ctx context.Context, c *Client) ([]QuotaSummary, error) {
 	return summaries, nil
 }
 
+// prodLabels defines the label keys and values that indicate a production namespace.
+var prodLabels = map[string][]string{
+	"env":             {"prod", "production"},
+	"environment":     {"prod", "production"},
+	"logtap.dev/prod": {"true"},
+}
+
+// IsProdNamespace checks if the current namespace has labels indicating production.
+func IsProdNamespace(ctx context.Context, c *Client) (bool, error) {
+	ns, err := c.CS.CoreV1().Namespaces().Get(ctx, c.NS, metav1.GetOptions{})
+	if err != nil {
+		return false, fmt.Errorf("get namespace %s: %w", c.NS, err)
+	}
+
+	for key, vals := range prodLabels {
+		if v, ok := ns.Labels[key]; ok {
+			for _, pv := range vals {
+				if v == pv {
+					return true, nil
+				}
+			}
+		}
+	}
+	return false, nil
+}
+
 func checkQuotas(ctx context.Context, c *Client, replicas int32, memReq, cpuReq string) ([]ResourceWarning, error) {
 	quotas, err := c.CS.CoreV1().ResourceQuotas(c.NS).List(ctx, metav1.ListOptions{})
 	if err != nil {
