@@ -31,6 +31,8 @@ func newRecvCmd() *cobra.Command {
 		redactPatterns string
 		bufSize        int
 		headless       bool
+		tlsCert        string
+		tlsKey         string
 		inCluster      bool
 		image          string
 		namespace      string
@@ -58,7 +60,7 @@ func newRecvCmd() *cobra.Command {
 			if dir == "" {
 				return fmt.Errorf("--dir is required (or use --in-cluster)")
 			}
-			return runRecv(listen, dir, maxFileStr, maxDiskStr, compress, redactFlag, redactPatterns, bufSize, headless)
+			return runRecv(listen, dir, maxFileStr, maxDiskStr, compress, redactFlag, redactPatterns, bufSize, headless, tlsCert, tlsKey)
 		},
 	}
 
@@ -71,6 +73,8 @@ func newRecvCmd() *cobra.Command {
 	cmd.Flags().StringVar(&redactPatterns, "redact-patterns", "", "path to custom redaction patterns YAML file")
 	cmd.Flags().IntVar(&bufSize, "buffer", 65536, "internal channel buffer size")
 	cmd.Flags().BoolVar(&headless, "headless", false, "disable TUI, log to stderr")
+	cmd.Flags().StringVar(&tlsCert, "tls-cert", "", "TLS certificate file")
+	cmd.Flags().StringVar(&tlsKey, "tls-key", "", "TLS key file")
 	cmd.Flags().BoolVar(&inCluster, "in-cluster", false, "deploy receiver as in-cluster pod")
 	cmd.Flags().StringVar(&image, "image", "", "container image for in-cluster receiver (required with --in-cluster)")
 	cmd.Flags().StringVarP(&namespace, "namespace", "n", "logtap", "namespace for in-cluster resources")
@@ -78,7 +82,7 @@ func newRecvCmd() *cobra.Command {
 	return cmd
 }
 
-func runRecv(listen, dir, maxFileStr, maxDiskStr string, compress bool, redactFlag, redactPatterns string, bufSize int, headless bool) error {
+func runRecv(listen, dir, maxFileStr, maxDiskStr string, compress bool, redactFlag, redactPatterns string, bufSize int, headless bool, tlsCert, tlsKey string) error {
 	maxFile, err := parseByteSize(maxFileStr)
 	if err != nil {
 		return fmt.Errorf("invalid --max-file: %w", err)
@@ -101,6 +105,7 @@ func runRecv(listen, dir, maxFileStr, maxDiskStr string, compress bool, redactFl
 
 	// redactor
 	var redactor *recv.Redactor
+	var redactInfo string
 	redactEnabled, redactNames := recv.ParseRedactFlag(redactFlag)
 	if redactEnabled {
 		redactor, err = recv.NewRedactor(redactNames)
@@ -116,6 +121,7 @@ func runRecv(listen, dir, maxFileStr, maxDiskStr string, compress bool, redactFl
 			Enabled:  true,
 			Patterns: redactor.PatternNames(),
 		}
+		redactInfo = fmt.Sprintf("on (%d patterns)", len(redactor.PatternNames()))
 	}
 
 	// rotator
@@ -145,8 +151,17 @@ func runRecv(listen, dir, maxFileStr, maxDiskStr string, compress bool, redactFl
 		return fmt.Errorf("write metadata: %w", err)
 	}
 
+	// audit logger
+	audit, err := recv.NewAuditLogger(dir)
+	if err != nil {
+		return fmt.Errorf("init audit logger: %w", err)
+	}
+
 	// server
 	srv := recv.NewServer(listen, writer, redactor, metrics, stats, ring)
+	srv.SetAuditLogger(audit)
+
+	audit.Log(recv.AuditEntry{Event: "server_started"})
 
 	// shutdown performs graceful teardown of all components
 	shutdown := func() {
@@ -166,21 +181,30 @@ func runRecv(listen, dir, maxFileStr, maxDiskStr string, compress bool, redactFl
 			fmt.Fprintf(os.Stderr, "update metadata: %v\n", err)
 		}
 
+		audit.Log(recv.AuditEntry{Event: "server_stopped"})
+		_ = audit.Close()
+
 		metrics.DiskUsage.Set(float64(rot.DiskUsage()))
 	}
 
 	// start HTTP server in background
 	errCh := make(chan error, 1)
 	go func() {
-		if err := srv.ListenAndServe(); err != nil {
-			errCh <- err
+		var srvErr error
+		if tlsCert != "" && tlsKey != "" {
+			srvErr = srv.ListenAndServeTLS(tlsCert, tlsKey)
+		} else {
+			srvErr = srv.ListenAndServe()
+		}
+		if srvErr != nil {
+			errCh <- srvErr
 		}
 	}()
 
 	if headless {
 		return runHeadless(listen, dir, writer, errCh, shutdown)
 	}
-	return runTUI(stats, ring, rot, maxDisk, writer, listen, dir, errCh, shutdown)
+	return runTUI(stats, ring, rot, maxDisk, writer, listen, dir, redactInfo, errCh, shutdown)
 }
 
 func runHeadless(listen, dir string, writer *recv.Writer, errCh <-chan error, shutdown func()) error {
@@ -214,8 +238,8 @@ func runHeadless(listen, dir string, writer *recv.Writer, errCh <-chan error, sh
 	return nil
 }
 
-func runTUI(stats *recv.Stats, ring *recv.LogRing, disk recv.DiskReporter, diskCap int64, writer *recv.Writer, listen, dir string, errCh <-chan error, shutdown func()) error {
-	model := recv.NewTUIModel(stats, ring, disk, diskCap, writer, listen, dir)
+func runTUI(stats *recv.Stats, ring *recv.LogRing, disk recv.DiskReporter, diskCap int64, writer *recv.Writer, listen, dir, redactInfo string, errCh <-chan error, shutdown func()) error {
+	model := recv.NewTUIModel(stats, ring, disk, diskCap, writer, listen, dir, redactInfo)
 	p := tea.NewProgram(model, tea.WithAltScreen())
 
 	// forward server errors to TUI quit
