@@ -3,9 +3,11 @@ package k8s
 import (
 	"context"
 	"strings"
+	"time"
 
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
 // OrphanedSidecar describes a workload with logtap sidecar containers still present.
@@ -22,10 +24,18 @@ type StaleAnnotation struct {
 	Annotation string
 }
 
+// OrphanedReceiver describes a logtap receiver pod left running in the cluster.
+type OrphanedReceiver struct {
+	PodName   string
+	Namespace string
+	Age       time.Duration
+}
+
 // OrphanResult contains all detected orphaned artifacts.
 type OrphanResult struct {
 	Sidecars       []OrphanedSidecar
 	StaleWorkloads []StaleAnnotation
+	Receivers      []OrphanedReceiver
 }
 
 // ReceiverChecker tests if a receiver target is reachable.
@@ -67,6 +77,21 @@ func FindOrphans(ctx context.Context, c *Client, annotationTapped, annotationTar
 			result.StaleWorkloads = append(result.StaleWorkloads, StaleAnnotation{
 				Workload:   w,
 				Annotation: w.Annotations[annotationTapped],
+			})
+		}
+	}
+
+	// detect orphaned receiver pods
+	labelSel := LabelManagedBy + "=" + ManagedByValue + "," + LabelName + "=" + ReceiverName
+	pods, err := c.CS.CoreV1().Pods(c.NS).List(ctx, metav1.ListOptions{LabelSelector: labelSel})
+	if err == nil {
+		now := time.Now()
+		for _, p := range pods.Items {
+			age := now.Sub(p.CreationTimestamp.Time)
+			result.Receivers = append(result.Receivers, OrphanedReceiver{
+				PodName:   p.Name,
+				Namespace: p.Namespace,
+				Age:       age,
 			})
 		}
 	}
