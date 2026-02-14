@@ -10,7 +10,7 @@ import (
 func newTestModel() TUIModel {
 	stats := NewStats()
 	ring := NewLogRing(100)
-	m := NewTUIModel(stats, ring, nil, 50<<30, nil, ":9000", "/tmp/test")
+	m := NewTUIModel(stats, ring, nil, 50<<30, nil, ":9000", "/tmp/test", "")
 	m.width = 120
 	m.height = 30
 	return m
