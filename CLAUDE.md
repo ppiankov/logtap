@@ -11,7 +11,7 @@
 - Entry: cmd/logtap/main.go (minimal, delegates to internal/)
 - Internal packages: internal/
 - CLI framework: Cobra (spf13/cobra)
-- Subcommands: recv, open, slice, export, check, tap, untap, status
+- Subcommands: recv, open, inspect, slice, export, check, tap, untap, status
 
 ## What logtap Is
 Ephemeral log mirror for load testing. Annotation-based opt-in. Disposable.
