@@ -959,3 +959,26 @@ will detect these as orphans.
 - No OpenTelemetry collector role
 - No logging agent config patching (sidecar instead)
 - No Fluent Bit support (v1.1)
+
+---
+
+## Post-WO: Coverage Gaps
+
+### WO-10: Push recv and rotate coverage to 85%
+
+**Goal:** Close coverage gaps — recv at 82.9%, rotate at 79.0%. Both below 85% target.
+
+**recv (82.9% → 85%+)**:
+- Error paths: malformed Loki push payloads, oversized requests, connection drops mid-stream
+- Edge cases: empty label sets, duplicate timestamps, mixed snappy/raw encoding
+- Backpressure: disk full scenarios, slow writer blocking HTTP handler
+
+**rotate (79.0% → 85%+)**:
+- Error paths: disk full during rotation, permission denied on new file, corrupt header
+- Edge cases: rotation at exact size boundary, concurrent write during rotate
+- Cleanup: max-files enforcement when disk is near limit
+
+**Acceptance**:
+- `make test` with -race passes
+- recv ≥ 85%, rotate ≥ 85%
+- No flaky tests — all deterministic
