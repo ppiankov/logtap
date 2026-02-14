@@ -63,6 +63,12 @@ func BuildContainer(cfg SidecarConfig) corev1.Container {
 		Env: []corev1.EnvVar{
 			{Name: "LOGTAP_TARGET", Value: cfg.Target},
 			{Name: "LOGTAP_SESSION", Value: cfg.SessionID},
+			{Name: "LOGTAP_POD_NAME", ValueFrom: &corev1.EnvVarSource{
+				FieldRef: &corev1.ObjectFieldSelector{FieldPath: "metadata.name"},
+			}},
+			{Name: "LOGTAP_NAMESPACE", ValueFrom: &corev1.EnvVarSource{
+				FieldRef: &corev1.ObjectFieldSelector{FieldPath: "metadata.namespace"},
+			}},
 		},
 		Resources: corev1.ResourceRequirements{
 			Requests: corev1.ResourceList{
