@@ -33,15 +33,19 @@ type Server struct {
 	writer     *Writer
 	redactor   *Redactor
 	metrics    *Metrics
+	stats      *Stats
+	ring       *LogRing
 	activeConn atomic.Int64
 }
 
 // NewServer creates an HTTP server bound to addr.
-func NewServer(addr string, writer *Writer, redactor *Redactor, metrics *Metrics) *Server {
+func NewServer(addr string, writer *Writer, redactor *Redactor, metrics *Metrics, stats *Stats, ring *LogRing) *Server {
 	s := &Server{
 		writer:   writer,
 		redactor: redactor,
 		metrics:  metrics,
+		stats:    stats,
+		ring:     ring,
 	}
 
 	mux := http.NewServeMux()
@@ -72,14 +76,8 @@ func (s *Server) Shutdown(ctx context.Context) error {
 }
 
 func (s *Server) handleLokiPush(w http.ResponseWriter, r *http.Request) {
-	s.activeConn.Add(1)
-	defer s.activeConn.Add(-1)
-	if s.metrics != nil {
-		s.metrics.ActiveConnections.Set(float64(s.activeConn.Load()))
-		defer func() {
-			s.metrics.ActiveConnections.Set(float64(s.activeConn.Load()))
-		}()
-	}
+	s.trackConnOpen()
+	defer s.trackConnClose()
 
 	r.Body = http.MaxBytesReader(w, r.Body, maxRequestBytes)
 
@@ -107,14 +105,24 @@ func (s *Server) handleLokiPush(w http.ResponseWriter, r *http.Request) {
 				Message:   msg,
 			}
 
+			if s.ring != nil {
+				s.ring.Push(entry)
+			}
+
 			if s.writer.Send(entry) {
 				if s.metrics != nil {
 					s.metrics.LogsReceived.Inc()
+				}
+				if s.stats != nil {
+					s.stats.RecordEntry(stream.Stream)
 				}
 			} else {
 				if s.metrics != nil {
 					s.metrics.LogsDropped.Inc()
 					s.metrics.BackpressureEvents.Inc()
+				}
+				if s.stats != nil {
+					s.stats.RecordDrop()
 				}
 			}
 		}
@@ -124,14 +132,8 @@ func (s *Server) handleLokiPush(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleRawPush(w http.ResponseWriter, r *http.Request) {
-	s.activeConn.Add(1)
-	defer s.activeConn.Add(-1)
-	if s.metrics != nil {
-		s.metrics.ActiveConnections.Set(float64(s.activeConn.Load()))
-		defer func() {
-			s.metrics.ActiveConnections.Set(float64(s.activeConn.Load()))
-		}()
-	}
+	s.trackConnOpen()
+	defer s.trackConnClose()
 
 	r.Body = http.MaxBytesReader(w, r.Body, maxRequestBytes)
 
@@ -153,19 +155,50 @@ func (s *Server) handleRawPush(w http.ResponseWriter, r *http.Request) {
 		if entry.Timestamp.IsZero() {
 			entry.Timestamp = time.Now()
 		}
+
+		if s.ring != nil {
+			s.ring.Push(entry)
+		}
+
 		if s.writer.Send(entry) {
 			if s.metrics != nil {
 				s.metrics.LogsReceived.Inc()
+			}
+			if s.stats != nil {
+				s.stats.RecordEntry(entry.Labels)
 			}
 		} else {
 			if s.metrics != nil {
 				s.metrics.LogsDropped.Inc()
 				s.metrics.BackpressureEvents.Inc()
 			}
+			if s.stats != nil {
+				s.stats.RecordDrop()
+			}
 		}
 	}
 
 	w.WriteHeader(http.StatusNoContent)
+}
+
+func (s *Server) trackConnOpen() {
+	n := s.activeConn.Add(1)
+	if s.metrics != nil {
+		s.metrics.ActiveConnections.Set(float64(n))
+	}
+	if s.stats != nil {
+		s.stats.ActiveConns.Store(n)
+	}
+}
+
+func (s *Server) trackConnClose() {
+	n := s.activeConn.Add(-1)
+	if s.metrics != nil {
+		s.metrics.ActiveConnections.Set(float64(n))
+	}
+	if s.stats != nil {
+		s.stats.ActiveConns.Store(n)
+	}
 }
 
 func parseNanoTimestamp(s string) time.Time {
