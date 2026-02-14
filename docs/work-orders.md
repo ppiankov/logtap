@@ -19,11 +19,14 @@ logtap recv --listen :9000 --dir ./capture --max-disk 50GB
 | `--max-disk` | `50GB` | Hard cap on total disk usage |
 | `--max-file` | `1GB` | Rotate file at this size |
 | `--compress` | `true` | Compress rotated files with zstd |
+| `--redact` | `false` | Enable PII redaction before writing (see WO-09) |
+| `--redact-patterns` | built-in | Path to custom redaction patterns file |
 
 **Behavior**:
 - Accept `POST /loki/api/v1/push` (Loki push API format)
 - Also accept raw newline-delimited JSON on `POST /logtap/raw`
 - Parse Loki push payload -> extract log lines with labels
+- If `--redact`: apply redaction patterns to message BEFORE writing (PII never hits disk)
 - Write to JSONL: `{"ts":"...","labels":{...},"msg":"..."}`
 - Rotate files at `--max-file` size
 - On rotation: append entry to `index.jsonl` (file, time range, line count, labels seen)
@@ -146,7 +149,8 @@ is the shareable artifact — just `tar` (no compression), `rsync`, or `scp` to 
   "stopped": "2024-01-15T12:45:33Z",
   "total_lines": 14832901,
   "total_bytes": 8432901234,
-  "labels_seen": ["api-service", "worker-service", "gateway"]
+  "labels_seen": ["api-service", "worker-service", "gateway"],
+  "redaction": {"enabled": true, "patterns": ["credit_card", "email", "jwt", "custom:ssn"]}
 }
 ```
 
@@ -748,20 +752,73 @@ logtap status
 
 ---
 
-### WO-09: Security guardrails
+### WO-09: Security guardrails and PII redaction
 
-**Goal**: Prevent PII/PCI leaks by default.
+**Goal**: Prevent PII/PCI leaks structurally — redact on write, not after the fact.
+
+**The problem**: logs contain PII (emails, credit cards, tokens, SSNs). If logtap
+captures them as-is and someone sends the capture to a colleague, PII leaks. The
+redaction must happen BEFORE writing to disk — once it's in a JSONL file, it's too late.
+
+**PII redaction** (`--redact` flag on `logtap recv`):
+
+Built-in patterns (always available):
+| Pattern | Matches | Replacement |
+|---------|---------|-------------|
+| `credit_card` | 13-19 digit card numbers (Luhn-validated) | `[REDACTED:cc]` |
+| `email` | RFC 5322 email addresses | `[REDACTED:email]` |
+| `jwt` | `eyJ...` base64 JWT tokens | `[REDACTED:jwt]` |
+| `bearer` | `Bearer ...` / `Authorization: ...` headers | `[REDACTED:bearer]` |
+| `ip_v4` | IPv4 addresses | `[REDACTED:ip]` |
+| `ssn` | US Social Security Numbers (XXX-XX-XXXX) | `[REDACTED:ssn]` |
+| `phone` | Phone numbers (international formats) | `[REDACTED:phone]` |
+
+Custom patterns (`--redact-patterns patterns.yaml`):
+```yaml
+patterns:
+  - name: internal_id
+    regex: 'CUST-[A-Z0-9]{8}'
+    replacement: '[REDACTED:internal_id]'
+  - name: api_key
+    regex: 'sk_live_[a-zA-Z0-9]{24}'
+    replacement: '[REDACTED:api_key]'
+```
 
 **Behavior**:
-- Default: refuse to tap prod-labeled namespaces
-- Flag `--allow-prod` overrides (with warning banner in TUI)
-- Optional `--redact` flag with regex patterns for PII
-- TLS support via `--tls-cert` and `--tls-key`
-- All traffic logged to audit file (connection source, bytes, duration)
+- `--redact` enables all built-in patterns
+- `--redact=credit_card,email` enables only specified patterns
+- `--redact-patterns file.yaml` adds custom patterns
+- Redaction happens in the writer pipeline BEFORE bytes hit disk
+- `metadata.json` records which patterns were active (so recipient knows data is redacted)
+- TUI shows redaction status: `Redact: on (6 patterns)` or `Redact: OFF` (yellow warning)
+- `logtap_redactions_total` metric with `pattern` label
+
+**TUI warning** (when `--redact` is NOT set):
+```
+! PII redaction is OFF — captured logs may contain sensitive data
+  Use --redact to enable. See: logtap recv --help
+```
+
+**Prod namespace protection**:
+- Default: `logtap tap` refuses to tap prod-labeled namespaces
+- Labels checked: `env=prod`, `environment=production`, `logtap.dev/prod=true`
+- Flag `--allow-prod` overrides (with permanent warning banner in TUI)
+- If `--allow-prod` without `--redact`: extra warning — "tapping prod without redaction"
+
+**TLS support**:
+- `--tls-cert` and `--tls-key` for receiver
+- If omitted: plaintext (fine for local/tunnel, warn for direct IP mode)
+
+**Audit log**:
+- Written to `<capture-dir>/audit.jsonl`
+- Records: connection source IP, bytes received, duration, session ID
+- Not redacted (contains only connection metadata, no log content)
 
 **Files**:
-- `internal/recv/security.go`
-- `internal/recv/redact.go`
+- `internal/recv/redact.go` -- redaction engine, pattern registry, pipeline stage
+- `internal/recv/redact_test.go` -- deterministic tests for each built-in pattern
+- `internal/recv/security.go` -- prod namespace check, TLS setup
+- `internal/recv/audit.go` -- audit log writer
 
 ---
 
@@ -783,7 +840,7 @@ logtap status
 
 ```
 logtap check                                    # 1. verify cluster + no leftovers
-logtap recv --tunnel                            # 2. start receiver (keep running)
+logtap recv --tunnel --redact                   # 2. start receiver with PII redaction
 logtap tap --deployment api-gateway \
   --target logtap.logtap:9000                   # 3. inject sidecar (session lt-a3f9)
 # ... watch TUI, investigate ...
