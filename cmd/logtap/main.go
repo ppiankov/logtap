@@ -3,6 +3,8 @@ package main
 import (
 	"fmt"
 	"os"
+
+	"github.com/spf13/cobra"
 )
 
 var version = "dev"
@@ -15,7 +17,11 @@ func main() {
 }
 
 func execute() error {
-	// TODO: wire cobra root command with subcommands
-	fmt.Printf("logtap %s\n", version)
-	return nil
+	root := &cobra.Command{
+		Use:     "logtap",
+		Short:   "Ephemeral log mirror for load testing",
+		Version: version,
+	}
+	root.AddCommand(newRecvCmd())
+	return root.Execute()
 }
