@@ -249,7 +249,9 @@ func (r *Rotator) compressFile(name string) (string, error) {
 		return "", err
 	}
 	compressed := enc.EncodeAll(src, nil)
-	enc.Close()
+	if err := enc.Close(); err != nil {
+		return "", err
+	}
 
 	if err := os.WriteFile(dstPath, compressed, 0o644); err != nil {
 		return "", err
@@ -266,7 +268,7 @@ func (r *Rotator) appendIndex(entry IndexEntry) error {
 	if err != nil {
 		return err
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 
 	data, err := json.Marshal(entry)
 	if err != nil {
