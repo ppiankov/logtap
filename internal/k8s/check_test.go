@@ -2,13 +2,56 @@ package k8s
 
 import (
 	"context"
+	"fmt"
+	"strings"
 	"testing"
 
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/kubernetes/fake"
+	k8stesting "k8s.io/client-go/testing"
 )
+
+func TestCheckResources_LimitRangeListError(t *testing.T) {
+	cs := fake.NewSimpleClientset() //nolint:staticcheck // NewClientset requires generated apply configs
+	cs.PrependReactor("list", "limitranges", func(action k8stesting.Action) (bool, runtime.Object, error) {
+		return true, nil, fmt.Errorf("injected limitrange list error")
+	})
+	c := NewClientFromInterface(cs, "default")
+
+	_, err := CheckResources(context.Background(), c, 1, "16Mi", "25m")
+	if err == nil {
+		t.Fatal("expected error for limitrange list failure")
+	}
+}
+
+func TestCheckResources_NodeListError(t *testing.T) {
+	cs := fake.NewSimpleClientset() //nolint:staticcheck // NewClientset requires generated apply configs
+	cs.PrependReactor("list", "nodes", func(action k8stesting.Action) (bool, runtime.Object, error) {
+		return true, nil, fmt.Errorf("injected node list error")
+	})
+	c := NewClientFromInterface(cs, "default")
+
+	_, err := CheckResources(context.Background(), c, 1, "16Mi", "25m")
+	if err == nil {
+		t.Fatal("expected error for node list failure")
+	}
+}
+
+func TestCheckResources_QuotaListError(t *testing.T) {
+	cs := fake.NewSimpleClientset() //nolint:staticcheck // NewClientset requires generated apply configs
+	cs.PrependReactor("list", "resourcequotas", func(action k8stesting.Action) (bool, runtime.Object, error) {
+		return true, nil, fmt.Errorf("injected quota list error")
+	})
+	c := NewClientFromInterface(cs, "default")
+
+	_, err := CheckResources(context.Background(), c, 1, "16Mi", "25m")
+	if err == nil {
+		t.Fatal("expected error for quota list failure")
+	}
+}
 
 func TestCheckResources_TightQuota(t *testing.T) {
 	quota := &corev1.ResourceQuota{
@@ -201,6 +244,104 @@ func TestIsProdNamespace(t *testing.T) {
 				t.Errorf("IsProdNamespace() = %v, want %v", got, tt.want)
 			}
 		})
+	}
+}
+
+func TestCheckResources_CPULimitRange(t *testing.T) {
+	lr := &corev1.LimitRange{
+		ObjectMeta: metav1.ObjectMeta{Name: "strict-cpu", Namespace: "default"},
+		Spec: corev1.LimitRangeSpec{
+			Limits: []corev1.LimitRangeItem{
+				{
+					Type: corev1.LimitTypeContainer,
+					Max: corev1.ResourceList{
+						corev1.ResourceCPU: resource.MustParse("10m"),
+					},
+				},
+			},
+		},
+	}
+
+	cs := fake.NewSimpleClientset(lr) //nolint:staticcheck // NewClientset requires generated apply configs
+	c := NewClientFromInterface(cs, "default")
+
+	warnings, err := CheckResources(context.Background(), c, 1, "16Mi", "25m")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	found := false
+	for _, w := range warnings {
+		if w.Check == "limitrange" && strings.Contains(w.Message, "cpu") {
+			found = true
+		}
+	}
+	if !found {
+		t.Error("expected cpu limitrange warning")
+	}
+}
+
+func TestCheckResources_CPUQuota(t *testing.T) {
+	quota := &corev1.ResourceQuota{
+		ObjectMeta: metav1.ObjectMeta{Name: "cpu-tight", Namespace: "default"},
+		Status: corev1.ResourceQuotaStatus{
+			Hard: corev1.ResourceList{
+				corev1.ResourceRequestsCPU: resource.MustParse("500m"),
+			},
+			Used: corev1.ResourceList{
+				corev1.ResourceRequestsCPU: resource.MustParse("480m"),
+			},
+		},
+	}
+
+	cs := fake.NewSimpleClientset(quota) //nolint:staticcheck // NewClientset requires generated apply configs
+	c := NewClientFromInterface(cs, "default")
+
+	warnings, err := CheckResources(context.Background(), c, 2, "16Mi", "25m")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	found := false
+	for _, w := range warnings {
+		if w.Check == "quota" && strings.Contains(w.Message, "cpu") {
+			found = true
+		}
+	}
+	if !found {
+		t.Error("expected cpu quota warning")
+	}
+}
+
+func TestCheckResources_DiskPressure(t *testing.T) {
+	node := &corev1.Node{
+		ObjectMeta: metav1.ObjectMeta{Name: "node-1"},
+		Status: corev1.NodeStatus{
+			Conditions: []corev1.NodeCondition{
+				{Type: corev1.NodeDiskPressure, Status: corev1.ConditionTrue},
+			},
+			Allocatable: corev1.ResourceList{
+				corev1.ResourceMemory: resource.MustParse("4Gi"),
+			},
+		},
+	}
+
+	cs := fake.NewSimpleClientset(node) //nolint:staticcheck // NewClientset requires generated apply configs
+	c := NewClientFromInterface(cs, "default")
+
+	warnings, err := CheckResources(context.Background(), c, 1, "16Mi", "25m")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	found := false
+	for _, w := range warnings {
+		if w.Check == "capacity" && strings.Contains(w.Message, "disk pressure") {
+			found = true
+		}
+	}
+	if !found {
+		t.Error("expected disk pressure warning")
 	}
 }
 

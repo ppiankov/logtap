@@ -2,12 +2,16 @@ package k8s
 
 import (
 	"context"
+	"fmt"
+	"strings"
 	"testing"
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/kubernetes/fake"
+	k8stesting "k8s.io/client-go/testing"
 )
 
 func testReceiverSpec(ns string) ReceiverSpec {
@@ -138,6 +142,152 @@ func TestDeleteReceiver_PreservesNamespace(t *testing.T) {
 	_, err = cs.CoreV1().Namespaces().Get(context.Background(), "test-ns", metav1.GetOptions{})
 	if err != nil {
 		t.Error("namespace was deleted even though CreatedNS was false")
+	}
+}
+
+func TestDeployReceiver_NamespaceError(t *testing.T) {
+	cs := fake.NewSimpleClientset() //nolint:staticcheck // NewClientset requires generated apply configs
+	cs.PrependReactor("create", "namespaces", func(action k8stesting.Action) (bool, runtime.Object, error) {
+		return true, nil, fmt.Errorf("injected ns error")
+	})
+	c := NewClientFromInterface(cs, "test-ns")
+
+	_, err := DeployReceiver(context.Background(), c, testReceiverSpec("test-ns"))
+	if err == nil {
+		t.Fatal("expected error for namespace creation failure")
+	}
+}
+
+func TestDeployReceiver_ServiceError(t *testing.T) {
+	cs := fake.NewSimpleClientset() //nolint:staticcheck // NewClientset requires generated apply configs
+	cs.PrependReactor("create", "services", func(action k8stesting.Action) (bool, runtime.Object, error) {
+		return true, nil, fmt.Errorf("injected svc error")
+	})
+	c := NewClientFromInterface(cs, "test-ns")
+
+	res, err := DeployReceiver(context.Background(), c, testReceiverSpec("test-ns"))
+	if err == nil {
+		t.Fatal("expected error for service creation failure")
+	}
+	if res == nil {
+		t.Fatal("resources should be returned even on error")
+	}
+}
+
+func TestDeployReceiver_PodError(t *testing.T) {
+	cs := fake.NewSimpleClientset() //nolint:staticcheck // NewClientset requires generated apply configs
+	cs.PrependReactor("create", "pods", func(action k8stesting.Action) (bool, runtime.Object, error) {
+		return true, nil, fmt.Errorf("injected pod error")
+	})
+	c := NewClientFromInterface(cs, "test-ns")
+
+	res, err := DeployReceiver(context.Background(), c, testReceiverSpec("test-ns"))
+	if err == nil {
+		t.Fatal("expected error for pod creation failure")
+	}
+	if res == nil {
+		t.Fatal("resources should be returned even on error")
+	}
+}
+
+func TestDeleteReceiver_PodDeleteError(t *testing.T) {
+	cs := fake.NewSimpleClientset() //nolint:staticcheck // NewClientset requires generated apply configs
+	c := NewClientFromInterface(cs, "test-ns")
+
+	// deploy first
+	res, err := DeployReceiver(context.Background(), c, testReceiverSpec("test-ns"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// inject pod delete error
+	cs.PrependReactor("delete", "pods", func(action k8stesting.Action) (bool, runtime.Object, error) {
+		return true, nil, fmt.Errorf("injected pod delete error")
+	})
+
+	err = DeleteReceiver(context.Background(), c, res)
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	if !strings.Contains(err.Error(), "delete pod") {
+		t.Errorf("err = %q, want 'delete pod'", err.Error())
+	}
+}
+
+func TestDeleteReceiver_NamespaceDeleteError(t *testing.T) {
+	cs := fake.NewSimpleClientset() //nolint:staticcheck // NewClientset requires generated apply configs
+	c := NewClientFromInterface(cs, "test-ns")
+
+	res, err := DeployReceiver(context.Background(), c, testReceiverSpec("test-ns"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	cs.PrependReactor("delete", "namespaces", func(action k8stesting.Action) (bool, runtime.Object, error) {
+		return true, nil, fmt.Errorf("injected ns delete error")
+	})
+
+	err = DeleteReceiver(context.Background(), c, res)
+	if err == nil {
+		t.Fatal("expected error for namespace delete failure")
+	}
+}
+
+func TestDeleteReceiver_ServiceDeleteError(t *testing.T) {
+	cs := fake.NewSimpleClientset() //nolint:staticcheck // NewClientset requires generated apply configs
+	c := NewClientFromInterface(cs, "test-ns")
+
+	res, err := DeployReceiver(context.Background(), c, testReceiverSpec("test-ns"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// inject service delete error (pod delete succeeds)
+	cs.PrependReactor("delete", "services", func(action k8stesting.Action) (bool, runtime.Object, error) {
+		return true, nil, fmt.Errorf("injected service delete error")
+	})
+
+	err = DeleteReceiver(context.Background(), c, res)
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	if !strings.Contains(err.Error(), "delete service") {
+		t.Errorf("err = %q, want 'delete service'", err.Error())
+	}
+}
+
+func TestWaitForPodReady_ContextCancel(t *testing.T) {
+	cs := fake.NewSimpleClientset() //nolint:staticcheck // NewClientset requires generated apply configs
+	c := NewClientFromInterface(cs, "test-ns")
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel() // cancel immediately
+
+	err := WaitForPodReady(ctx, c, "test-ns", "nonexistent", 10*time.Second)
+	if err == nil {
+		t.Fatal("expected error for cancelled context")
+	}
+}
+
+func TestWaitForPodReady_Timeout(t *testing.T) {
+	// pod exists but never becomes ready
+	pod := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{Name: ReceiverName, Namespace: "test-ns"},
+		Status: corev1.PodStatus{
+			Conditions: []corev1.PodCondition{
+				{Type: corev1.PodReady, Status: corev1.ConditionFalse},
+			},
+		},
+	}
+	cs := fake.NewSimpleClientset(pod) //nolint:staticcheck // NewClientset requires generated apply configs
+	c := NewClientFromInterface(cs, "test-ns")
+
+	err := WaitForPodReady(context.Background(), c, "test-ns", ReceiverName, 2*time.Second)
+	if err == nil {
+		t.Fatal("expected timeout error")
+	}
+	if !strings.Contains(err.Error(), "timeout") {
+		t.Errorf("err = %q, want timeout message", err.Error())
 	}
 }
 
