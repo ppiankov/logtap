@@ -116,7 +116,7 @@ func runCheck(namespace string) error {
 	orphans, err := k8s.FindOrphans(ctx, c, sidecar.AnnotationTapped, sidecar.AnnotationTarget, sidecar.ContainerPrefix, checker)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Leftovers:     error: %v\n", err)
-	} else if len(orphans.Sidecars) == 0 && len(orphans.StaleWorkloads) == 0 {
+	} else if len(orphans.Sidecars) == 0 && len(orphans.StaleWorkloads) == 0 && len(orphans.Receivers) == 0 {
 		fmt.Fprintf(os.Stderr, "Leftovers:     none\n")
 	} else {
 		fmt.Fprintf(os.Stderr, "Leftovers:\n")
@@ -130,9 +130,16 @@ func runCheck(namespace string) error {
 		for _, s := range orphans.StaleWorkloads {
 			fmt.Fprintf(os.Stderr, "  ! %s/%-20s stale annotation (no sidecar container)\n", s.Workload.Kind, s.Workload.Name)
 		}
+		for _, r := range orphans.Receivers {
+			age := r.Age.Truncate(time.Minute)
+			fmt.Fprintf(os.Stderr, "  ! Pod %-24s in namespace %s (age: %s)\n", r.PodName, r.Namespace, age)
+		}
 		fmt.Fprintln(os.Stderr)
 		if len(orphans.Sidecars) > 0 {
 			fmt.Fprintf(os.Stderr, "  Run: logtap untap --all --force    to remove sidecars\n")
+		}
+		if len(orphans.Receivers) > 0 {
+			fmt.Fprintf(os.Stderr, "  Run: kubectl delete pod,svc -n %s -l %s=%s    to remove receiver\n", c.NS, k8s.LabelManagedBy, k8s.ManagedByValue)
 		}
 	}
 
