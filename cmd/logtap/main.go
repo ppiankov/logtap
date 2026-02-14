@@ -23,5 +23,6 @@ func execute() error {
 		Version: version,
 	}
 	root.AddCommand(newRecvCmd())
+	root.AddCommand(newOpenCmd())
 	return root.Execute()
 }
