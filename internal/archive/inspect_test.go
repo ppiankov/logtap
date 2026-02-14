@@ -342,9 +342,9 @@ func TestFormatBytes(t *testing.T) {
 		{9 * 1073741824, "9.0 GB"},
 	}
 	for _, tt := range tests {
-		got := formatBytes(tt.input)
+		got := FormatBytes(tt.input)
 		if got != tt.want {
-			t.Errorf("formatBytes(%d) = %q, want %q", tt.input, got, tt.want)
+			t.Errorf("FormatBytes(%d) = %q, want %q", tt.input, got, tt.want)
 		}
 	}
 }
@@ -361,9 +361,9 @@ func TestFormatCount(t *testing.T) {
 		{14832901, "14,832,901"},
 	}
 	for _, tt := range tests {
-		got := formatCount(tt.input)
+		got := FormatCount(tt.input)
 		if got != tt.want {
-			t.Errorf("formatCount(%d) = %q, want %q", tt.input, got, tt.want)
+			t.Errorf("FormatCount(%d) = %q, want %q", tt.input, got, tt.want)
 		}
 	}
 }
