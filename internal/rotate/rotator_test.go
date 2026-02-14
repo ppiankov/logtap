@@ -26,11 +26,6 @@ func TestWriteBelowMaxFile(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	files := jsonlFiles(t, dir)
-	if len(files) != 0 {
-		// after close with compress=false, the active file gets an index entry
-		// but stays as-is; we should have 1 data file
-	}
 	// verify data was written
 	entries, _ := os.ReadDir(dir)
 	var found bool
@@ -235,7 +230,7 @@ func TestBootstrap(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer r.Close()
+	defer func() { _ = r.Close() }()
 
 	if r.DiskUsage() < 1500 {
 		t.Errorf("expected DiskUsage >= 1500, got %d", r.DiskUsage())
@@ -268,18 +263,6 @@ func TestCloseWritesIndex(t *testing.T) {
 }
 
 // helpers
-
-func jsonlFiles(t *testing.T, dir string) []string {
-	t.Helper()
-	entries, _ := os.ReadDir(dir)
-	var out []string
-	for _, e := range entries {
-		if strings.HasSuffix(e.Name(), ".jsonl") && e.Name() != "index.jsonl" {
-			out = append(out, e.Name())
-		}
-	}
-	return out
-}
 
 func dataFiles(t *testing.T, dir string) []string {
 	t.Helper()
