@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="assets/logo.svg" alt="logtap" width="128">
+</p>
+
 # logtap
 
 [![CI](https://github.com/ppiankov/logtap/actions/workflows/ci.yml/badge.svg)](https://github.com/ppiankov/logtap/actions/workflows/ci.yml)
