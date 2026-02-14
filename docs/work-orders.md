@@ -388,22 +388,47 @@ logtap tap --dry-run
 
 **How it works**:
 1. Pre-check: HTTP GET `--target` /metrics — warn if receiver unreachable, require `--force` to proceed
-2. Generate session ID (short random, e.g. `lt-a3f9`) stored in annotations for multi-user isolation
-3. Patch target deployment/statefulset/daemonset spec:
+2. Resource check: verify namespace quota headroom and node capacity (see below)
+3. Generate session ID (short random, e.g. `lt-a3f9`) stored in annotations for multi-user isolation
+4. Patch target deployment/statefulset/daemonset spec:
    - Add annotation `logtap.dev/tapped: "<session-id>"`
    - Add annotation `logtap.dev/target: "<target-address>"`
    - Add sidecar container `logtap-forwarder-<session-id>` to pod template
    - Sidecar shares the pod's log volumes via `emptyDir` or reads from
      `/var/log/containers` (hostPath, same as logging agents)
-4. Sidecar container:
+5. Sidecar container:
    - Minimal image: `ghcr.io/ppiankov/logtap-forwarder:latest`
    - Reads container stdout/stderr via shared volume or Kubernetes API log endpoint
    - Forwards to receiver via Loki push API (`POST /loki/api/v1/push`)
    - Labels: namespace, pod, container, app (from pod labels)
    - No buffering beyond 1MB -- drop if receiver unreachable
-   - Resource limits: 32Mi memory, 50m CPU
-5. Triggers rolling restart (new pod spec = new pods)
-6. Show diff before applying (`--dry-run` is default for first run)
+   - Resource defaults: requests 16Mi/25m, limits 32Mi/50m
+   - Override: `--sidecar-memory 64Mi` `--sidecar-cpu 100m`
+6. Triggers rolling restart (new pod spec = new pods)
+7. Show diff before applying (`--dry-run` is default for first run)
+
+**Resource pre-checks** (step 2):
+Injecting a sidecar adds resource requests to every pod. logtap checks before patching:
+
+| Check | What | Action |
+|-------|------|--------|
+| ResourceQuota | Namespace has quota, sidecar * replicas exceeds remaining | Warn, show math, require `--force` |
+| LimitRange | Namespace default limits < sidecar requests | Warn, suggest `--sidecar-memory`/`--sidecar-cpu` |
+| Node capacity | Nodes near memory/CPU limit, sidecar may cause eviction | Warn |
+
+Example warning:
+```
+! Namespace "default" has ResourceQuota: memory used 3.8Gi / 4.0Gi
+  Adding logtap-forwarder (16Mi x 3 replicas = 48Mi) would exceed quota by 48Mi
+  Options:
+    - Ask cluster admin to increase quota
+    - Use --sidecar-memory 8Mi to reduce footprint
+    - Use --force to proceed anyway (pods may fail to schedule)
+```
+
+logtap never modifies quotas or limits — it warns and lets the user decide.
+The defaults (16Mi/25m requests, 32Mi/50m limits) are deliberately small. For
+high-throughput workloads (>10k logs/sec per pod) consider `--sidecar-memory 64Mi`.
 
 **Multi-user safety**:
 - Each `logtap tap` generates a unique session ID (e.g. `lt-a3f9`)
@@ -587,14 +612,15 @@ logtap check
 Cluster:       aks-dev-westeurope (v1.29.2)
 Namespace:     default
 RBAC:          ok (can patch deployments, create pods)
+Quota:         ok (memory 1.2Gi / 4.0Gi available)
 
 Leftovers:     none
 
 Candidate workloads:
-  deployment/api-gateway       3 replicas   ready
-  deployment/payments          2 replicas   ready
-  deployment/worker            5 replicas   ready
-  statefulset/postgres         1 replica    ready
+  deployment/api-gateway       3 replicas   ready     +48Mi for sidecar
+  deployment/payments          2 replicas   ready     +32Mi for sidecar
+  deployment/worker            5 replicas   ready     +80Mi for sidecar
+  statefulset/postgres         1 replica    ready     +16Mi for sidecar
 
 Ready to tap. Run: logtap tap --deployment api-gateway --target logtap.logtap:9000
 ```
@@ -624,6 +650,7 @@ Candidate workloads:
 **Checks**:
 - Cluster reachable (kubectl context valid)
 - RBAC permissions: can get/patch deployments, can create pods (for tunnel)
+- **Resource quotas**: show namespace quota headroom, calculate sidecar cost per workload (replicas * 16Mi)
 - **Orphaned sidecars**: workloads with `logtap.dev/tapped` annotation or `logtap-forwarder` container
   - For each: test if the sidecar's target receiver is reachable
   - If unreachable: flag as orphan, suggest `logtap untap --all`
