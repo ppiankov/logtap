@@ -31,5 +31,6 @@ func execute() error {
 	root.AddCommand(newTapCmd())
 	root.AddCommand(newUntapCmd())
 	root.AddCommand(newCheckCmd())
+	root.AddCommand(newStatusCmd())
 	return root.Execute()
 }
