@@ -111,6 +111,114 @@ func applyDaemonSetPatch(ctx context.Context, c *Client, d *appsv1.DaemonSet, ps
 	return diff, nil
 }
 
+// RemovePatchSpec describes containers to remove and annotations to update/delete.
+type RemovePatchSpec struct {
+	ContainerNames    []string          // containers to remove from pod spec
+	SetAnnotations    map[string]string // annotations to set (updated values)
+	DeleteAnnotations []string          // annotation keys to delete entirely
+}
+
+// RemovePatch removes containers and updates annotations on a workload.
+// If dryRun is true, the diff is computed but the workload is not modified.
+func RemovePatch(ctx context.Context, c *Client, w *Workload, rs RemovePatchSpec, dryRun bool) (string, error) {
+	switch w.Kind {
+	case KindDeployment:
+		return removeDeploymentPatch(ctx, c, w.Raw.(*appsv1.Deployment), rs, dryRun)
+	case KindStatefulSet:
+		return removeStatefulSetPatch(ctx, c, w.Raw.(*appsv1.StatefulSet), rs, dryRun)
+	case KindDaemonSet:
+		return removeDaemonSetPatch(ctx, c, w.Raw.(*appsv1.DaemonSet), rs, dryRun)
+	default:
+		return "", fmt.Errorf("unsupported workload kind: %s", w.Kind)
+	}
+}
+
+func removeDeploymentPatch(ctx context.Context, c *Client, d *appsv1.Deployment, rs RemovePatchSpec, dryRun bool) (string, error) {
+	before, _ := marshalYAMLSpec(d)
+
+	updated := d.DeepCopy()
+	updated.Spec.Template.Spec.Containers = filterContainers(updated.Spec.Template.Spec.Containers, rs.ContainerNames)
+	applyAnnotationChanges(updated.Spec.Template.Annotations, rs.SetAnnotations, rs.DeleteAnnotations)
+
+	after, _ := marshalYAMLSpec(updated)
+	diff := computeDiff(before, after)
+
+	if dryRun {
+		return diff, nil
+	}
+
+	_, err := c.CS.AppsV1().Deployments(c.NS).Update(ctx, updated, metav1.UpdateOptions{})
+	if err != nil {
+		return "", fmt.Errorf("update deployment %s: %w", d.Name, err)
+	}
+	return diff, nil
+}
+
+func removeStatefulSetPatch(ctx context.Context, c *Client, s *appsv1.StatefulSet, rs RemovePatchSpec, dryRun bool) (string, error) {
+	before, _ := marshalYAMLSpec(s)
+
+	updated := s.DeepCopy()
+	updated.Spec.Template.Spec.Containers = filterContainers(updated.Spec.Template.Spec.Containers, rs.ContainerNames)
+	applyAnnotationChanges(updated.Spec.Template.Annotations, rs.SetAnnotations, rs.DeleteAnnotations)
+
+	after, _ := marshalYAMLSpec(updated)
+	diff := computeDiff(before, after)
+
+	if dryRun {
+		return diff, nil
+	}
+
+	_, err := c.CS.AppsV1().StatefulSets(c.NS).Update(ctx, updated, metav1.UpdateOptions{})
+	if err != nil {
+		return "", fmt.Errorf("update statefulset %s: %w", s.Name, err)
+	}
+	return diff, nil
+}
+
+func removeDaemonSetPatch(ctx context.Context, c *Client, d *appsv1.DaemonSet, rs RemovePatchSpec, dryRun bool) (string, error) {
+	before, _ := marshalYAMLSpec(d)
+
+	updated := d.DeepCopy()
+	updated.Spec.Template.Spec.Containers = filterContainers(updated.Spec.Template.Spec.Containers, rs.ContainerNames)
+	applyAnnotationChanges(updated.Spec.Template.Annotations, rs.SetAnnotations, rs.DeleteAnnotations)
+
+	after, _ := marshalYAMLSpec(updated)
+	diff := computeDiff(before, after)
+
+	if dryRun {
+		return diff, nil
+	}
+
+	_, err := c.CS.AppsV1().DaemonSets(c.NS).Update(ctx, updated, metav1.UpdateOptions{})
+	if err != nil {
+		return "", fmt.Errorf("update daemonset %s: %w", d.Name, err)
+	}
+	return diff, nil
+}
+
+func filterContainers(containers []corev1.Container, remove []string) []corev1.Container {
+	removeSet := make(map[string]bool, len(remove))
+	for _, name := range remove {
+		removeSet[name] = true
+	}
+	out := make([]corev1.Container, 0, len(containers))
+	for _, c := range containers {
+		if !removeSet[c.Name] {
+			out = append(out, c)
+		}
+	}
+	return out
+}
+
+func applyAnnotationChanges(annotations map[string]string, set map[string]string, del []string) {
+	for k, v := range set {
+		annotations[k] = v
+	}
+	for _, k := range del {
+		delete(annotations, k)
+	}
+}
+
 func marshalYAMLSpec(obj any) (string, error) {
 	j, err := json.Marshal(obj)
 	if err != nil {
