@@ -116,7 +116,7 @@ func runRecv(listen, dir, maxFileStr, maxDiskStr string, compress bool, redactFl
 	}
 
 	// server
-	srv := recv.NewServer(listen, writer, redactor, metrics)
+	srv := recv.NewServer(listen, writer, redactor, metrics, nil, nil)
 
 	// signal handling
 	ctx, cancel := context.WithCancel(context.Background())

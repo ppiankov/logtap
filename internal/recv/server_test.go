@@ -17,7 +17,7 @@ func TestLokiPush(t *testing.T) {
 	w := NewWriter(1024, &buf, nil)
 	defer w.Close()
 
-	srv := NewServer(":0", w, nil, nil)
+	srv := NewServer(":0", w, nil, nil, nil, nil)
 	ts := httptest.NewServer(srv.httpSrv.Handler)
 	defer ts.Close()
 
@@ -56,7 +56,7 @@ func TestLokiPushInvalidJSON(t *testing.T) {
 	w := NewWriter(1024, &buf, nil)
 	defer w.Close()
 
-	srv := NewServer(":0", w, nil, nil)
+	srv := NewServer(":0", w, nil, nil, nil, nil)
 	ts := httptest.NewServer(srv.httpSrv.Handler)
 	defer ts.Close()
 
@@ -75,7 +75,7 @@ func TestRawPush(t *testing.T) {
 	w := NewWriter(1024, &buf, nil)
 	defer w.Close()
 
-	srv := NewServer(":0", w, nil, nil)
+	srv := NewServer(":0", w, nil, nil, nil, nil)
 	ts := httptest.NewServer(srv.httpSrv.Handler)
 	defer ts.Close()
 
@@ -109,7 +109,7 @@ func TestBackpressure(t *testing.T) {
 	reg := prometheus.NewRegistry()
 	m := NewMetrics(reg)
 
-	srv := NewServer(":0", w, nil, m)
+	srv := NewServer(":0", w, nil, m, nil, nil)
 	ts := httptest.NewServer(srv.httpSrv.Handler)
 	defer ts.Close()
 
@@ -142,7 +142,7 @@ func TestMetricsEndpoint(t *testing.T) {
 	w := NewWriter(1024, &buf, nil)
 	defer w.Close()
 
-	srv := NewServer(":0", w, nil, nil)
+	srv := NewServer(":0", w, nil, nil, nil, nil)
 	ts := httptest.NewServer(srv.httpSrv.Handler)
 	defer ts.Close()
 
@@ -160,7 +160,7 @@ func TestGracefulShutdown(t *testing.T) {
 	var buf bytes.Buffer
 	w := NewWriter(65536, &buf, nil)
 
-	srv := NewServer(":0", w, nil, nil)
+	srv := NewServer(":0", w, nil, nil, nil, nil)
 	ts := httptest.NewServer(srv.httpSrv.Handler)
 
 	// send data
@@ -191,7 +191,7 @@ func TestRedactionIntegration(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	srv := NewServer(":0", w, redactor, nil)
+	srv := NewServer(":0", w, redactor, nil, nil, nil)
 	ts := httptest.NewServer(srv.httpSrv.Handler)
 	defer ts.Close()
 
