@@ -29,5 +29,6 @@ func execute() error {
 	root.AddCommand(newExportCmd())
 	root.AddCommand(newTriageCmd())
 	root.AddCommand(newTapCmd())
+	root.AddCommand(newUntapCmd())
 	return root.Execute()
 }

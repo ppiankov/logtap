@@ -137,3 +137,18 @@ func DiscoverBySelector(ctx context.Context, c *Client, selector string) ([]*Wor
 
 	return workloads, nil
 }
+
+// DiscoverTapped finds all workloads with a non-empty template annotation for the given key.
+func DiscoverTapped(ctx context.Context, c *Client, annotationKey string) ([]*Workload, error) {
+	all, err := DiscoverBySelector(ctx, c, "")
+	if err != nil {
+		return nil, err
+	}
+	var tapped []*Workload
+	for _, w := range all {
+		if w.Annotations[annotationKey] != "" {
+			tapped = append(tapped, w)
+		}
+	}
+	return tapped, nil
+}

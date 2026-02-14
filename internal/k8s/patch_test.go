@@ -203,3 +203,179 @@ func TestApplyPatch_StatefulSet(t *testing.T) {
 		t.Errorf("containers = %d, want 2", len(updated.Spec.Template.Spec.Containers))
 	}
 }
+
+func TestRemovePatch_Deployment(t *testing.T) {
+	app := corev1.Container{Name: "app", Image: "myapp:v1"}
+	sc := sidecarContainer("logtap-forwarder-lt-a3f9")
+	deploy := makeTestDeployment("api-gw", app, sc)
+	deploy.Spec.Template.Annotations = map[string]string{
+		"logtap.dev/tapped": "lt-a3f9",
+		"logtap.dev/target": "logtap:9000",
+	}
+
+	cs := fake.NewSimpleClientset(deploy) //nolint:staticcheck // NewClientset requires generated apply configs
+	c := NewClientFromInterface(cs, "default")
+
+	w, err := DiscoverByName(context.Background(), c, KindDeployment, "api-gw")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	rs := RemovePatchSpec{
+		ContainerNames:    []string{"logtap-forwarder-lt-a3f9"},
+		DeleteAnnotations: []string{"logtap.dev/tapped", "logtap.dev/target"},
+	}
+
+	diff, err := RemovePatch(context.Background(), c, w, rs, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if diff == "" {
+		t.Error("diff is empty")
+	}
+
+	updated, err := cs.AppsV1().Deployments("default").Get(context.Background(), "api-gw", metav1.GetOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(updated.Spec.Template.Spec.Containers) != 1 {
+		t.Errorf("containers = %d, want 1", len(updated.Spec.Template.Spec.Containers))
+	}
+	if updated.Spec.Template.Spec.Containers[0].Name != "app" {
+		t.Errorf("remaining container = %q, want %q", updated.Spec.Template.Spec.Containers[0].Name, "app")
+	}
+	if _, ok := updated.Spec.Template.Annotations["logtap.dev/tapped"]; ok {
+		t.Error("tapped annotation should be deleted")
+	}
+}
+
+func TestRemovePatch_StatefulSet(t *testing.T) {
+	sts := &appsv1.StatefulSet{
+		ObjectMeta: metav1.ObjectMeta{Name: "redis", Namespace: "default"},
+		Spec: appsv1.StatefulSetSpec{
+			Replicas: int32Ptr(3),
+			Template: corev1.PodTemplateSpec{
+				ObjectMeta: metav1.ObjectMeta{
+					Annotations: map[string]string{
+						"logtap.dev/tapped": "lt-a3f9",
+						"logtap.dev/target": "logtap:9000",
+					},
+				},
+				Spec: corev1.PodSpec{
+					Containers: []corev1.Container{
+						{Name: "redis", Image: "redis:7"},
+						sidecarContainer("logtap-forwarder-lt-a3f9"),
+					},
+				},
+			},
+		},
+	}
+	cs := fake.NewSimpleClientset(sts) //nolint:staticcheck // NewClientset requires generated apply configs
+	c := NewClientFromInterface(cs, "default")
+
+	w, err := DiscoverByName(context.Background(), c, KindStatefulSet, "redis")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	rs := RemovePatchSpec{
+		ContainerNames:    []string{"logtap-forwarder-lt-a3f9"},
+		DeleteAnnotations: []string{"logtap.dev/tapped", "logtap.dev/target"},
+	}
+
+	_, err = RemovePatch(context.Background(), c, w, rs, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	updated, err := cs.AppsV1().StatefulSets("default").Get(context.Background(), "redis", metav1.GetOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(updated.Spec.Template.Spec.Containers) != 1 {
+		t.Errorf("containers = %d, want 1", len(updated.Spec.Template.Spec.Containers))
+	}
+}
+
+func TestRemovePatch_DryRun(t *testing.T) {
+	app := corev1.Container{Name: "app", Image: "myapp:v1"}
+	sc := sidecarContainer("logtap-forwarder-lt-a3f9")
+	deploy := makeTestDeployment("api-gw", app, sc)
+	deploy.Spec.Template.Annotations = map[string]string{
+		"logtap.dev/tapped": "lt-a3f9",
+	}
+
+	cs := fake.NewSimpleClientset(deploy) //nolint:staticcheck // NewClientset requires generated apply configs
+	c := NewClientFromInterface(cs, "default")
+
+	w, err := DiscoverByName(context.Background(), c, KindDeployment, "api-gw")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	rs := RemovePatchSpec{
+		ContainerNames:    []string{"logtap-forwarder-lt-a3f9"},
+		DeleteAnnotations: []string{"logtap.dev/tapped"},
+	}
+
+	diff, err := RemovePatch(context.Background(), c, w, rs, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if diff == "" {
+		t.Error("dry-run diff is empty")
+	}
+
+	// Verify no changes applied
+	original, err := cs.AppsV1().Deployments("default").Get(context.Background(), "api-gw", metav1.GetOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(original.Spec.Template.Spec.Containers) != 2 {
+		t.Errorf("containers = %d, want 2 (dry-run should not modify)", len(original.Spec.Template.Spec.Containers))
+	}
+}
+
+func TestRemovePatch_MultiSession_KeepOne(t *testing.T) {
+	app := corev1.Container{Name: "app", Image: "myapp:v1"}
+	sc1 := sidecarContainer("logtap-forwarder-lt-a3f9")
+	sc2 := sidecarContainer("logtap-forwarder-lt-b2c1")
+	deploy := makeTestDeployment("api-gw", app, sc1, sc2)
+	deploy.Spec.Template.Annotations = map[string]string{
+		"logtap.dev/tapped": "lt-a3f9,lt-b2c1",
+		"logtap.dev/target": "logtap:9000",
+	}
+
+	cs := fake.NewSimpleClientset(deploy) //nolint:staticcheck // NewClientset requires generated apply configs
+	c := NewClientFromInterface(cs, "default")
+
+	w, err := DiscoverByName(context.Background(), c, KindDeployment, "api-gw")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Remove only lt-a3f9, keep lt-b2c1
+	rs := RemovePatchSpec{
+		ContainerNames: []string{"logtap-forwarder-lt-a3f9"},
+		SetAnnotations: map[string]string{"logtap.dev/tapped": "lt-b2c1"},
+	}
+
+	_, err = RemovePatch(context.Background(), c, w, rs, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	updated, err := cs.AppsV1().Deployments("default").Get(context.Background(), "api-gw", metav1.GetOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(updated.Spec.Template.Spec.Containers) != 2 {
+		t.Errorf("containers = %d, want 2 (app + lt-b2c1)", len(updated.Spec.Template.Spec.Containers))
+	}
+	if updated.Spec.Template.Annotations["logtap.dev/tapped"] != "lt-b2c1" {
+		t.Errorf("tapped = %q, want %q", updated.Spec.Template.Annotations["logtap.dev/tapped"], "lt-b2c1")
+	}
+	if updated.Spec.Template.Annotations["logtap.dev/target"] != "logtap:9000" {
+		t.Error("target annotation should be preserved")
+	}
+}
