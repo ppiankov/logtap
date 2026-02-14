@@ -70,7 +70,6 @@ func NewReplayModel(feeder *Feeder, ring *recv.LogRing, meta *recv.Metadata, dir
 
 // Init starts the tick timer and the feeder.
 func (m ReplayModel) Init() tea.Cmd {
-	m.startTime = time.Now()
 	if m.feeder != nil {
 		m.feeder.Start()
 	}

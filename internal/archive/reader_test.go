@@ -44,7 +44,9 @@ func writeIndex(t *testing.T, dir string, entries []rotate.IndexEntry) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		fmt.Fprintf(f, "%s\n", data)
+		if _, err := fmt.Fprintf(f, "%s\n", data); err != nil {
+			t.Fatal(err)
+		}
 	}
 }
 
@@ -60,7 +62,9 @@ func writeDataFile(t *testing.T, dir, name string, entries []recv.LogEntry) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		fmt.Fprintf(f, "%s\n", data)
+		if _, err := fmt.Fprintf(f, "%s\n", data); err != nil {
+			t.Fatal(err)
+		}
 	}
 }
 
