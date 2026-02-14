@@ -27,5 +27,6 @@ func execute() error {
 	root.AddCommand(newInspectCmd())
 	root.AddCommand(newSliceCmd())
 	root.AddCommand(newExportCmd())
+	root.AddCommand(newTriageCmd())
 	return root.Execute()
 }
