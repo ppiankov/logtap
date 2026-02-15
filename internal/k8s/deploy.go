@@ -27,6 +27,7 @@ type ReceiverSpec struct {
 	Port      int32
 	Args      []string
 	Labels    map[string]string
+	TTL       time.Duration // pod activeDeadlineSeconds; 0 means no limit
 }
 
 // ReceiverResources tracks what was created for cleanup.
@@ -133,7 +134,7 @@ func ensureNamespace(ctx context.Context, c *Client, ns string, labels map[strin
 }
 
 func buildReceiverPod(spec ReceiverSpec) *corev1.Pod {
-	return &corev1.Pod{
+	pod := &corev1.Pod{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      spec.PodName,
 			Namespace: spec.Namespace,
@@ -182,6 +183,13 @@ func buildReceiverPod(spec ReceiverSpec) *corev1.Pod {
 			RestartPolicy: corev1.RestartPolicyNever,
 		},
 	}
+
+	if spec.TTL > 0 {
+		ttlSec := int64(spec.TTL.Seconds())
+		pod.Spec.ActiveDeadlineSeconds = &ttlSec
+	}
+
+	return pod
 }
 
 func buildReceiverService(spec ReceiverSpec) *corev1.Service {

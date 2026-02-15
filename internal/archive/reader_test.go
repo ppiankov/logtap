@@ -105,6 +105,47 @@ func makeEntries(n int, base time.Time, app string) []recv.LogEntry {
 	return entries
 }
 
+func TestReader_CorruptIndex(t *testing.T) {
+	dir := t.TempDir()
+	base := time.Date(2024, 1, 15, 10, 0, 0, 0, time.UTC)
+
+	writeMetadata(t, dir, base, base.Add(5*time.Second), 5)
+	writeDataFile(t, dir, "2024-01-15T100000-000.jsonl", makeEntries(5, base, "api"))
+
+	// Write malformed JSON to index.jsonl
+	indexPath := filepath.Join(dir, "index.jsonl")
+	if err := os.WriteFile(indexPath, []byte("{{not json at all}}\n{\"also broken\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	// NewReader should NOT return an error — readIndex silently skips malformed lines
+	r, err := NewReader(dir)
+	if err != nil {
+		t.Fatalf("NewReader should tolerate corrupt index, got: %v", err)
+	}
+
+	// No valid index entries parsed, so TotalLines from index should be 0
+	if r.TotalLines() != 0 {
+		t.Errorf("TotalLines = %d, want 0 (corrupt index entries skipped)", r.TotalLines())
+	}
+
+	// The data file should still be discovered as an orphan
+	var got []recv.LogEntry
+	n, err := r.Scan(nil, func(e recv.LogEntry) bool {
+		got = append(got, e)
+		return true
+	})
+	if err != nil {
+		t.Fatalf("Scan error: %v", err)
+	}
+	if n != 5 {
+		t.Errorf("scanned = %d, want 5", n)
+	}
+	if len(got) != 5 {
+		t.Errorf("got %d entries, want 5 (orphan discovery should find the data file)", len(got))
+	}
+}
+
 func TestReaderBasic(t *testing.T) {
 	dir := t.TempDir()
 	base := time.Date(2024, 1, 15, 10, 0, 0, 0, time.UTC)

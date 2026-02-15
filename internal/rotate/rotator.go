@@ -48,6 +48,10 @@ type Rotator struct {
 	to     time.Time
 	lines  int64
 	labels map[string]map[string]int64
+
+	// optional callbacks for metrics
+	onRotate func(reason string) // called on successful rotation
+	onError  func()              // called on rotation error
 }
 
 // New creates a Rotator, scanning any existing files for disk usage.
@@ -68,6 +72,16 @@ func New(cfg Config) (*Rotator, error) {
 	return r, nil
 }
 
+// SetOnRotate sets a callback invoked on each successful rotation with the reason.
+func (r *Rotator) SetOnRotate(fn func(reason string)) {
+	r.onRotate = fn
+}
+
+// SetOnError sets a callback invoked on each rotation error.
+func (r *Rotator) SetOnError(fn func()) {
+	r.onError = fn
+}
+
 // Write appends data to the active file, rotating if over MaxFile.
 func (r *Rotator) Write(p []byte) (int, error) {
 	r.mu.Lock()
@@ -75,7 +89,13 @@ func (r *Rotator) Write(p []byte) (int, error) {
 
 	if r.activeSize+int64(len(p)) > r.cfg.MaxFile && r.activeSize > 0 {
 		if err := r.rotate(); err != nil {
+			if r.onError != nil {
+				r.onError()
+			}
 			return 0, fmt.Errorf("rotate: %w", err)
+		}
+		if r.onRotate != nil {
+			r.onRotate("size")
 		}
 	}
 	n, err := r.active.Write(p)

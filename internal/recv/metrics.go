@@ -11,6 +11,10 @@ type Metrics struct {
 	ActiveConnections  prometheus.Gauge
 	BackpressureEvents prometheus.Counter
 	RedactionsTotal    *prometheus.CounterVec
+	PushDuration       prometheus.Histogram
+	WriterQueueLength  prometheus.Gauge
+	RotationTotal      *prometheus.CounterVec
+	RotationErrors     prometheus.Counter
 }
 
 // NewMetrics creates and registers all receiver metrics.
@@ -44,6 +48,23 @@ func NewMetrics(reg prometheus.Registerer) *Metrics {
 			Name: "logtap_redactions_total",
 			Help: "Total redactions applied by pattern",
 		}, []string{"pattern"}),
+		PushDuration: prometheus.NewHistogram(prometheus.HistogramOpts{
+			Name:    "logtap_push_duration_seconds",
+			Help:    "Duration of push API request handling",
+			Buckets: prometheus.DefBuckets,
+		}),
+		WriterQueueLength: prometheus.NewGauge(prometheus.GaugeOpts{
+			Name: "logtap_writer_queue_length",
+			Help: "Current writer channel occupancy",
+		}),
+		RotationTotal: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "logtap_rotation_total",
+			Help: "Total file rotations",
+		}, []string{"reason"}),
+		RotationErrors: prometheus.NewCounter(prometheus.CounterOpts{
+			Name: "logtap_rotation_errors_total",
+			Help: "Total failed file rotations",
+		}),
 	}
 	reg.MustRegister(
 		m.LogsReceived,
@@ -53,6 +74,10 @@ func NewMetrics(reg prometheus.Registerer) *Metrics {
 		m.ActiveConnections,
 		m.BackpressureEvents,
 		m.RedactionsTotal,
+		m.PushDuration,
+		m.WriterQueueLength,
+		m.RotationTotal,
+		m.RotationErrors,
 	)
 	return m
 }

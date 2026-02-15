@@ -27,6 +27,9 @@ type LokiStream struct {
 
 const maxRequestBytes = 10 << 20 // 10MB
 
+// APIVersion is incremented on breaking changes to the push API.
+const APIVersion = 1
+
 // Server is the HTTP receiver server.
 type Server struct {
 	httpSrv    *http.Server
@@ -37,6 +40,7 @@ type Server struct {
 	ring       *LogRing
 	audit      *AuditLogger
 	activeConn atomic.Int64
+	version    string
 }
 
 // NewServer creates an HTTP server bound to addr.
@@ -54,6 +58,7 @@ func NewServer(addr string, writer *Writer, redactor *Redactor, metrics *Metrics
 	mux.HandleFunc("POST /logtap/raw", s.handleRawPush)
 	mux.HandleFunc("GET /healthz", s.handleHealthz)
 	mux.HandleFunc("GET /readyz", s.handleReadyz)
+	mux.HandleFunc("GET /api/version", s.handleVersion)
 	mux.Handle("GET /metrics", promhttp.Handler())
 
 	s.httpSrv = &http.Server{
@@ -66,6 +71,11 @@ func NewServer(addr string, writer *Writer, redactor *Redactor, metrics *Metrics
 // SetAuditLogger attaches an audit logger to the server.
 func (s *Server) SetAuditLogger(a *AuditLogger) {
 	s.audit = a
+}
+
+// SetVersion sets the application version reported by /api/version.
+func (s *Server) SetVersion(v string) {
+	s.version = v
 }
 
 // ListenAndServe starts the HTTP server.
@@ -89,8 +99,14 @@ func (s *Server) Shutdown(ctx context.Context) error {
 }
 
 func (s *Server) handleLokiPush(w http.ResponseWriter, r *http.Request) {
+	start := time.Now()
 	s.trackConnOpen()
 	defer s.trackConnClose()
+	defer func() {
+		if s.metrics != nil {
+			s.metrics.PushDuration.Observe(time.Since(start).Seconds())
+		}
+	}()
 
 	r.Body = http.MaxBytesReader(w, r.Body, maxRequestBytes)
 
@@ -157,8 +173,14 @@ func (s *Server) handleLokiPush(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleRawPush(w http.ResponseWriter, r *http.Request) {
+	start := time.Now()
 	s.trackConnOpen()
 	defer s.trackConnClose()
+	defer func() {
+		if s.metrics != nil {
+			s.metrics.PushDuration.Observe(time.Since(start).Seconds())
+		}
+	}()
 
 	r.Body = http.MaxBytesReader(w, r.Body, maxRequestBytes)
 
@@ -221,6 +243,22 @@ func (s *Server) handleReadyz(w http.ResponseWriter, _ *http.Request) {
 	}
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write([]byte(`{"status":"ok"}`))
+}
+
+func (s *Server) handleVersion(w http.ResponseWriter, _ *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	v := s.version
+	if v == "" {
+		v = "dev"
+	}
+	resp := struct {
+		Version string `json:"version"`
+		API     int    `json:"api"`
+	}{
+		Version: v,
+		API:     APIVersion,
+	}
+	_ = json.NewEncoder(w).Encode(resp)
 }
 
 func (s *Server) trackConnOpen() {

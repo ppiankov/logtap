@@ -59,7 +59,7 @@ jobs:
           VERSION=${{ steps.tag.outputs.version }}
           VERSION_NUM=${VERSION#v}
           PROJECT=${{ steps.project.outputs.name }}
-          LDFLAGS="-s -w -X main.version=${VERSION}"
+          LDFLAGS="-s -w -X main.version=${VERSION_NUM}"
 
           platforms=(
             "linux/amd64"
@@ -182,10 +182,12 @@ jobs:
         id: tag
         run: |
           if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            echo "version=${{ github.event.inputs.tag }}" >> $GITHUB_OUTPUT
+            VERSION="${{ github.event.inputs.tag }}"
           else
-            echo "version=${GITHUB_REF_NAME}" >> $GITHUB_OUTPUT
+            VERSION="${GITHUB_REF_NAME}"
           fi
+          echo "version=${VERSION}" >> $GITHUB_OUTPUT
+          echo "version_num=${VERSION#v}" >> $GITHUB_OUTPUT
 
       - uses: actions/checkout@v4
         with:
@@ -219,7 +221,7 @@ jobs:
           platforms: linux/amd64,linux/arm64
           push: true
           build-args: |
-            VERSION=${{ steps.tag.outputs.version }}
+            VERSION=${{ steps.tag.outputs.version_num }}
           tags: |
             ghcr.io/${{ github.repository_owner }}/logtap:latest
             ghcr.io/${{ github.repository_owner }}/logtap:${{ steps.tag.outputs.version }}

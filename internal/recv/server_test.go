@@ -181,6 +181,104 @@ func TestGracefulShutdown(t *testing.T) {
 	}
 }
 
+func TestVersionEndpoint(t *testing.T) {
+	var buf bytes.Buffer
+	w := NewWriter(1024, &buf, nil)
+	defer w.Close()
+
+	srv := NewServer(":0", w, nil, nil, nil, nil)
+	srv.SetVersion("0.3.0")
+	ts := httptest.NewServer(srv.httpSrv.Handler)
+	defer ts.Close()
+
+	resp, err := http.Get(ts.URL + "/api/version")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode != http.StatusOK {
+		t.Errorf("expected 200, got %d", resp.StatusCode)
+	}
+
+	var result struct {
+		Version string `json:"version"`
+		API     int    `json:"api"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		t.Fatal(err)
+	}
+	if result.Version != "0.3.0" {
+		t.Errorf("version = %q, want %q", result.Version, "0.3.0")
+	}
+	if result.API != APIVersion {
+		t.Errorf("api = %d, want %d", result.API, APIVersion)
+	}
+}
+
+func TestVersionEndpointDefault(t *testing.T) {
+	var buf bytes.Buffer
+	w := NewWriter(1024, &buf, nil)
+	defer w.Close()
+
+	srv := NewServer(":0", w, nil, nil, nil, nil)
+	ts := httptest.NewServer(srv.httpSrv.Handler)
+	defer ts.Close()
+
+	resp, err := http.Get(ts.URL + "/api/version")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	var result struct {
+		Version string `json:"version"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		t.Fatal(err)
+	}
+	if result.Version != "dev" {
+		t.Errorf("version = %q, want %q", result.Version, "dev")
+	}
+}
+
+func TestServer_OversizedRequest(t *testing.T) {
+	var buf bytes.Buffer
+	w := NewWriter(1024, &buf, nil)
+	defer w.Close()
+
+	srv := NewServer(":0", w, nil, nil, nil, nil)
+	ts := httptest.NewServer(srv.httpSrv.Handler)
+	defer ts.Close()
+
+	// maxRequestBytes is 10MB (10 << 20). Build a payload that exceeds it.
+	// Create a JSON body with a single stream containing a huge message.
+	bigMsg := strings.Repeat("A", 11<<20) // 11MB of 'A'
+	payload := `{"streams":[{"stream":{"app":"big"},"values":[["1234567890000000000","` + bigMsg + `"]]}]}`
+
+	resp, err := http.Post(ts.URL+"/loki/api/v1/push", "application/json", strings.NewReader(payload))
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = resp.Body.Close()
+
+	// MaxBytesReader should cause a 400 Bad Request when the body exceeds the limit
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Errorf("expected 400 for oversized request, got %d", resp.StatusCode)
+	}
+
+	// Also test oversized request on the raw push endpoint
+	rawPayload := `{"ts":"2024-01-01T00:00:00Z","msg":"` + bigMsg + `"}`
+	resp2, err := http.Post(ts.URL+"/logtap/raw", "application/json", strings.NewReader(rawPayload))
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = resp2.Body.Close()
+
+	if resp2.StatusCode != http.StatusBadRequest {
+		t.Errorf("expected 400 for oversized raw request, got %d", resp2.StatusCode)
+	}
+}
+
 func TestRedactionIntegration(t *testing.T) {
 	var buf bytes.Buffer
 	w := NewWriter(1024, &buf, nil)

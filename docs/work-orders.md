@@ -1539,3 +1539,289 @@ Add `docs/troubleshooting.md` covering:
 - `ghcr.io/ppiankov/logtap:v0.2.0` and `ghcr.io/ppiankov/logtap-forwarder:v0.2.0` exist
 - `brew upgrade logtap` gets v0.2.0
 - CI green on main
+
+---
+
+## Phase 6: Hardening & Operational Robustness (WO-32 through WO-41)
+
+Focus: Input validation, timeout safety, error recovery, CLI test coverage, and operational reliability. Phase 6 closes the gap between "works on happy path" and "ready for production load tests."
+
+---
+
+### WO-32: Kubernetes Operation Timeouts [DONE]
+
+**Goal:** Prevent indefinite hangs on unresponsive clusters.
+
+**Problem:**
+All k8s operations use `context.Background()` with no timeout. If the cluster API is slow or unreachable, `tap`, `untap`, `check`, and `status` hang indefinitely with no feedback.
+
+**Details:**
+- Add `--timeout` flag to `tap`, `untap`, `check`, `status` (default 30s)
+- Wrap all k8s context calls with `context.WithTimeout`
+- Respect config file `timeout` field
+- On timeout, print clear error: "timed out after 30s waiting for cluster response"
+
+**Steps:**
+1. Add `timeout` field to `internal/config/config.go`
+2. Add `--timeout` flag to tap, untap, check, status commands
+3. Replace `context.Background()` with timeout context in all k8s call sites
+4. Add test: mock client with delayed response, verify timeout fires
+
+**Acceptance:**
+- `logtap tap --timeout 1s` on unreachable cluster exits in ~1s
+- `logtap check --timeout 5s` respects deadline
+- `make test && make lint` clean
+
+---
+
+### WO-33: Input Validation Hardening [DONE]
+
+**Goal:** Fail fast on invalid user input with clear error messages.
+
+**Problem:**
+Several flags accept invalid values that cause confusing errors downstream:
+- `--label` accepts `key=value=extra` without error
+- `--sidecar-memory` and `--sidecar-cpu` aren't validated until the k8s API rejects them
+- `--from`/`--to` time filters accept nonsense like "not-a-time"
+- `--forwarder` accepts any string, not just "logtap" or "fluent-bit"
+
+**Details:**
+- Validate `--label` format (exactly one `=`, non-empty key and value)
+- Validate resource quantities (`--sidecar-memory`, `--sidecar-cpu`) using `resource.ParseQuantity()` at parse time
+- Validate `--from`/`--to` parse correctly before starting scan
+- Validate `--forwarder` is one of the known values
+- Validate `--cap` byte size format
+- All validation errors should be actionable: "invalid --label format 'foo': expected key=value"
+
+**Steps:**
+1. Add `validateLabel()`, `validateQuantity()`, `validateForwarder()` helpers in `cmd/logtap/validate.go`
+2. Wire validators into `RunE` / `PreRunE` of relevant commands
+3. Add test for each validator with valid/invalid inputs
+
+**Acceptance:**
+- `logtap tap --sidecar-memory invalid` fails immediately with clear message
+- `logtap grep --label "badformat" pattern dir/` fails with helpful error
+- `make test && make lint` clean
+
+---
+
+### WO-34: CLI Integration Tests [DONE]
+
+**Goal:** Bring cmd/ packages above 0% coverage with flag parsing and validation tests.
+
+**Problem:**
+`cmd/logtap` and `cmd/logtap-forwarder` are at 0% coverage. Flag parsing, validation, and command wiring are completely untested. Regressions in CLI behavior go undetected.
+
+**Details:**
+- Test flag parsing for all subcommands (not execution — no k8s or receiver needed)
+- Test `buildFilter()` with all flag combinations (from, to, label, grep)
+- Test `parseSpeed()` edge cases
+- Test `applyConfigDefaults()` with various config states
+- Test command registration (all subcommands present on root)
+- Use `cmd.Execute()` with `--help` to verify no panics
+
+**Steps:**
+1. Create `cmd/logtap/filter_test.go` — test buildFilter, parseSpeed
+2. Create `cmd/logtap/validate_test.go` — test input validators (from WO-33)
+3. Create `cmd/logtap/cmd_test.go` — test command tree registration
+4. Target: cmd/logtap coverage ≥ 40%
+
+**Acceptance:**
+- `go test ./cmd/logtap/` passes
+- Coverage for cmd/logtap ≥ 40%
+- `make test && make lint` clean
+
+---
+
+### WO-35: Tap Progress and Auto-Rollback [DONE]
+
+**Goal:** Show progress during multi-workload tap and rollback on partial failure.
+
+**Problem:**
+When tapping multiple workloads (`--all`), users see no output until all operations complete. If tap fails partway through (e.g., workload 7 of 10), the first 6 are left tapped with no cleanup.
+
+**Details:**
+- Print progress to stderr: `Tapping deployment/api-gw [3/10]...`
+- On error, automatically untap all workloads that were successfully tapped
+- Print rollback status: `Rolling back: untapping deployment/api-gw...`
+- Add `--no-rollback` flag to disable auto-rollback (for debugging)
+- Same behavior for `untap --all`
+
+**Steps:**
+1. Add progress callback to `runTap()` and `runUntap()` in tap.go / untap.go
+2. Track successful operations; on error, iterate and undo
+3. Add test: mock k8s that fails on Nth workload, verify rollback
+
+**Acceptance:**
+- `logtap tap --all -l app=web` prints per-workload progress
+- Partial failure triggers rollback with clear output
+- `--no-rollback` skips cleanup
+- `make test && make lint` clean
+
+---
+
+### WO-36: Receiver Version Endpoint [DONE]
+
+**Goal:** Enable forwarder-receiver compatibility checks.
+
+**Problem:**
+Forwarder and receiver images version independently. If the push API changes, the forwarder silently fails. No way to detect version mismatch early.
+
+**Details:**
+- Add `GET /api/version` endpoint to receiver returning `{"version":"0.2.0","api":1}`
+- `api` field is an integer that increments on breaking push API changes
+- Forwarder checks `/api/version` on startup; warns if api version doesn't match
+- `logtap check` verifies receiver version is compatible
+- `logtap tap` can optionally check receiver version before injecting sidecars
+
+**Steps:**
+1. Add `/api/version` handler in `internal/recv/server.go`
+2. Add version check in `cmd/logtap-forwarder/main.go` startup
+3. Add version check in `logtap check` and `logtap tap`
+4. Add tests for version endpoint and compatibility check
+
+**Acceptance:**
+- `curl localhost:9000/api/version` returns JSON with version and api fields
+- Forwarder logs warning on version mismatch
+- `make test && make lint` clean
+
+---
+
+### WO-37: In-Cluster Receiver TTL and Cleanup [DONE]
+
+**Goal:** Auto-delete in-cluster receiver pods to prevent resource leaks.
+
+**Problem:**
+`logtap recv --in-cluster` creates a pod and service that persist after the CLI exits (Ctrl+C kills port-forward but not the pod). Users must manually `kubectl delete` the pod. Over time, abandoned receivers accumulate.
+
+**Details:**
+- Add `--ttl` flag (default: 4h) — receiver pod auto-deletes after TTL via `activeDeadlineSeconds`
+- Add `--cleanup-on-exit` flag (default: true) — delete pod/service when CLI exits
+- Register cleanup in signal handler (SIGTERM, SIGINT)
+- If cleanup fails, print kubectl command for manual cleanup
+- `logtap status` shows receiver pod age and remaining TTL
+
+**Steps:**
+1. Add `activeDeadlineSeconds` to receiver pod spec based on `--ttl`
+2. Add defer cleanup in `runRecvInCluster()` signal handler
+3. Add fallback message with kubectl commands if cleanup fails
+4. Test: create pod with TTL, verify `activeDeadlineSeconds` is set
+
+**Acceptance:**
+- `logtap recv --in-cluster --ttl 1h` sets 3600s deadline on pod
+- Ctrl+C deletes pod and service
+- `make test && make lint` clean
+
+---
+
+### WO-38: Error Path Tests [DONE]
+
+**Goal:** Cover critical failure modes that are currently untested.
+
+**Problem:**
+Happy paths are tested. Error paths are not. Disk-full, permission-denied, corrupt-data, and network-error scenarios have no test coverage.
+
+**Details:**
+Tests to add:
+- `TestRotator_DeleteFails` — can't delete oldest file during rotation
+- `TestSnapshot_CorruptTar` — malformed tar archive during unpack
+- `TestSnapshot_PathTraversal` — tar entry with `../../etc/passwd`
+- `TestExport_WriteError` — writer returns error mid-export
+- `TestGrep_InvalidRegex` — pattern that doesn't compile
+- `TestDiff_OneSideEmpty` — one capture has data, other is empty
+- `TestMerge_ConflictingMetadata` — overlapping time ranges
+- `TestReader_CorruptIndex` — malformed JSON in index.jsonl
+- `TestServer_OversizedRequest` — request exceeding MaxBytesReader
+
+**Steps:**
+1. Add error path tests to each package (archive, rotate, recv)
+2. Use error-injecting wrappers where needed (io.Writer that fails after N bytes)
+3. Target: no critical error path uncovered
+
+**Acceptance:**
+- All listed tests pass
+- Archive coverage ≥ 87%
+- `make test && make lint` clean
+
+---
+
+### WO-39: Operational Metrics Expansion [DONE]
+
+**Goal:** Add missing Prometheus metrics for production observability.
+
+**Problem:**
+Current metrics cover basic throughput (lines, bytes, drops). Missing: write latency, rotation events, disk usage, request duration. Operators can't diagnose performance issues.
+
+**Details:**
+New metrics:
+- `logtap_push_duration_seconds` — histogram of push API request handling time
+- `logtap_rotation_total` — counter of file rotations (labels: reason=size|time)
+- `logtap_rotation_errors_total` — counter of failed rotations
+- `logtap_disk_usage_bytes` — gauge of current capture directory size
+- `logtap_active_connections` — gauge of in-flight HTTP requests
+- `logtap_writer_queue_length` — gauge of writer channel occupancy
+
+**Steps:**
+1. Add metrics in `internal/recv/server.go` (push duration, active connections)
+2. Add metrics in `internal/rotate/rotator.go` (rotation count, errors, disk usage)
+3. Add metrics in `internal/recv/writer.go` (queue length)
+4. Add test: verify metric registration and increment
+
+**Acceptance:**
+- `curl localhost:9000/metrics` shows all new metrics
+- Metrics update correctly during test load
+- `make test && make lint` clean
+
+---
+
+### WO-40: Documentation: API Stability and Examples [DONE]
+
+**Goal:** Document stability guarantees and provide copy-paste workflow examples.
+
+**Problem:**
+Users don't know which CLI flags, capture formats, or API endpoints are stable across versions. No example workflows for common scenarios.
+
+**Details:**
+
+`docs/api-stability.md`:
+- Capture format: metadata.json, index.jsonl schemas are stable from v0.1.0
+- Loki push API compatibility guaranteed
+- CLI flags: all documented flags are stable; undocumented behavior may change
+- Internal packages: no stability guarantee (internal/)
+
+`docs/examples/`:
+- `load-test-workflow.sh` — full tap→recv→slice→triage→export pipeline
+- `multi-namespace.sh` — tapping across namespaces
+- `ci-integration.sh` — capture comparison in CI (diff two runs)
+- `duckdb-analysis.sql` — export to parquet, query with DuckDB
+
+**Steps:**
+1. Create `docs/api-stability.md`
+2. Create `docs/examples/` with 4 example scripts
+3. Link from README.md
+
+**Acceptance:**
+- All example scripts are syntactically valid (shellcheck clean)
+- README links to stability doc and examples
+- No code changes needed
+
+---
+
+### WO-41: v0.3.0 Release [DONE]
+
+**Goal:** Tag and publish v0.3.0 with Phase 6 hardening features.
+
+**Depends on:** WO-32 through WO-40
+
+**Steps:**
+1. Update CHANGELOG.md with v0.3.0 section
+2. Update README.md (remove addressed limitations, add new features)
+3. Run `make all` for full verification
+4. Tag `v0.3.0`, push tag
+5. Verify release workflow (binaries, images, Homebrew formula update)
+
+**Acceptance:**
+- GitHub release page shows v0.3.0 with binaries and changelog
+- Container images tagged v0.3.0
+- CI green on main
+- All internal packages ≥ 85% coverage
