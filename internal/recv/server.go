@@ -52,6 +52,8 @@ func NewServer(addr string, writer *Writer, redactor *Redactor, metrics *Metrics
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /loki/api/v1/push", s.handleLokiPush)
 	mux.HandleFunc("POST /logtap/raw", s.handleRawPush)
+	mux.HandleFunc("GET /healthz", s.handleHealthz)
+	mux.HandleFunc("GET /readyz", s.handleReadyz)
 	mux.Handle("GET /metrics", promhttp.Handler())
 
 	s.httpSrv = &http.Server{
@@ -202,6 +204,23 @@ func (s *Server) handleRawPush(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.WriteHeader(http.StatusNoContent)
+}
+
+func (s *Server) handleHealthz(w http.ResponseWriter, _ *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write([]byte(`{"status":"ok"}`))
+}
+
+func (s *Server) handleReadyz(w http.ResponseWriter, _ *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	if s.writer != nil && !s.writer.Healthy() {
+		w.WriteHeader(http.StatusServiceUnavailable)
+		_, _ = w.Write([]byte(`{"status":"not_ready","reason":"writer backpressure"}`))
+		return
+	}
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write([]byte(`{"status":"ok"}`))
 }
 
 func (s *Server) trackConnOpen() {

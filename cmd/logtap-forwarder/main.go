@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"net/http"
 	"os"
 	"os/signal"
 	"syscall"
@@ -29,6 +30,19 @@ func main() {
 		sig := <-sigCh
 		fmt.Fprintf(os.Stderr, "received %s, shutting down\n", sig)
 		cancel()
+	}()
+
+	// Health endpoint for liveness probes
+	go func() {
+		mux := http.NewServeMux()
+		mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"status":"ok"}`))
+		})
+		healthSrv := &http.Server{Addr: ":9091", Handler: mux}
+		if err := healthSrv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			fmt.Fprintf(os.Stderr, "health server: %v\n", err)
+		}
 	}()
 
 	reader, err := forward.NewReader(podName, namespace)
