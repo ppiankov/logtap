@@ -170,11 +170,20 @@ capture/
   2024-01-15T103512-000.jsonl.zst
 ```
 
+## Documentation
+
+- [API Stability](docs/api-stability.md) — what is stable across versions
+- [Troubleshooting](docs/troubleshooting.md) — common failure modes and solutions
+- [Examples](docs/examples/) — copy-paste workflow scripts
+  - [Load test workflow](docs/examples/load-test-workflow.sh) — full tap/recv/triage/export pipeline
+  - [Multi-namespace tap](docs/examples/multi-namespace.sh) — tapping across namespaces
+  - [CI integration](docs/examples/ci-integration.sh) — compare captures in CI
+  - [DuckDB analysis](docs/examples/duckdb-analysis.sql) — query parquet exports
+
 ## Known limitations
 
 - **v0.x** — API and capture format may change before v1.0
 - **Sidecar resource overhead** — each sidecar adds 16Mi/25m requests by default
-- **No Fluent Bit support** — Loki push API only (Fluent Bit planned for v1.1)
 - **No browser UI** — TUI only, terminal required
 - **No CRDs or operators** — imperative CLI workflow
 - **No long-term retention** — bounded disk, oldest files deleted automatically

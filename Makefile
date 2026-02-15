@@ -1,5 +1,5 @@
 BINARY := logtap
-VERSION := $(shell git describe --tags --always --dirty 2>/dev/null || echo "dev")
+VERSION := $(shell git describe --tags --always --dirty 2>/dev/null | sed 's/^v//' || echo "dev")
 LDFLAGS := -ldflags "-X main.version=$(VERSION)"
 
 .PHONY: all build build-forwarder test bench lint fmt clean deps install coverage help

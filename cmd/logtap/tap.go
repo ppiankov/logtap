@@ -29,6 +29,7 @@ func newTapCmd() *cobra.Command {
 		image         string
 		sidecarMemory string
 		sidecarCPU    string
+		noRollback    bool
 	)
 
 	cmd := &cobra.Command{
@@ -37,6 +38,12 @@ func newTapCmd() *cobra.Command {
 		Long:  "Tap patches Kubernetes workloads to add a logtap log-forwarding sidecar container. The sidecar sends logs to the logtap receiver via the Loki push API.",
 		PreRunE: func(cmd *cobra.Command, args []string) error {
 			applyConfigDefaults(cmd)
+			if err := validateQuantity("--sidecar-memory", sidecarMemory); err != nil {
+				return err
+			}
+			if err := validateQuantity("--sidecar-cpu", sidecarCPU); err != nil {
+				return err
+			}
 			return nil
 		},
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -55,6 +62,7 @@ func newTapCmd() *cobra.Command {
 				image:         image,
 				sidecarMemory: sidecarMemory,
 				sidecarCPU:    sidecarCPU,
+				noRollback:    noRollback,
 			})
 		},
 	}
@@ -73,6 +81,7 @@ func newTapCmd() *cobra.Command {
 	cmd.Flags().StringVar(&image, "image", sidecar.DefaultImage, "forwarder sidecar image")
 	cmd.Flags().StringVar(&sidecarMemory, "sidecar-memory", sidecar.DefaultMemReq, "sidecar memory request (limit = 2x)")
 	cmd.Flags().StringVar(&sidecarCPU, "sidecar-cpu", sidecar.DefaultCPUReq, "sidecar CPU request (limit = 2x)")
+	cmd.Flags().BoolVar(&noRollback, "no-rollback", false, "disable auto-rollback on partial failure")
 	_ = cmd.MarkFlagRequired("target")
 
 	return cmd
@@ -93,6 +102,7 @@ type tapOpts struct {
 	image         string
 	sidecarMemory string
 	sidecarCPU    string
+	noRollback    bool
 }
 
 func runTap(opts tapOpts) error {
@@ -129,7 +139,8 @@ func runTap(opts tapOpts) error {
 		return fmt.Errorf("--image is required when using --forwarder fluent-bit (no default Fluent Bit image)")
 	}
 
-	ctx := context.Background()
+	ctx, cancel := clusterContext()
+	defer cancel()
 
 	// Build k8s client
 	c, err := k8s.NewClient(opts.namespace)
@@ -238,10 +249,20 @@ func runTap(opts tapOpts) error {
 		CPULimit:   cpuLimit,
 	}
 
-	// Inject into each workload
-	for _, w := range workloads {
+	// Inject into each workload with progress and rollback
+	var tapped []*k8s.Workload
+	total := len(workloads)
+
+	for i, w := range workloads {
+		if !opts.dryRun && total > 1 {
+			fmt.Fprintf(os.Stderr, "Tapping %s/%s [%d/%d]...\n", w.Kind, w.Name, i+1, total)
+		}
+
 		result, err := sidecar.Inject(ctx, c, w, scfg, opts.dryRun)
 		if err != nil {
+			if !opts.dryRun && !opts.noRollback && len(tapped) > 0 {
+				rollbackTap(ctx, c, tapped, sessionID)
+			}
 			return fmt.Errorf("inject %s/%s: %w", w.Kind, w.Name, err)
 		}
 
@@ -249,6 +270,7 @@ func runTap(opts tapOpts) error {
 			fmt.Fprintf(os.Stderr, "[dry-run] %s/%s:\n", w.Kind, w.Name)
 			_, _ = fmt.Fprintln(os.Stdout, result.Diff)
 		} else {
+			tapped = append(tapped, w)
 			fmt.Fprintf(os.Stderr, "Tapped %s/%s (session %s)\n", w.Kind, w.Name, sessionID)
 		}
 	}
@@ -260,6 +282,17 @@ func runTap(opts tapOpts) error {
 	}
 
 	return nil
+}
+
+func rollbackTap(ctx context.Context, c *k8s.Client, tapped []*k8s.Workload, sessionID string) {
+	fmt.Fprintf(os.Stderr, "\nRolling back %d tapped workload(s)...\n", len(tapped))
+	for _, w := range tapped {
+		fmt.Fprintf(os.Stderr, "Rolling back: untapping %s/%s...\n", w.Kind, w.Name)
+		if _, err := sidecar.Remove(ctx, c, w, sessionID, false); err != nil {
+			fmt.Fprintf(os.Stderr, "  rollback failed for %s/%s: %v\n", w.Kind, w.Name, err)
+		}
+	}
+	fmt.Fprintln(os.Stderr, "Rollback complete")
 }
 
 func checkReceiver(target string) error {
