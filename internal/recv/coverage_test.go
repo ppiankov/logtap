@@ -308,7 +308,7 @@ func TestSetAuditLogger(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer al.Close()
+	defer func() { _ = al.Close() }()
 
 	srv.SetAuditLogger(al)
 	if srv.audit == nil {
