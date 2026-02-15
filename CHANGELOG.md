@@ -4,6 +4,37 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.2.0] - 2026-02-15
+
+### Added
+
+- Capture grep command (`grep`) for cross-file regex search with index-aware file skipping and count mode
+- Capture merge command (`merge`) for combining multiple captures into one
+- Capture diff command (`diff`) for comparing two captures (line counts, labels, error patterns, rate comparison)
+- Snapshot pack/extract (`snapshot`) for portable tar+zstd capture archives
+- Fluent Bit sidecar forwarder variant (`tap --forwarder fluent-bit`) with ConfigMap-based config
+- Shell completion command (`completion`) for bash, zsh, fish, powershell
+- Configuration file support (`~/.config/logtap/config.yaml`) with env var override
+- Health endpoints (`/healthz`, `/readyz`) for receiver with writer backpressure detection
+- Health endpoint for forwarder sidecar on port 9091
+- PreStop lifecycle hooks on both logtap and Fluent Bit sidecar containers
+- Liveness probes on sidecar containers
+- Receiver container image (`ghcr.io/ppiankov/logtap`) with multi-arch support
+- Homebrew formula template for `brew install ppiankov/tap/logtap`
+- Multi-workload tap (`tap --all`) for tapping all workloads matching a label selector
+- Troubleshooting guide (`docs/troubleshooting.md`)
+
+### Changed
+
+- CI now generates coverage profiles and uploads as artifacts
+- CI runs benchmarks on pull requests with results as artifacts
+- Makefile: added `help`, `install`, `coverage`, `all` targets
+
+### Testing
+
+- Performance benchmarks for recv, archive, and rotate packages
+- Coverage hardening: k8s 85.9%, sidecar 95.3%, archive 84.6%
+
 ## [0.1.0] - 2026-02-15
 
 ### Added

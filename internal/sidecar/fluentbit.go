@@ -113,6 +113,13 @@ func BuildFluentBitContainer(cfg SidecarConfig) corev1.Container {
 		Name:  cfg.ContainerName(),
 		Image: cfg.Image,
 		Args:  []string{"/fluent-bit/bin/fluent-bit", "-c", "/fluent-bit/etc/fluent-bit.conf"},
+		Lifecycle: &corev1.Lifecycle{
+			PreStop: &corev1.LifecycleHandler{
+				Exec: &corev1.ExecAction{
+					Command: []string{"sh", "-c", "sleep 5"},
+				},
+			},
+		},
 		VolumeMounts: []corev1.VolumeMount{
 			{
 				Name:      fluentBitConfigVolumeName,
