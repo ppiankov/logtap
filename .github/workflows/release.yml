@@ -142,6 +142,37 @@ jobs:
           files: dist/*
           generate_release_notes: false
 
+      - name: Update Homebrew formula
+        env:
+          GH_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+        run: |
+          VERSION=${{ steps.tag.outputs.version }}
+          VERSION_NUM=${VERSION#v}
+
+          # Compute SHA256 for each platform
+          SHA_DARWIN_ARM64=$(sha256sum dist/logtap_${VERSION_NUM}_darwin_arm64.tar.gz | awk '{print $1}')
+          SHA_DARWIN_AMD64=$(sha256sum dist/logtap_${VERSION_NUM}_darwin_amd64.tar.gz | awk '{print $1}')
+          SHA_LINUX_ARM64=$(sha256sum dist/logtap_${VERSION_NUM}_linux_arm64.tar.gz | awk '{print $1}')
+          SHA_LINUX_AMD64=$(sha256sum dist/logtap_${VERSION_NUM}_linux_amd64.tar.gz | awk '{print $1}')
+
+          # Generate formula from template
+          sed -e "s/VERSION/${VERSION_NUM}/g" \
+              -e "s/SHA256_DARWIN_ARM64/${SHA_DARWIN_ARM64}/g" \
+              -e "s/SHA256_DARWIN_AMD64/${SHA_DARWIN_AMD64}/g" \
+              -e "s/SHA256_LINUX_ARM64/${SHA_LINUX_ARM64}/g" \
+              -e "s/SHA256_LINUX_AMD64/${SHA_LINUX_AMD64}/g" \
+              Formula/logtap.rb > /tmp/logtap.rb
+
+          # Push to homebrew-tap repo (requires HOMEBREW_TAP_TOKEN secret)
+          if [ -n "$GH_TOKEN" ]; then
+            gh api repos/ppiankov/homebrew-tap/contents/Formula/logtap.rb \
+              --method PUT \
+              --field message="Update logtap to ${VERSION}" \
+              --field content="$(base64 -w0 /tmp/logtap.rb)" \
+              --field sha="$(gh api repos/ppiankov/homebrew-tap/contents/Formula/logtap.rb --jq .sha 2>/dev/null || echo '')" \
+              || echo "Homebrew tap update skipped (repo may not exist yet)"
+          fi
+
   container:
     name: Container image
     needs: test
@@ -179,3 +210,17 @@ jobs:
             ghcr.io/${{ github.repository_owner }}/logtap-forwarder:latest
             ghcr.io/${{ github.repository_owner }}/logtap-forwarder:${{ steps.tag.outputs.version }}
             ghcr.io/${{ github.repository_owner }}/logtap-forwarder:${{ github.sha }}
+
+      - name: Build and push receiver image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: Dockerfile.receiver
+          platforms: linux/amd64,linux/arm64
+          push: true
+          build-args: |
+            VERSION=${{ steps.tag.outputs.version }}
+          tags: |
+            ghcr.io/${{ github.repository_owner }}/logtap:latest
+            ghcr.io/${{ github.repository_owner }}/logtap:${{ steps.tag.outputs.version }}
+            ghcr.io/${{ github.repository_owner }}/logtap:${{ github.sha }}
