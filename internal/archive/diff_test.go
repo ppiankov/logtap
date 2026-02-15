@@ -205,6 +205,76 @@ func TestDiffEmptyCapture(t *testing.T) {
 	}
 }
 
+func TestDiff_OneSideEmpty(t *testing.T) {
+	base := time.Date(2025, 1, 1, 10, 0, 0, 0, time.UTC)
+	stop := base.Add(time.Minute)
+
+	dirA := t.TempDir()
+	dirB := t.TempDir()
+
+	// A has data, B is an empty capture (metadata + empty index only)
+	entriesA := makeEntries(15, base, "web")
+	setupCapture(t, dirA, base, stop, entriesA, "web")
+
+	writeMetadata(t, dirB, base, stop, 0)
+	writeIndex(t, dirB, nil)
+
+	result, err := Diff(dirA, dirB)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if result.A.Lines != 15 {
+		t.Errorf("A.Lines = %d, want 15", result.A.Lines)
+	}
+	if result.B.Lines != 0 {
+		t.Errorf("B.Lines = %d, want 0", result.B.Lines)
+	}
+
+	// A has a label, B has none
+	if len(result.LabelsOnlyA) != 1 || result.LabelsOnlyA[0] != "app" {
+		t.Errorf("LabelsOnlyA = %v, want [app]", result.LabelsOnlyA)
+	}
+	if len(result.LabelsOnlyB) != 0 {
+		t.Errorf("LabelsOnlyB = %v, want empty", result.LabelsOnlyB)
+	}
+
+	// Rate comparison should have buckets only for A
+	for _, b := range result.RateCompare {
+		if b.RateB != 0 {
+			t.Errorf("RateB should be 0 for empty capture, got %d at %s", b.RateB, b.Minute)
+		}
+	}
+
+	// Now test the reverse: A is empty, B has data
+	dirC := t.TempDir()
+	dirD := t.TempDir()
+
+	writeMetadata(t, dirC, base, stop, 0)
+	writeIndex(t, dirC, nil)
+
+	entriesD := makeEntries(10, base, "api")
+	setupCapture(t, dirD, base, stop, entriesD, "api")
+
+	result2, err := Diff(dirC, dirD)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if result2.A.Lines != 0 {
+		t.Errorf("A.Lines = %d, want 0", result2.A.Lines)
+	}
+	if result2.B.Lines != 10 {
+		t.Errorf("B.Lines = %d, want 10", result2.B.Lines)
+	}
+	if len(result2.LabelsOnlyA) != 0 {
+		t.Errorf("LabelsOnlyA = %v, want empty", result2.LabelsOnlyA)
+	}
+	if len(result2.LabelsOnlyB) != 1 || result2.LabelsOnlyB[0] != "app" {
+		t.Errorf("LabelsOnlyB = %v, want [app]", result2.LabelsOnlyB)
+	}
+}
+
 // setupCapture creates a minimal capture directory with metadata, index, and one data file.
 func setupCapture(t *testing.T, dir string, started, stopped time.Time, entries []recv.LogEntry, label string) {
 	t.Helper()

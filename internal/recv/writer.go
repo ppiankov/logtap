@@ -27,6 +27,8 @@ type Writer struct {
 
 	bytesWritten atomic.Int64
 	linesWritten atomic.Int64
+
+	queueGauge func(float64) // optional callback to report queue length
 }
 
 // NewWriter creates a Writer with the given buffer size.
@@ -43,14 +45,26 @@ func NewWriter(bufSize int, dst io.Writer, track func(time.Time, map[string]stri
 	return w
 }
 
+// SetQueueGauge sets a callback to report queue length changes.
+func (w *Writer) SetQueueGauge(fn func(float64)) {
+	w.queueGauge = fn
+}
+
 // Send attempts a non-blocking send of entry to the writer channel.
 // Returns false if the channel is full (caller should count as dropped).
 func (w *Writer) Send(entry LogEntry) bool {
 	select {
 	case w.ch <- entry:
+		w.reportQueue()
 		return true
 	default:
 		return false
+	}
+}
+
+func (w *Writer) reportQueue() {
+	if w.queueGauge != nil {
+		w.queueGauge(float64(len(w.ch)))
 	}
 }
 
@@ -77,12 +91,14 @@ func (w *Writer) drain() {
 		select {
 		case entry := <-w.ch:
 			w.writeLine(entry)
+			w.reportQueue()
 		case <-w.done:
 			// drain remaining
 			for {
 				select {
 				case entry := <-w.ch:
 					w.writeLine(entry)
+					w.reportQueue()
 				default:
 					return
 				}

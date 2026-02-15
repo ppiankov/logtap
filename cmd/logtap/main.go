@@ -3,15 +3,19 @@ package main
 import (
 	"fmt"
 	"os"
+	"time"
 
 	"github.com/spf13/cobra"
 
 	"github.com/ppiankov/logtap/internal/config"
 )
 
+const defaultTimeout = 30 * time.Second
+
 var (
-	version = "dev"
-	cfg     *config.Config
+	version    = "dev"
+	cfg        *config.Config
+	timeoutStr string
 )
 
 func main() {
@@ -29,6 +33,7 @@ func execute() error {
 		Short:   "Ephemeral log mirror for load testing",
 		Version: version,
 	}
+	root.PersistentFlags().StringVar(&timeoutStr, "timeout", "", "timeout for cluster operations (e.g. 30s, 1m)")
 	root.AddCommand(newRecvCmd())
 	root.AddCommand(newOpenCmd())
 	root.AddCommand(newInspectCmd())
