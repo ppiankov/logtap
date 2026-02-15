@@ -406,7 +406,7 @@ func TestWriteRotationFailure(t *testing.T) {
 	if err := os.Chmod(dir, 0o555); err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { os.Chmod(dir, 0o755) })
+	t.Cleanup(func() { _ = os.Chmod(dir, 0o755) })
 
 	// second write triggers rotation, which should fail on openNew
 	_, err = r.Write(line)
@@ -430,7 +430,7 @@ func TestAppendIndexError(t *testing.T) {
 
 	// create index.jsonl as a directory to make appendIndex fail
 	indexPath := filepath.Join(dir, "index.jsonl")
-	os.Remove(indexPath) // remove if exists
+	_ = os.Remove(indexPath) // remove if exists
 	if err := os.MkdirAll(indexPath, 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -475,7 +475,7 @@ func TestEnforceDiskCapReadDirError(t *testing.T) {
 	if err := os.Rename(dir, tmpDir); err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { os.Rename(tmpDir, dir) })
+	t.Cleanup(func() { _ = os.Rename(tmpDir, dir) })
 
 	err = r2.enforceDiskCap()
 	if err == nil {
