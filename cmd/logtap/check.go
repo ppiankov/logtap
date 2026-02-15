@@ -1,7 +1,6 @@
 package main
 
 import (
-	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -45,7 +44,8 @@ func newCheckCmd() *cobra.Command {
 }
 
 func runCheck(namespace string, jsonOutput bool) error {
-	ctx := context.Background()
+	ctx, cancel := clusterContext()
+	defer cancel()
 
 	c, err := k8s.NewClient(namespace)
 	if err != nil {

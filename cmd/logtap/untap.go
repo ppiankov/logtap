@@ -1,7 +1,6 @@
 package main
 
 import (
-	"context"
 	"fmt"
 	"os"
 
@@ -80,7 +79,8 @@ func runUntap(opts untapOpts) error {
 		return fmt.Errorf("--all requires --force to confirm bulk removal (or use --dry-run)")
 	}
 
-	ctx := context.Background()
+	ctx, cancel := clusterContext()
+	defer cancel()
 
 	c, err := k8s.NewClient(opts.namespace)
 	if err != nil {

@@ -7,6 +7,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/klauspost/compress/zstd"
+
 	"github.com/ppiankov/logtap/internal/recv"
 	"github.com/ppiankov/logtap/internal/rotate"
 )
@@ -166,6 +168,45 @@ func TestUnpackMissingIndex(t *testing.T) {
 	err := Unpack(archivePath, dst)
 	if err == nil {
 		t.Fatal("expected error for missing index.jsonl")
+	}
+}
+
+func TestSnapshot_CorruptTar(t *testing.T) {
+	dst := filepath.Join(t.TempDir(), "extracted")
+
+	// Case 1: completely random bytes, not valid zstd at all
+	badPath1 := filepath.Join(t.TempDir(), "garbage.tar.zst")
+	if err := os.WriteFile(badPath1, []byte("this is not a tar.zst archive"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	err := Unpack(badPath1, dst)
+	if err == nil {
+		t.Fatal("expected error for garbage data, got nil")
+	}
+
+	// Case 2: valid zstd wrapping garbage (not a valid tar)
+	badPath2 := filepath.Join(t.TempDir(), "bad-tar.tar.zst")
+	enc, err := zstd.NewWriter(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	compressed := enc.EncodeAll([]byte("not a tar stream at all, just random data"), nil)
+	if err := enc.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(badPath2, compressed, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	dst2 := filepath.Join(t.TempDir(), "extracted2")
+	err = Unpack(badPath2, dst2)
+	if err == nil {
+		t.Fatal("expected error for corrupt tar inside valid zstd, got nil")
+	}
+
+	// Case 3: non-existent file
+	err = Unpack("/nonexistent/path/archive.tar.zst", filepath.Join(t.TempDir(), "out"))
+	if err == nil {
+		t.Fatal("expected error for non-existent archive, got nil")
 	}
 }
 
