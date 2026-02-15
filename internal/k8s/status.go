@@ -13,18 +13,18 @@ import (
 
 // PodStatus describes sidecar health in a single pod.
 type PodStatus struct {
-	Name           string
-	SidecarRunning bool
+	Name           string `json:"name"`
+	SidecarRunning bool   `json:"sidecar_running"`
 }
 
 // TappedStatus describes a tapped workload with pod-level health.
 type TappedStatus struct {
-	Workload *Workload
-	Sessions []string
-	Target   string
-	Pods     []PodStatus
-	Ready    int
-	Total    int
+	Workload *Workload   `json:"workload"`
+	Sessions []string    `json:"sessions"`
+	Target   string      `json:"target"`
+	Pods     []PodStatus `json:"pods,omitempty"`
+	Ready    int         `json:"ready"`
+	Total    int         `json:"total"`
 }
 
 // GetTappedStatus returns the status of all tapped workloads including pod health.

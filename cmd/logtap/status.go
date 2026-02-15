@@ -3,6 +3,7 @@ package main
 import (
 	"bufio"
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"os"
@@ -16,22 +17,26 @@ import (
 )
 
 func newStatusCmd() *cobra.Command {
-	var namespace string
+	var (
+		namespace  string
+		jsonOutput bool
+	)
 
 	cmd := &cobra.Command{
 		Use:   "status",
 		Short: "Show tapped workloads and receiver stats",
 		Long:  "Status lists all workloads with active logtap sidecars, pod health, and receiver throughput if reachable.",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runStatus(namespace)
+			return runStatus(namespace, jsonOutput)
 		},
 	}
 
 	cmd.Flags().StringVarP(&namespace, "namespace", "n", "", "namespace (defaults to current context)")
+	cmd.Flags().BoolVar(&jsonOutput, "json", false, "output as JSON")
 	return cmd
 }
 
-func runStatus(namespace string) error {
+func runStatus(namespace string, jsonOutput bool) error {
 	ctx := context.Background()
 
 	c, err := k8s.NewClient(namespace)
@@ -42,6 +47,12 @@ func runStatus(namespace string) error {
 	statuses, err := k8s.GetTappedStatus(ctx, c, sidecar.AnnotationTapped, sidecar.AnnotationTarget, sidecar.ContainerPrefix)
 	if err != nil {
 		return err
+	}
+
+	if jsonOutput {
+		enc := json.NewEncoder(os.Stdout)
+		enc.SetIndent("", "  ")
+		return enc.Encode(statuses)
 	}
 
 	if len(statuses) == 0 {

@@ -10,15 +10,15 @@ import (
 
 // RBACCheck describes a single permission to verify.
 type RBACCheck struct {
-	Resource string // "deployments", "pods", etc.
-	Verb     string // "get", "patch", "create", "list"
-	Group    string // "apps", "", etc.
+	Resource string `json:"resource"` // "deployments", "pods", etc.
+	Verb     string `json:"verb"`     // "get", "patch", "create", "list"
+	Group    string `json:"group"`    // "apps", "", etc.
 }
 
 // RBACResult pairs a check with its outcome.
 type RBACResult struct {
-	Check   RBACCheck
-	Allowed bool
+	Check   RBACCheck `json:"check"`
+	Allowed bool      `json:"allowed"`
 }
 
 // CheckRBAC verifies a list of permissions via SelfSubjectAccessReview.
