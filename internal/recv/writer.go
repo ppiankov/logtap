@@ -68,6 +68,9 @@ func (w *Writer) BytesWritten() int64 { return w.bytesWritten.Load() }
 // LinesWritten returns total lines written.
 func (w *Writer) LinesWritten() int64 { return w.linesWritten.Load() }
 
+// Healthy returns true if the writer channel has capacity (not in backpressure).
+func (w *Writer) Healthy() bool { return len(w.ch) < cap(w.ch) }
+
 func (w *Writer) drain() {
 	defer w.wg.Done()
 	for {

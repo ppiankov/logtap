@@ -1287,3 +1287,255 @@ Currently `logtap tap` targets a single deployment. Load tests involve many serv
 - `make test && make lint` clean
 
 **Result:** `internal/sidecar/fluentbit.go` with config generation, container spec, ConfigMap create/delete. Extended PatchSpec/RemovePatchSpec with volume support. `--forwarder` flag on tap (requires --image for fluent-bit). Remove/RemoveAll clean up ConfigMaps and volumes. 5 unit tests. sidecar coverage 79.7%.
+
+---
+
+## Phase 5: Hardening & Distribution
+
+Phase 5 closes operational gaps, improves distribution, and adds one high-value analysis feature. After Phase 5 the tool is ready for v0.2.0.
+
+---
+
+### WO-22: Health & Readiness Endpoints
+
+**Goal:** Add Kubernetes-native health probes so the in-cluster receiver works with pod readiness gates and load balancers.
+
+**Problem:**
+The receiver exposes `/metrics` but has no `/healthz` or `/readyz`. In-cluster deployments can't distinguish "starting up" from "ready to accept logs". Port-forward and sidecar targeting wait for pod Ready, but there's no application-level readiness signal.
+
+**Details:**
+- `GET /healthz` — returns 200 if server is listening (liveness)
+- `GET /readyz` — returns 200 if server is listening AND writer is not in backpressure (readiness)
+- Both return JSON: `{"status":"ok"}` or `{"status":"not_ready","reason":"..."}`
+- Wire into in-cluster receiver pod spec as liveness/readiness probes
+
+**Steps:**
+1. Add `/healthz` and `/readyz` handlers to `internal/recv/server.go`
+2. Expose writer backpressure state via `Writer.Healthy() bool`
+3. Update `internal/k8s/deploy.go` to include probe specs on receiver pod
+4. Add tests
+
+**Acceptance:**
+- `curl /healthz` returns 200 when server is running
+- `curl /readyz` returns 503 when writer channel is full
+- `make test && make lint` clean
+
+---
+
+### WO-23: Sidecar Lifecycle Hooks
+
+**Goal:** Add PreStop hooks to forwarder sidecars so in-flight logs drain before pod termination.
+
+**Problem:**
+When a workload scales down or redeploys, the forwarder sidecar is killed immediately. Logs buffered in the forwarder's channel are lost. A PreStop hook gives the forwarder time to flush.
+
+**Details:**
+- Add `preStop` lifecycle hook to sidecar container spec: `sleep 5` (allow drain)
+- Add `terminationGracePeriodSeconds` annotation recommendation in dry-run output
+- Add liveness probe to forwarder sidecar (`/healthz` on logtap-forwarder, HTTP check on Fluent Bit)
+- Update `cmd/logtap-forwarder/main.go` to expose a `/healthz` endpoint
+
+**Steps:**
+1. Add HTTP health endpoint to `cmd/logtap-forwarder/main.go` (minimal goroutine, port 9091)
+2. Update `internal/sidecar/spec.go` `BuildContainer` to include lifecycle hook + liveness probe
+3. Update `internal/sidecar/fluentbit.go` to include lifecycle hook
+4. Add/update tests
+
+**Acceptance:**
+- Sidecar container spec includes `preStop` hook
+- Forwarder exposes `/healthz` on port 9091
+- `make test && make lint` clean
+
+---
+
+### WO-24: Coverage Hardening [DONE]
+
+**Goal:** Bring k8s and sidecar packages to 85%+ coverage. Close the gap from Phase 4.
+
+**Problem:**
+k8s is at 83.9% and sidecar at 79.7% — both below the 85% project target. Fluent Bit code paths and volume patch logic are untested.
+
+**Steps:**
+1. `internal/k8s/patch_test.go` — add tests for volume append in ApplyPatch, filterVolumes in RemovePatch
+2. `internal/sidecar/inject_test.go` — add test for Fluent Bit injection path (Forwarder field)
+3. `internal/sidecar/remove_test.go` — add test for Fluent Bit removal (VolumeNames, ConfigMap delete)
+4. `internal/sidecar/fluentbit_test.go` — add ConfigMap create/delete tests (with fake clientset)
+
+**Acceptance:**
+- `go test -cover ./internal/k8s/` reports ≥85%
+- `go test -cover ./internal/sidecar/` reports ≥85%
+- `make test && make lint` clean
+
+---
+
+### WO-25: Capture Diff [DONE]
+
+**Goal:** Compare two captures to surface behavioral differences between load test runs.
+
+**Problem:**
+Teams run load tests repeatedly. Currently they must manually inspect each capture. A diff tool shows what changed: new error patterns, throughput shifts, label distribution changes.
+
+**Details:**
+- `logtap diff <capture-a/> <capture-b/>` — compare two captures
+- Output sections:
+  - **Time range:** start/stop/duration for each
+  - **Volume:** total lines, lines/sec for each
+  - **Labels:** label keys present in A but not B, and vice versa
+  - **Error patterns:** triage-style top errors unique to each capture
+  - **Rate comparison:** log rate per minute (shows spikes/dips between runs)
+- No ML — deterministic string comparison and counting
+- `--json` flag for structured output
+
+**Steps:**
+1. `internal/archive/diff.go` — DiffResult struct, Diff function
+2. `internal/archive/diff_test.go` — tests
+3. `cmd/logtap/diff.go` — Cobra command
+4. Register in `cmd/logtap/main.go`
+
+**Acceptance:**
+- `logtap diff capA/ capB/` shows meaningful comparison
+- `--json` produces structured output
+- `make test && make lint` clean
+
+---
+
+### WO-26: Receiver Container Image [DONE]
+
+**Goal:** Publish a container image for the logtap receiver binary (not just the forwarder).
+
+**Problem:**
+`--in-cluster` requires `--image` but there's no published receiver image. Users must build their own. The forwarder has `ghcr.io/ppiankov/logtap-forwarder` but there's no `ghcr.io/ppiankov/logtap`.
+
+**Details:**
+- `Dockerfile.receiver` — multi-stage build, scratch base, logtap binary
+- Extend `.github/workflows/release.yml` to build and push `ghcr.io/ppiankov/logtap:<version>`
+- Multi-arch: linux/amd64 + linux/arm64
+- Default `--in-cluster --image` can reference this image
+
+**Steps:**
+1. Create `Dockerfile.receiver` (multi-stage: Go builder → scratch)
+2. Add `build-receiver-image` target to Makefile (local build)
+3. Extend `release.yml` with receiver image build job
+4. Update README with receiver image reference
+
+**Acceptance:**
+- `docker build -f Dockerfile.receiver .` produces working image
+- `release.yml` pushes both forwarder and receiver images on tag
+- Image runs `logtap recv --headless` correctly
+
+---
+
+### WO-27: Homebrew Tap [DONE]
+
+**Goal:** Install logtap via `brew install ppiankov/tap/logtap`.
+
+**Details:**
+- Create `homebrew-tap` repository at `github.com/ppiankov/homebrew-tap`
+- Formula downloads release binary for darwin-amd64/arm64
+- `release.yml` auto-updates formula on new tag (using `gh` or manual template)
+- Include shell completion installation in formula
+
+**Steps:**
+1. Create formula template (`logtap.rb`)
+2. Add formula update step to `release.yml` (after binaries are uploaded)
+3. Test: `brew install ppiankov/tap/logtap && logtap --version`
+
+**Acceptance:**
+- `brew install ppiankov/tap/logtap` installs working binary
+- `logtap completion zsh` works after install
+- Formula auto-updates on release
+
+---
+
+### WO-28: CI Enhancements [DONE]
+
+**Goal:** Add coverage reporting and benchmark regression detection to CI.
+
+**Problem:**
+CI runs tests but doesn't track coverage trends or detect performance regressions. Coverage drops go unnoticed until manual review.
+
+**Details:**
+- Coverage: upload to Codecov (or store as artifact), fail if any package drops below 80%
+- Benchmarks: run on PR, compare against main, comment if >10% regression
+- Add `make test-integration` target (placeholder for Kind tests, skip in CI for now)
+
+**Steps:**
+1. Update `.github/workflows/ci.yml` to generate coverage profile and upload
+2. Add benchmark comparison step (use `benchstat` or `gobenchdata`)
+3. Add coverage threshold check (script or tool)
+4. Add `test-integration` Makefile target (no-op until Kind is available)
+
+**Acceptance:**
+- PR checks show coverage percentages
+- >10% benchmark regression fails or warns on PR
+- `make test && make lint` clean
+
+---
+
+### WO-29: Makefile & Developer Experience [DONE]
+
+**Goal:** Improve local developer workflow with missing Makefile targets and help.
+
+**Details:**
+- `make help` — auto-generated target descriptions
+- `make install` — build + copy to `$GOPATH/bin`
+- `make coverage` — generate HTML coverage report, open in browser
+- `make all` — deps + fmt + lint + test + build
+- Update `.PHONY` to include all targets
+
+**Steps:**
+1. Add targets to Makefile
+2. Add `help` target using grep + awk on `##` comments
+3. Verify all targets work
+
+**Acceptance:**
+- `make help` lists all targets with descriptions
+- `make install && logtap --version` works
+- `make coverage` opens HTML report
+
+---
+
+### WO-30: Troubleshooting Guide [DONE]
+
+**Goal:** Document common failure modes and solutions for operators.
+
+**Details:**
+Add `docs/troubleshooting.md` covering:
+- Receiver won't start (port in use, dir permissions)
+- Sidecar not forwarding (image pull errors, network policy blocking)
+- `logtap check` failures (RBAC missing, quota exceeded)
+- Disk full / rotation not working
+- Capture can't be opened (corrupt metadata, missing index)
+- Port-forward drops (tunnel instability, pod restart)
+- Redaction not working (pattern not matching, custom file format)
+
+**Steps:**
+1. Create `docs/troubleshooting.md`
+2. Add link from README.md
+
+**Acceptance:**
+- Guide covers at least 7 scenarios
+- Each scenario has: symptom, cause, solution
+- README links to it
+
+---
+
+### WO-31: v0.2.0 Release [DONE]
+
+**Goal:** Tag and publish v0.2.0 with Phase 4 + Phase 5 features.
+
+**Depends on:** WO-22 through WO-30
+
+**Steps:**
+1. Update CHANGELOG.md with v0.2.0 section
+2. Update README.md known limitations (remove items addressed in Phase 4/5)
+3. Run full verification: `make all`
+4. Tag `v0.2.0`, push tag
+5. Verify release workflow completes (binaries, images, Homebrew formula)
+6. Update Homebrew formula if not auto-updated
+
+**Acceptance:**
+- GitHub release page shows v0.2.0 with binaries and changelog
+- `ghcr.io/ppiankov/logtap:v0.2.0` and `ghcr.io/ppiankov/logtap-forwarder:v0.2.0` exist
+- `brew upgrade logtap` gets v0.2.0
+- CI green on main

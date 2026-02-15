@@ -2,29 +2,42 @@ BINARY := logtap
 VERSION := $(shell git describe --tags --always --dirty 2>/dev/null || echo "dev")
 LDFLAGS := -ldflags "-X main.version=$(VERSION)"
 
-.PHONY: build build-forwarder test bench lint fmt clean deps
+.PHONY: all build build-forwarder test bench lint fmt clean deps install coverage help
 
-build:
+all: deps fmt lint test build ## Run deps, fmt, lint, test, and build
+
+build: ## Build logtap binary
 	go build $(LDFLAGS) -o bin/$(BINARY) ./cmd/logtap
 
-build-forwarder:
+build-forwarder: ## Build logtap-forwarder binary (CGO_ENABLED=0)
 	CGO_ENABLED=0 go build -ldflags="-s -w" -o bin/logtap-forwarder ./cmd/logtap-forwarder
 
-test:
+test: ## Run tests with race detection and coverage
 	go test -race -cover ./...
 
-bench:
+bench: ## Run benchmarks with memory stats
 	go test -bench=. -benchmem -run=^$$ ./internal/...
 
-lint:
+lint: ## Run golangci-lint
 	golangci-lint run ./...
 
-fmt:
+fmt: ## Format code with gofmt and goimports
 	gofmt -w .
 	goimports -w .
 
-deps:
+deps: ## Download module dependencies
 	go mod download
 
-clean:
-	rm -rf bin/
+install: build ## Build and install to GOPATH/bin
+	cp bin/$(BINARY) $(shell go env GOPATH)/bin/$(BINARY)
+
+coverage: ## Generate HTML coverage report and open in browser
+	go test -coverprofile=coverage.out ./...
+	go tool cover -html=coverage.out -o coverage.html
+	open coverage.html
+
+clean: ## Remove build artifacts and coverage files
+	rm -rf bin/ coverage.out coverage.html
+
+help: ## Show this help
+	@grep -E '^[a-zA-Z_-]+:.*## ' $(MAKEFILE_LIST) | sort | awk 'BEGIN {FS = ":.*## "}; {printf "  \033[36m%-18s\033[0m %s\n", $$1, $$2}'

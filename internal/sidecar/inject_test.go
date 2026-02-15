@@ -142,6 +142,116 @@ func TestInject_AlreadyTapped(t *testing.T) {
 	}
 }
 
+func TestInject_FluentBit(t *testing.T) {
+	deploy := makeDeployment("api-gw")
+	cs := fake.NewSimpleClientset(deploy) //nolint:staticcheck // NewClientset requires generated apply configs
+	c := k8s.NewClientFromInterface(cs, "default")
+
+	w, err := k8s.DiscoverByName(context.Background(), c, k8s.KindDeployment, "api-gw")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	cfg := SidecarConfig{
+		SessionID: "lt-fb01",
+		Target:    "logtap:9000",
+		Image:     "fluent/fluent-bit:3.0",
+		Forwarder: ForwarderFluentBit,
+	}
+
+	result, err := Inject(context.Background(), c, w, cfg, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !result.Applied {
+		t.Error("Applied = false, want true")
+	}
+
+	updated, err := cs.AppsV1().Deployments("default").Get(context.Background(), "api-gw", metav1.GetOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(updated.Spec.Template.Spec.Containers) != 2 {
+		t.Errorf("containers = %d, want 2", len(updated.Spec.Template.Spec.Containers))
+	}
+	if len(updated.Spec.Template.Spec.Volumes) != 2 {
+		t.Errorf("volumes = %d, want 2", len(updated.Spec.Template.Spec.Volumes))
+	}
+	if updated.Spec.Template.Annotations[AnnotationForwarder] != ForwarderFluentBit {
+		t.Errorf("forwarder annotation = %q, want %q", updated.Spec.Template.Annotations[AnnotationForwarder], ForwarderFluentBit)
+	}
+
+	// Verify ConfigMap was created
+	cm, err := cs.CoreV1().ConfigMaps("default").Get(context.Background(), ConfigMapName("lt-fb01"), metav1.GetOptions{})
+	if err != nil {
+		t.Fatalf("configmap not created: %v", err)
+	}
+	if _, ok := cm.Data["fluent-bit.conf"]; !ok {
+		t.Error("configmap missing fluent-bit.conf key")
+	}
+}
+
+func TestInject_FluentBitNoImage(t *testing.T) {
+	deploy := makeDeployment("api-gw")
+	cs := fake.NewSimpleClientset(deploy) //nolint:staticcheck // NewClientset requires generated apply configs
+	c := k8s.NewClientFromInterface(cs, "default")
+
+	w, err := k8s.DiscoverByName(context.Background(), c, k8s.KindDeployment, "api-gw")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	cfg := SidecarConfig{
+		SessionID: "lt-fb01",
+		Target:    "logtap:9000",
+		Forwarder: ForwarderFluentBit,
+		// No Image — should error
+	}
+
+	_, err = Inject(context.Background(), c, w, cfg, false)
+	if err == nil {
+		t.Fatal("expected error when --image is not provided for fluent-bit")
+	}
+}
+
+func TestInject_FluentBitDryRun(t *testing.T) {
+	deploy := makeDeployment("api-gw")
+	cs := fake.NewSimpleClientset(deploy) //nolint:staticcheck // NewClientset requires generated apply configs
+	c := k8s.NewClientFromInterface(cs, "default")
+
+	w, err := k8s.DiscoverByName(context.Background(), c, k8s.KindDeployment, "api-gw")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	cfg := SidecarConfig{
+		SessionID: "lt-fb01",
+		Target:    "logtap:9000",
+		Image:     "fluent/fluent-bit:3.0",
+		Forwarder: ForwarderFluentBit,
+	}
+
+	result, err := Inject(context.Background(), c, w, cfg, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Applied {
+		t.Error("Applied = true, want false for dry-run")
+	}
+	if result.Diff == "" {
+		t.Error("dry-run diff is empty")
+	}
+
+	// Verify no changes
+	original, err := cs.AppsV1().Deployments("default").Get(context.Background(), "api-gw", metav1.GetOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(original.Spec.Template.Spec.Containers) != 1 {
+		t.Errorf("containers = %d, want 1 (should not be modified)", len(original.Spec.Template.Spec.Containers))
+	}
+}
+
 func TestInject_DryRun(t *testing.T) {
 	deploy := makeDeployment("api-gw")
 	cs := fake.NewSimpleClientset(deploy) //nolint:staticcheck // NewClientset requires generated apply configs

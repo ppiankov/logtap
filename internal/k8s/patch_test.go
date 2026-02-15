@@ -586,6 +586,149 @@ func TestRemovePatch_DaemonSet_UpdateError(t *testing.T) {
 	}
 }
 
+func TestApplyPatch_WithVolumes(t *testing.T) {
+	app := corev1.Container{Name: "app", Image: "myapp:v1"}
+	deploy := makeTestDeployment("api-gw", app)
+	cs := fake.NewSimpleClientset(deploy) //nolint:staticcheck // NewClientset requires generated apply configs
+	c := NewClientFromInterface(cs, "default")
+
+	w, err := DiscoverByName(context.Background(), c, KindDeployment, "api-gw")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	ps := PatchSpec{
+		Container: sidecarContainer("logtap-forwarder-lt-a3f9"),
+		Volumes: []corev1.Volume{
+			{Name: "config-vol", VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}}},
+			{Name: "logs-vol", VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}}},
+		},
+		Annotations: map[string]string{"logtap.dev/tapped": "lt-a3f9"},
+	}
+
+	_, err = ApplyPatch(context.Background(), c, w, ps, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	updated, err := cs.AppsV1().Deployments("default").Get(context.Background(), "api-gw", metav1.GetOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(updated.Spec.Template.Spec.Volumes) != 2 {
+		t.Errorf("volumes = %d, want 2", len(updated.Spec.Template.Spec.Volumes))
+	}
+}
+
+func TestRemovePatch_WithVolumes(t *testing.T) {
+	app := corev1.Container{Name: "app", Image: "myapp:v1"}
+	sc := sidecarContainer("logtap-forwarder-lt-a3f9")
+	deploy := makeTestDeployment("api-gw", app, sc)
+	deploy.Spec.Template.Annotations = map[string]string{
+		"logtap.dev/tapped": "lt-a3f9",
+	}
+	deploy.Spec.Template.Spec.Volumes = []corev1.Volume{
+		{Name: "config-vol", VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}}},
+		{Name: "logs-vol", VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}}},
+		{Name: "app-data", VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}}},
+	}
+
+	cs := fake.NewSimpleClientset(deploy) //nolint:staticcheck // NewClientset requires generated apply configs
+	c := NewClientFromInterface(cs, "default")
+
+	w, err := DiscoverByName(context.Background(), c, KindDeployment, "api-gw")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	rs := RemovePatchSpec{
+		ContainerNames:    []string{"logtap-forwarder-lt-a3f9"},
+		VolumeNames:       []string{"config-vol", "logs-vol"},
+		DeleteAnnotations: []string{"logtap.dev/tapped"},
+	}
+
+	_, err = RemovePatch(context.Background(), c, w, rs, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	updated, err := cs.AppsV1().Deployments("default").Get(context.Background(), "api-gw", metav1.GetOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(updated.Spec.Template.Spec.Volumes) != 1 {
+		t.Errorf("volumes = %d, want 1", len(updated.Spec.Template.Spec.Volumes))
+	}
+	if updated.Spec.Template.Spec.Volumes[0].Name != "app-data" {
+		t.Errorf("remaining volume = %q, want %q", updated.Spec.Template.Spec.Volumes[0].Name, "app-data")
+	}
+}
+
+func TestApplyPatch_Deployment_UpdateError(t *testing.T) {
+	app := corev1.Container{Name: "app", Image: "myapp:v1"}
+	deploy := makeTestDeployment("api-gw", app)
+	cs := fake.NewSimpleClientset(deploy) //nolint:staticcheck // NewClientset requires generated apply configs
+	cs.PrependReactor("update", "deployments", func(action k8stesting.Action) (bool, runtime.Object, error) {
+		return true, nil, fmt.Errorf("injected update error")
+	})
+	c := NewClientFromInterface(cs, "default")
+
+	w, err := DiscoverByName(context.Background(), c, KindDeployment, "api-gw")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	ps := PatchSpec{
+		Container:   sidecarContainer("logtap-forwarder-lt-a3f9"),
+		Annotations: map[string]string{"logtap.dev/tapped": "lt-a3f9"},
+	}
+
+	_, err = ApplyPatch(context.Background(), c, w, ps, false)
+	if err == nil {
+		t.Fatal("expected error for update failure")
+	}
+	if !strings.Contains(err.Error(), "update deployment") {
+		t.Errorf("err = %q, want 'update deployment'", err.Error())
+	}
+}
+
+func TestApplyPatch_StatefulSet_UpdateError(t *testing.T) {
+	sts := &appsv1.StatefulSet{
+		ObjectMeta: metav1.ObjectMeta{Name: "redis", Namespace: "default"},
+		Spec: appsv1.StatefulSetSpec{
+			Replicas: int32Ptr(3),
+			Template: corev1.PodTemplateSpec{
+				Spec: corev1.PodSpec{
+					Containers: []corev1.Container{{Name: "redis", Image: "redis:7"}},
+				},
+			},
+		},
+	}
+	cs := fake.NewSimpleClientset(sts) //nolint:staticcheck // NewClientset requires generated apply configs
+	cs.PrependReactor("update", "statefulsets", func(action k8stesting.Action) (bool, runtime.Object, error) {
+		return true, nil, fmt.Errorf("injected update error")
+	})
+	c := NewClientFromInterface(cs, "default")
+
+	w, err := DiscoverByName(context.Background(), c, KindStatefulSet, "redis")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	ps := PatchSpec{
+		Container:   sidecarContainer("logtap-forwarder-lt-a3f9"),
+		Annotations: map[string]string{"logtap.dev/tapped": "lt-a3f9"},
+	}
+
+	_, err = ApplyPatch(context.Background(), c, w, ps, false)
+	if err == nil {
+		t.Fatal("expected error for update failure")
+	}
+	if !strings.Contains(err.Error(), "update statefulset") {
+		t.Errorf("err = %q, want 'update statefulset'", err.Error())
+	}
+}
+
 func TestRemovePatch_StatefulSet_UpdateError(t *testing.T) {
 	ss := &appsv1.StatefulSet{
 		ObjectMeta: metav1.ObjectMeta{Name: "db", Namespace: "default"},

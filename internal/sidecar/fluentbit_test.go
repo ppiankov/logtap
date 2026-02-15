@@ -1,8 +1,14 @@
 package sidecar
 
 import (
+	"context"
 	"strings"
 	"testing"
+
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/client-go/kubernetes/fake"
+
+	"github.com/ppiankov/logtap/internal/k8s"
 )
 
 func TestFluentBitConfig(t *testing.T) {
@@ -108,5 +114,109 @@ func TestFluentBitVolumeNames(t *testing.T) {
 	names := FluentBitVolumeNames()
 	if len(names) != 2 {
 		t.Fatalf("got %d names, want 2", len(names))
+	}
+}
+
+func TestCreateFluentBitConfigMap(t *testing.T) {
+	cs := fake.NewSimpleClientset() //nolint:staticcheck // NewClientset requires generated apply configs
+	c := k8s.NewClientFromInterface(cs, "default")
+
+	err := CreateFluentBitConfigMap(context.Background(), c, "lt-abc123", "receiver:3100", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	cm, err := cs.CoreV1().ConfigMaps("default").Get(context.Background(), "logtap-fb-lt-abc123", metav1.GetOptions{})
+	if err != nil {
+		t.Fatalf("configmap not found: %v", err)
+	}
+	if _, ok := cm.Data["fluent-bit.conf"]; !ok {
+		t.Error("missing fluent-bit.conf key")
+	}
+	if cm.Labels["logtap.dev/session"] != "lt-abc123" {
+		t.Errorf("session label = %q, want %q", cm.Labels["logtap.dev/session"], "lt-abc123")
+	}
+}
+
+func TestCreateFluentBitConfigMap_DryRun(t *testing.T) {
+	cs := fake.NewSimpleClientset() //nolint:staticcheck // NewClientset requires generated apply configs
+	c := k8s.NewClientFromInterface(cs, "default")
+
+	err := CreateFluentBitConfigMap(context.Background(), c, "lt-abc123", "receiver:3100", true)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// ConfigMap should NOT exist
+	_, err = cs.CoreV1().ConfigMaps("default").Get(context.Background(), "logtap-fb-lt-abc123", metav1.GetOptions{})
+	if err == nil {
+		t.Error("configmap should not exist in dry-run mode")
+	}
+}
+
+func TestDeleteFluentBitConfigMap(t *testing.T) {
+	cs := fake.NewSimpleClientset() //nolint:staticcheck // NewClientset requires generated apply configs
+	c := k8s.NewClientFromInterface(cs, "default")
+
+	// Create then delete
+	err := CreateFluentBitConfigMap(context.Background(), c, "lt-abc123", "receiver:3100", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	err = DeleteFluentBitConfigMap(context.Background(), c, "lt-abc123", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	_, err = cs.CoreV1().ConfigMaps("default").Get(context.Background(), "logtap-fb-lt-abc123", metav1.GetOptions{})
+	if err == nil {
+		t.Error("configmap should be deleted")
+	}
+}
+
+func TestDeleteFluentBitConfigMap_DryRun(t *testing.T) {
+	cs := fake.NewSimpleClientset() //nolint:staticcheck // NewClientset requires generated apply configs
+	c := k8s.NewClientFromInterface(cs, "default")
+
+	// Create a real one
+	err := CreateFluentBitConfigMap(context.Background(), c, "lt-abc123", "receiver:3100", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Dry-run delete should leave it in place
+	err = DeleteFluentBitConfigMap(context.Background(), c, "lt-abc123", true)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	_, err = cs.CoreV1().ConfigMaps("default").Get(context.Background(), "logtap-fb-lt-abc123", metav1.GetOptions{})
+	if err != nil {
+		t.Error("configmap should still exist after dry-run delete")
+	}
+}
+
+func TestBuildFluentBitContainer_Defaults(t *testing.T) {
+	cfg := SidecarConfig{
+		SessionID: "lt-test",
+		Target:    "receiver:3100",
+		Image:     "fluent/fluent-bit:3.0",
+		// No resource limits set — should use defaults
+	}
+
+	c := BuildFluentBitContainer(cfg)
+
+	memReq := c.Resources.Requests.Memory()
+	if memReq.String() != "16Mi" {
+		t.Errorf("default mem request = %q, want %q", memReq.String(), "16Mi")
+	}
+	cpuReq := c.Resources.Requests.Cpu()
+	if cpuReq.String() != "25m" {
+		t.Errorf("default cpu request = %q, want %q", cpuReq.String(), "25m")
+	}
+
+	if c.Lifecycle == nil || c.Lifecycle.PreStop == nil {
+		t.Error("expected PreStop lifecycle hook")
 	}
 }
