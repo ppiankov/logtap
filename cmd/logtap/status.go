@@ -2,7 +2,6 @@ package main
 
 import (
 	"bufio"
-	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -37,7 +36,8 @@ func newStatusCmd() *cobra.Command {
 }
 
 func runStatus(namespace string, jsonOutput bool) error {
-	ctx := context.Background()
+	ctx, cancel := clusterContext()
+	defer cancel()
 
 	c, err := k8s.NewClient(namespace)
 	if err != nil {

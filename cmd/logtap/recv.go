@@ -36,6 +36,7 @@ func newRecvCmd() *cobra.Command {
 		inCluster      bool
 		image          string
 		namespace      string
+		ttlStr         string
 	)
 
 	cmd := &cobra.Command{
@@ -51,6 +52,14 @@ func newRecvCmd() *cobra.Command {
 				if image == "" {
 					return fmt.Errorf("--image required with --in-cluster")
 				}
+				var ttl time.Duration
+				if ttlStr != "" {
+					var err error
+					ttl, err = time.ParseDuration(ttlStr)
+					if err != nil {
+						return fmt.Errorf("invalid --ttl: %w", err)
+					}
+				}
 				return runRecvInCluster(inClusterOpts{
 					image:      image,
 					namespace:  namespace,
@@ -59,6 +68,7 @@ func newRecvCmd() *cobra.Command {
 					compress:   compress,
 					redact:     redactFlag,
 					listenPort: 9000,
+					ttl:        ttl,
 				})
 			}
 			if dir == "" {
@@ -82,6 +92,7 @@ func newRecvCmd() *cobra.Command {
 	cmd.Flags().BoolVar(&inCluster, "in-cluster", false, "deploy receiver as in-cluster pod")
 	cmd.Flags().StringVar(&image, "image", "", "container image for in-cluster receiver (required with --in-cluster)")
 	cmd.Flags().StringVarP(&namespace, "namespace", "n", "logtap", "namespace for in-cluster resources")
+	cmd.Flags().StringVar(&ttlStr, "ttl", "4h", "receiver pod TTL for in-cluster mode (e.g. 4h, 30m)")
 
 	return cmd
 }
@@ -145,6 +156,11 @@ func runRecv(listen, dir, maxFileStr, maxDiskStr string, compress bool, redactFl
 
 	// writer
 	writer := recv.NewWriter(bufSize, rot, rot.TrackLine)
+	writer.SetQueueGauge(func(v float64) { metrics.WriterQueueLength.Set(v) })
+
+	// rotation metrics
+	rot.SetOnRotate(func(reason string) { metrics.RotationTotal.WithLabelValues(reason).Inc() })
+	rot.SetOnError(func() { metrics.RotationErrors.Inc() })
 
 	// stats and ring (needed by both TUI and server hooks)
 	stats := recv.NewStats()
@@ -163,6 +179,7 @@ func runRecv(listen, dir, maxFileStr, maxDiskStr string, compress bool, redactFl
 
 	// server
 	srv := recv.NewServer(listen, writer, redactor, metrics, stats, ring)
+	srv.SetVersion(version)
 	srv.SetAuditLogger(audit)
 
 	audit.Log(recv.AuditEntry{Event: "server_started"})
@@ -271,6 +288,7 @@ type inClusterOpts struct {
 	compress   bool
 	redact     string
 	listenPort int
+	ttl        time.Duration
 }
 
 func runRecvInCluster(opts inClusterOpts) error {
@@ -316,6 +334,7 @@ func runRecvInCluster(opts inClusterOpts) error {
 		Port:      int32(opts.listenPort),
 		Args:      podArgs,
 		Labels:    labels,
+		TTL:       opts.ttl,
 	}
 
 	fmt.Fprintf(os.Stderr, "deploying receiver pod in %s...\n", c.NS)

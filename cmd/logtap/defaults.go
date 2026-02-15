@@ -1,6 +1,30 @@
 package main
 
-import "github.com/spf13/cobra"
+import (
+	"context"
+	"time"
+
+	"github.com/spf13/cobra"
+)
+
+// clusterContext returns a context with the configured timeout for cluster operations.
+// The caller must call cancel when done.
+func clusterContext() (context.Context, context.CancelFunc) {
+	timeout := defaultTimeout
+
+	// Flag overrides config
+	if timeoutStr != "" {
+		if d, err := time.ParseDuration(timeoutStr); err == nil {
+			timeout = d
+		}
+	} else if cfg != nil && cfg.Defaults.Timeout != "" {
+		if d, err := time.ParseDuration(cfg.Defaults.Timeout); err == nil {
+			timeout = d
+		}
+	}
+
+	return context.WithTimeout(context.Background(), timeout)
+}
 
 // applyConfigDefaults sets flag values from config when the flag
 // was not explicitly set on the command line. Flags > env > config > defaults.

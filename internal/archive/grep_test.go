@@ -3,6 +3,7 @@ package archive
 import (
 	"fmt"
 	"regexp"
+	"strings"
 	"testing"
 	"time"
 
@@ -346,5 +347,35 @@ func TestGrepProgress(t *testing.T) {
 	// entries 0, 3, 6, 9 match "error"
 	if lastProgress.Matches != 4 {
 		t.Errorf("matches = %d, want 4", lastProgress.Matches)
+	}
+}
+
+func TestGrep_InvalidRegex(t *testing.T) {
+	// Verify that an invalid regex pattern fails at compilation,
+	// preventing it from reaching Grep via Filter.Grep.
+	patterns := []string{
+		"[invalid",
+		"(?P<>bad)",
+		"*quantifier",
+		"(unclosed",
+	}
+
+	for _, p := range patterns {
+		_, err := regexp.Compile(p)
+		if err == nil {
+			t.Errorf("expected compile error for pattern %q", p)
+			continue
+		}
+		if !strings.Contains(err.Error(), "error parsing regexp") {
+			t.Errorf("unexpected error type for %q: %v", p, err)
+		}
+	}
+
+	// Also verify Grep returns an error for a non-existent source directory
+	// (the primary error path within Grep itself)
+	filter := &Filter{Grep: regexp.MustCompile("anything")}
+	_, err := Grep("/nonexistent/capture/dir", filter, GrepConfig{}, func(m GrepMatch) {}, nil)
+	if err == nil {
+		t.Fatal("expected error for non-existent directory")
 	}
 }
