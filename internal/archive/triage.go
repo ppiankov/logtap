@@ -34,36 +34,36 @@ type TriageProgress struct {
 
 // TriageResult holds all triage output data.
 type TriageResult struct {
-	Dir        string
-	Meta       *recv.Metadata
-	Timeline   []TriageBucket
-	Errors     []ErrorSignature
-	Talkers    map[string][]TalkerEntry
-	Windows    TriageWindows
-	TotalLines int64
-	ErrorLines int64
+	Dir        string                   `json:"dir"`
+	Meta       *recv.Metadata           `json:"metadata,omitempty"`
+	Timeline   []TriageBucket           `json:"timeline,omitempty"`
+	Errors     []ErrorSignature         `json:"errors,omitempty"`
+	Talkers    map[string][]TalkerEntry `json:"talkers,omitempty"`
+	Windows    TriageWindows            `json:"windows"`
+	TotalLines int64                    `json:"total_lines"`
+	ErrorLines int64                    `json:"error_lines"`
 }
 
 // TriageBucket represents one time window in the histogram.
 type TriageBucket struct {
-	Time       time.Time
-	TotalLines int64
-	ErrorLines int64
+	Time       time.Time `json:"time"`
+	TotalLines int64     `json:"total_lines"`
+	ErrorLines int64     `json:"error_lines"`
 }
 
 // ErrorSignature represents a normalized error pattern.
 type ErrorSignature struct {
-	Signature string
-	Count     int64
-	FirstSeen time.Time
-	Example   string
+	Signature string    `json:"signature"`
+	Count     int64     `json:"count"`
+	FirstSeen time.Time `json:"first_seen"`
+	Example   string    `json:"example"`
 }
 
 // TalkerEntry represents volume per label value.
 type TalkerEntry struct {
-	Value      string
-	TotalLines int64
-	ErrorLines int64
+	Value      string `json:"value"`
+	TotalLines int64  `json:"total_lines"`
+	ErrorLines int64  `json:"error_lines"`
 }
 
 // TriageWindows holds recommended time windows for slicing.
@@ -690,6 +690,13 @@ func (r *TriageResult) WriteTopTalkers(w io.Writer) {
 				e.Value, e.TotalLines, pct, e.ErrorLines)
 		}
 	}
+}
+
+// WriteJSON writes the full triage result as JSON.
+func (r *TriageResult) WriteJSON(w io.Writer) error {
+	enc := json.NewEncoder(w)
+	enc.SetIndent("", "  ")
+	return enc.Encode(r)
 }
 
 // WriteWindows writes recommended time windows as JSON.

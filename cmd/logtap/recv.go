@@ -42,6 +42,10 @@ func newRecvCmd() *cobra.Command {
 		Use:   "recv",
 		Short: "Start the log receiver",
 		Long:  "Accept Loki push API payloads, optionally redact PII, write compressed JSONL to disk.",
+		PreRunE: func(cmd *cobra.Command, args []string) error {
+			applyConfigDefaults(cmd)
+			return nil
+		},
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if inCluster {
 				if image == "" {

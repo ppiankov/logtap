@@ -14,10 +14,11 @@ import (
 
 func newTriageCmd() *cobra.Command {
 	var (
-		outDir    string
-		jobs      int
-		windowStr string
-		top       int
+		outDir     string
+		jobs       int
+		windowStr  string
+		top        int
+		jsonOutput bool
 	)
 
 	cmd := &cobra.Command{
@@ -30,21 +31,21 @@ func newTriageCmd() *cobra.Command {
 			if err != nil {
 				return fmt.Errorf("invalid --window: %w", err)
 			}
-			return runTriage(args[0], outDir, jobs, window, top)
+			return runTriage(args[0], outDir, jobs, window, top, jsonOutput)
 		},
 	}
 
-	cmd.Flags().StringVar(&outDir, "out", "", "output directory for triage artifacts (required)")
+	cmd.Flags().StringVar(&outDir, "out", "", "output directory for triage artifacts")
 	cmd.Flags().IntVar(&jobs, "jobs", runtime.NumCPU(), "parallel scan workers")
 	cmd.Flags().StringVar(&windowStr, "window", "1m", "histogram bucket width")
 	cmd.Flags().IntVar(&top, "top", 50, "number of top error signatures")
-	_ = cmd.MarkFlagRequired("out")
+	cmd.Flags().BoolVar(&jsonOutput, "json", false, "output as JSON to stdout")
 
 	return cmd
 }
 
-func runTriage(src, outDir string, jobs int, window time.Duration, top int) error {
-	cfg := archive.TriageConfig{
+func runTriage(src, outDir string, jobs int, window time.Duration, top int, jsonOutput bool) error {
+	triageCfg := archive.TriageConfig{
 		Jobs:   jobs,
 		Window: window,
 		Top:    top,
@@ -60,7 +61,7 @@ func runTriage(src, outDir string, jobs int, window time.Duration, top int) erro
 		}
 	}
 
-	result, err := archive.Triage(src, cfg, progress)
+	result, err := archive.Triage(src, triageCfg, progress)
 	if err != nil {
 		fmt.Fprintln(os.Stderr)
 		return err
@@ -68,6 +69,14 @@ func runTriage(src, outDir string, jobs int, window time.Duration, top int) erro
 
 	fmt.Fprintf(os.Stderr, "\rTriage: %s lines scanned, %s errors found\n",
 		archive.FormatCount(result.TotalLines), archive.FormatCount(result.ErrorLines))
+
+	if jsonOutput {
+		return result.WriteJSON(os.Stdout)
+	}
+
+	if outDir == "" {
+		return fmt.Errorf("--out is required (or use --json for stdout)")
+	}
 
 	if err := os.MkdirAll(outDir, 0o755); err != nil {
 		return fmt.Errorf("create output dir: %w", err)
