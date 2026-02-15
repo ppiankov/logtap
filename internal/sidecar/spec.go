@@ -23,6 +23,7 @@ type SidecarConfig struct {
 	SessionID  string
 	Target     string
 	Image      string
+	Forwarder  string // "logtap" (default) or "fluent-bit"
 	MemRequest string
 	MemLimit   string
 	CPURequest string

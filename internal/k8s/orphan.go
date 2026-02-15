@@ -12,30 +12,30 @@ import (
 
 // OrphanedSidecar describes a workload with logtap sidecar containers still present.
 type OrphanedSidecar struct {
-	Workload        *Workload
-	Sessions        []string
-	Target          string
-	TargetReachable bool
+	Workload        *Workload `json:"workload"`
+	Sessions        []string  `json:"sessions"`
+	Target          string    `json:"target"`
+	TargetReachable bool      `json:"target_reachable"`
 }
 
 // StaleAnnotation describes a workload with logtap annotation but no sidecar container.
 type StaleAnnotation struct {
-	Workload   *Workload
-	Annotation string
+	Workload   *Workload `json:"workload"`
+	Annotation string    `json:"annotation"`
 }
 
 // OrphanedReceiver describes a logtap receiver pod left running in the cluster.
 type OrphanedReceiver struct {
-	PodName   string
-	Namespace string
-	Age       time.Duration
+	PodName   string        `json:"pod_name"`
+	Namespace string        `json:"namespace"`
+	Age       time.Duration `json:"age"`
 }
 
 // OrphanResult contains all detected orphaned artifacts.
 type OrphanResult struct {
-	Sidecars       []OrphanedSidecar
-	StaleWorkloads []StaleAnnotation
-	Receivers      []OrphanedReceiver
+	Sidecars       []OrphanedSidecar  `json:"sidecars,omitempty"`
+	StaleWorkloads []StaleAnnotation  `json:"stale_workloads,omitempty"`
+	Receivers      []OrphanedReceiver `json:"receivers,omitempty"`
 }
 
 // ReceiverChecker tests if a receiver target is reachable.

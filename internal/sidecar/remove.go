@@ -34,6 +34,8 @@ func Remove(ctx context.Context, c *k8s.Client, w *k8s.Workload, sessionID strin
 		return nil, fmt.Errorf("session %s not found in %s/%s (tapped: %s)", sessionID, w.Kind, w.Name, tapped)
 	}
 
+	isFluentBit := w.Annotations[AnnotationForwarder] == ForwarderFluentBit
+
 	containerName := ContainerPrefix + sessionID
 	newTapped := RemoveSession(tapped, sessionID)
 
@@ -41,9 +43,15 @@ func Remove(ctx context.Context, c *k8s.Client, w *k8s.Workload, sessionID strin
 		ContainerNames: []string{containerName},
 	}
 
+	if isFluentBit {
+		rs.VolumeNames = FluentBitVolumeNames()
+		// Clean up ConfigMap
+		_ = DeleteFluentBitConfigMap(ctx, c, sessionID, dryRun)
+	}
+
 	if newTapped == "" {
-		// Last session — delete both annotations
-		rs.DeleteAnnotations = []string{AnnotationTapped, AnnotationTarget}
+		// Last session — delete all logtap annotations
+		rs.DeleteAnnotations = []string{AnnotationTapped, AnnotationTarget, AnnotationForwarder}
 	} else {
 		// Other sessions remain — update tapped annotation
 		rs.SetAnnotations = map[string]string{AnnotationTapped: newTapped}
@@ -70,6 +78,8 @@ func RemoveAll(ctx context.Context, c *k8s.Client, w *k8s.Workload, dryRun bool)
 		return nil, fmt.Errorf("workload %s/%s is not tapped", w.Kind, w.Name)
 	}
 
+	isFluentBit := w.Annotations[AnnotationForwarder] == ForwarderFluentBit
+
 	containerNames := make([]string, len(sessions))
 	for i, s := range sessions {
 		containerNames[i] = ContainerPrefix + s
@@ -77,7 +87,14 @@ func RemoveAll(ctx context.Context, c *k8s.Client, w *k8s.Workload, dryRun bool)
 
 	rs := k8s.RemovePatchSpec{
 		ContainerNames:    containerNames,
-		DeleteAnnotations: []string{AnnotationTapped, AnnotationTarget},
+		DeleteAnnotations: []string{AnnotationTapped, AnnotationTarget, AnnotationForwarder},
+	}
+
+	if isFluentBit {
+		rs.VolumeNames = FluentBitVolumeNames()
+		for _, s := range sessions {
+			_ = DeleteFluentBitConfigMap(ctx, c, s, dryRun)
+		}
 	}
 
 	diff, err := k8s.RemovePatch(ctx, c, w, rs, dryRun)
