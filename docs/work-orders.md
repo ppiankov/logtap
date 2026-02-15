@@ -964,21 +964,32 @@ will detect these as orphans.
 
 ## Post-WO: Coverage Gaps
 
-### WO-10: Push recv and rotate coverage to 85%
+### WO-10: Push recv and rotate coverage to 85% ✅
 
 **Goal:** Close coverage gaps — recv at 82.9%, rotate at 79.0%. Both below 85% target.
 
-**recv (82.9% → 85%+)**:
-- Error paths: malformed Loki push payloads, oversized requests, connection drops mid-stream
-- Edge cases: empty label sets, duplicate timestamps, mixed snappy/raw encoding
-- Backpressure: disk full scenarios, slow writer blocking HTTP handler
+**Results:**
+- recv: 82.9% → 90.2% (metadata_test.go, writer_test.go, coverage_test.go)
+- rotate: 79.0% → 86.6% (coverage_test.go)
 
-**rotate (79.0% → 85%+)**:
-- Error paths: disk full during rotation, permission denied on new file, corrupt header
-- Edge cases: rotation at exact size boundary, concurrent write during rotate
-- Cleanup: max-files enforcement when disk is near limit
+---
 
-**Acceptance**:
-- `make test` with -race passes
-- recv ≥ 85%, rotate ≥ 85%
-- No flaky tests — all deterministic
+### WO-11: First Release (v0.1.0)
+
+**Goal:** Cut the first tagged release. The release workflow (`.github/workflows/release.yml`) and Dockerfile already exist. This WO is about preparing the content and cutting the tag.
+
+**Steps:**
+1. Update `CHANGELOG.md` — set `[0.1.0]` date, verify entries match implemented features
+2. Verify `README.md` has: badges, one-line description, quick start, usage, architecture, known limitations, roadmap, license
+3. Verify CI passes on main: `go test -race ./...` all green
+4. Tag: `git tag v0.1.0 && git push origin v0.1.0`
+5. Verify release workflow produces:
+   - GitHub release with binaries (linux/amd64, linux/arm64, darwin/amd64, darwin/arm64, windows/amd64)
+   - checksums.txt
+   - `ghcr.io/ppiankov/logtap-forwarder:v0.1.0` container image (multi-arch)
+6. Smoke test: download binary from release, run `logtap recv --help`
+
+**Acceptance:**
+- GitHub release page shows v0.1.0 with all platform binaries
+- `docker pull ghcr.io/ppiankov/logtap-forwarder:v0.1.0` succeeds
+- Downloaded binary runs on macOS and Linux
