@@ -993,3 +993,264 @@ will detect these as orphans.
 - GitHub release page shows v0.1.0 with all platform binaries
 - `docker pull ghcr.io/ppiankov/logtap-forwarder:v0.1.0` succeeds
 - Downloaded binary runs on macOS and Linux
+
+---
+
+## Phase 4: Adoption Features (v0.2.x)
+
+---
+
+### WO-12: Capture Grep
+
+**Goal:** Cross-file regex search on a capture directory. Currently users must decompress and pipe through `rg` manually.
+
+**Details:**
+- `logtap grep <pattern> <capture/>` — search across all compressed JSONL files
+- Uses index to skip files outside time range (if `--since`/`--until` given)
+- Streams decompressed content through regex, prints matching lines with file + line number
+- Supports `--label` filter (same as `slice`) to narrow by service
+- Supports `--count` to show match counts per file instead of lines
+- Output: JSONL lines that match, preserving original structure
+
+**Files:**
+- `cmd/logtap/grep.go` — Cobra command
+- `internal/archive/grep.go` + `grep_test.go` — search engine
+
+**Verification:** `make test` passes, grep finds known patterns across compressed files.
+
+---
+
+### WO-13: Capture Merge
+
+**Goal:** Combine multiple capture directories into one. Common scenario: two load test runs that should be analyzed together.
+
+**Details:**
+- `logtap merge <capture1/> <capture2/> -o <output/>` — merge by timestamp
+- Rebuilds unified index.jsonl from both sources
+- Handles overlapping time ranges (interleave by timestamp)
+- Handles label collisions (both captures may have same service names — that's fine, they merge)
+- Copies compressed files, does NOT decompress+recompress
+
+**Files:**
+- `cmd/logtap/merge.go` — Cobra command
+- `internal/archive/merge.go` + `merge_test.go` — merge engine
+
+**Verification:** `make test` passes, merged capture opens correctly in `logtap open`.
+
+---
+
+### WO-14: Shell Completion
+
+**Goal:** Tab completion for bash, zsh, and fish.
+
+**Steps:**
+1. Add `logtap completion bash|zsh|fish` command (Cobra built-in)
+2. Add install instructions to README (one-liner per shell)
+3. Capture directory arguments should complete from filesystem
+4. `--format` flags should complete with valid values
+
+**Files:**
+- `cmd/logtap/completion.go`
+- `README.md` — add completion section
+
+**Verification:** Tab completion works in bash and zsh.
+
+---
+
+### WO-15: Config File Support
+
+**Goal:** Persistent defaults via `~/.logtap/config.yaml` so operators don't repeat flags.
+
+**Config schema:**
+```yaml
+recv:
+  addr: ":3100"
+  dir: "./captures"
+  disk_cap: "5GB"
+  redact: true
+  redact_patterns: /path/to/patterns.yaml
+tap:
+  namespace: default
+  cpu: "25m"
+  memory: "16Mi"
+defaults:
+  timeout: 30s
+  verbose: false
+```
+
+**Steps:**
+1. Create `internal/config/` package — load from `~/.logtap/config.yaml` then CWD `.logtap.yaml`
+2. CLI flags override config values
+3. Env vars override config: `LOGTAP_RECV_ADDR`, `LOGTAP_RECV_DIR`, etc.
+4. Precedence: flags > env > config file > defaults
+
+**Files:**
+- `internal/config/config.go` + `config_test.go`
+- `cmd/logtap/root.go` — integrate config loading
+
+**Verification:** `make test` passes, config file defaults apply when flags not set.
+
+---
+
+### WO-16: JSON Output for All Commands
+
+**Goal:** Machine-readable output for scripting. Currently `inspect` and `triage` have text-only output.
+
+**Steps:**
+1. Add `--output json` flag to `inspect`, `triage`, `status`, `check`
+2. `inspect --output json` emits the stats struct as JSON
+3. `triage --output json` emits findings array as NDJSON
+4. `status --output json` emits tapped workloads as JSON
+5. `check --output json` emits readiness report as JSON
+
+**Files:**
+- Update `cmd/logtap/{inspect,triage,status,check}.go`
+- Add JSON formatters to `internal/archive/inspect.go`, `internal/archive/triage.go`
+- Add JSON formatters to `internal/k8s/status.go`, `internal/k8s/check.go`
+
+**Verification:** `make test` passes, JSON output is valid and parseable.
+
+---
+
+### WO-17: Integration Tests with Kind
+
+**Goal:** End-to-end tests against a real Kubernetes cluster using Kind (Kubernetes in Docker).
+
+**Problem:**
+The k8s package (1,301 lines) is tested with mocks. Real cluster interactions — patch application, sidecar injection, port-forward, orphan detection — are untested. `tunnel.go` and `client.go` NewClient path have zero coverage.
+
+**Approach:**
+- Use Kind to create a single-node cluster in CI
+- Guard with `//go:build integration` tag
+- Test full lifecycle: `tap` → `recv` → `untap` → verify logs captured
+- Test `check` against real RBAC and quotas
+- Test `status` with real tapped workloads
+- Test orphan detection after unclean shutdown
+
+**Steps:**
+1. Create `internal/k8s/k8s_integration_test.go` guarded by build tag
+2. Helper: `setupKindCluster(t)` creates cluster, returns kubeconfig
+3. Deploy test workload (nginx), tap it, send logs, verify capture
+4. Test untap removes sidecar cleanly
+5. Test check reports real RBAC permissions
+6. Add `make test-integration` target
+7. Add Kind setup to CI workflow
+
+**CI Workflow:**
+```yaml
+test-integration:
+  runs-on: ubuntu-latest
+  steps:
+    - uses: actions/checkout@v4
+    - uses: actions/setup-go@v5
+    - uses: helm/kind-action@v1
+    - run: make test-integration
+```
+
+**Acceptance:**
+- Full tap → recv → untap lifecycle tested against real cluster
+- `make test` still works without Kind
+- No flaky timing
+
+---
+
+### WO-18: Performance Benchmarks
+
+**Goal:** Formal benchmarks for the receiver pipeline, archive reader, triage scanner.
+
+**Benchmarks:**
+- `BenchmarkRecvPush` — Loki push API handler throughput (entries/sec, bytes/sec)
+- `BenchmarkWriter` — Buffered JSONL write throughput
+- `BenchmarkRotator` — Rotation + zstd compression overhead
+- `BenchmarkReader` — Decompression + timestamp-ordered read
+- `BenchmarkTriage` — Parallel scan with error normalization
+- `BenchmarkFilter` — Time/label/grep filter evaluation
+- `BenchmarkRedact` — PII redaction throughput per pattern count
+
+**Steps:**
+1. Add `Benchmark*` functions to recv, archive, rotate test files
+2. Add `make bench` target: `go test -bench=. -benchmem ./internal/...`
+3. Use realistic data sizes (10k entries, 1MB files)
+4. Document baseline numbers in `docs/benchmarks.md`
+
+**Acceptance:**
+- `make bench` runs all benchmarks
+- Results include allocations (`-benchmem`)
+- No flaky timing assertions
+
+---
+
+### WO-19: Multi-Workload Tap
+
+**Goal:** Tap multiple workloads in one command using label selectors.
+
+**Problem:**
+Currently `logtap tap` targets a single deployment. Load tests involve many services — tapping each one individually is tedious.
+
+**Details:**
+- `logtap tap --selector app.kubernetes.io/part-of=myapp` — tap all matching deployments
+- `logtap tap --namespace loadtest --all` — tap everything in namespace
+- Single session ID shared across all tapped workloads
+- `logtap untap --session lt-XXXX` removes all sidecars for that session
+- Progress output: shows each workload being tapped
+
+**Steps:**
+1. Extend `cmd/logtap/tap.go` with `--selector` and `--all` flags
+2. Extend `internal/k8s/discover.go` to return multiple workloads from selector
+3. Loop tap with shared session ID
+4. Extend `cmd/logtap/untap.go` to support `--session` flag
+5. Extend `internal/k8s/status.go` to group by session
+
+**Acceptance:**
+- `logtap tap --selector app=myapp` taps all matching deployments
+- `logtap untap --session lt-XXXX` removes all sidecars from that session
+- `make test && make lint` clean
+
+---
+
+### WO-20: Snapshot Export
+
+**Goal:** Package a capture directory into a single compressed file for transfer.
+
+**Details:**
+- `logtap snapshot <capture/> -o capture.tar.zst` — tar + zstd the entire directory
+- `logtap snapshot --extract capture.tar.zst -o <dir/>` — reverse
+- Preserves directory structure (metadata.json, index.jsonl, *.jsonl.zst, audit.jsonl)
+- Single-file artifact for sharing between teams or uploading to storage
+
+**Steps:**
+1. `cmd/logtap/snapshot.go` — Cobra command
+2. `internal/archive/snapshot.go` + `snapshot_test.go` — tar+zstd pack/unpack
+3. Validate on extract: check metadata.json exists, index.jsonl parseable
+
+**Acceptance:**
+- Round-trip: snapshot → extract → `logtap open` works
+- `make test` passes
+
+---
+
+### WO-21: Fluent Bit Sidecar Variant
+
+**Goal:** Support Fluent Bit as an alternative sidecar forwarder for environments that already run Fluent Bit.
+
+**Details:**
+- `logtap tap --forwarder fluent-bit` — inject Fluent Bit sidecar instead of logtap-forwarder
+- ConfigMap with Fluent Bit config: tail input → http output (Loki push API to receiver)
+- Same receiver endpoint — Fluent Bit speaks Loki push API natively
+- Same session management, same untap behavior
+
+**Steps:**
+1. Create `internal/sidecar/fluentbit.go` — Fluent Bit container spec + ConfigMap
+2. Extend `cmd/logtap/tap.go` with `--forwarder` flag (default: `logtap`, alternative: `fluent-bit`)
+3. Extend `internal/sidecar/remove.go` to handle Fluent Bit ConfigMap cleanup
+4. Document Fluent Bit image version pinning
+
+**Constraints:**
+- Fluent Bit image must be specified explicitly (no default — user controls their image)
+- ConfigMap is session-scoped (cleaned up on untap)
+
+**Acceptance:**
+- `logtap tap --forwarder fluent-bit` injects working Fluent Bit sidecar
+- Logs arrive at receiver in same Loki push format
+- `logtap untap` removes sidecar + ConfigMap
+- `make test && make lint` clean
