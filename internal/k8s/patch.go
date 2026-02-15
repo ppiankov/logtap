@@ -15,6 +15,7 @@ import (
 // PatchSpec describes the sidecar container and annotations to add.
 type PatchSpec struct {
 	Container   corev1.Container
+	Volumes     []corev1.Volume
 	Annotations map[string]string
 }
 
@@ -38,6 +39,7 @@ func applyDeploymentPatch(ctx context.Context, c *Client, d *appsv1.Deployment, 
 
 	updated := d.DeepCopy()
 	updated.Spec.Template.Spec.Containers = append(updated.Spec.Template.Spec.Containers, ps.Container)
+	updated.Spec.Template.Spec.Volumes = append(updated.Spec.Template.Spec.Volumes, ps.Volumes...)
 	if updated.Spec.Template.Annotations == nil {
 		updated.Spec.Template.Annotations = make(map[string]string)
 	}
@@ -64,6 +66,7 @@ func applyStatefulSetPatch(ctx context.Context, c *Client, s *appsv1.StatefulSet
 
 	updated := s.DeepCopy()
 	updated.Spec.Template.Spec.Containers = append(updated.Spec.Template.Spec.Containers, ps.Container)
+	updated.Spec.Template.Spec.Volumes = append(updated.Spec.Template.Spec.Volumes, ps.Volumes...)
 	if updated.Spec.Template.Annotations == nil {
 		updated.Spec.Template.Annotations = make(map[string]string)
 	}
@@ -90,6 +93,7 @@ func applyDaemonSetPatch(ctx context.Context, c *Client, d *appsv1.DaemonSet, ps
 
 	updated := d.DeepCopy()
 	updated.Spec.Template.Spec.Containers = append(updated.Spec.Template.Spec.Containers, ps.Container)
+	updated.Spec.Template.Spec.Volumes = append(updated.Spec.Template.Spec.Volumes, ps.Volumes...)
 	if updated.Spec.Template.Annotations == nil {
 		updated.Spec.Template.Annotations = make(map[string]string)
 	}
@@ -114,6 +118,7 @@ func applyDaemonSetPatch(ctx context.Context, c *Client, d *appsv1.DaemonSet, ps
 // RemovePatchSpec describes containers to remove and annotations to update/delete.
 type RemovePatchSpec struct {
 	ContainerNames    []string          // containers to remove from pod spec
+	VolumeNames       []string          // volumes to remove from pod spec
 	SetAnnotations    map[string]string // annotations to set (updated values)
 	DeleteAnnotations []string          // annotation keys to delete entirely
 }
@@ -138,6 +143,7 @@ func removeDeploymentPatch(ctx context.Context, c *Client, d *appsv1.Deployment,
 
 	updated := d.DeepCopy()
 	updated.Spec.Template.Spec.Containers = filterContainers(updated.Spec.Template.Spec.Containers, rs.ContainerNames)
+	updated.Spec.Template.Spec.Volumes = filterVolumes(updated.Spec.Template.Spec.Volumes, rs.VolumeNames)
 	applyAnnotationChanges(updated.Spec.Template.Annotations, rs.SetAnnotations, rs.DeleteAnnotations)
 
 	after, _ := marshalYAMLSpec(updated)
@@ -159,6 +165,7 @@ func removeStatefulSetPatch(ctx context.Context, c *Client, s *appsv1.StatefulSe
 
 	updated := s.DeepCopy()
 	updated.Spec.Template.Spec.Containers = filterContainers(updated.Spec.Template.Spec.Containers, rs.ContainerNames)
+	updated.Spec.Template.Spec.Volumes = filterVolumes(updated.Spec.Template.Spec.Volumes, rs.VolumeNames)
 	applyAnnotationChanges(updated.Spec.Template.Annotations, rs.SetAnnotations, rs.DeleteAnnotations)
 
 	after, _ := marshalYAMLSpec(updated)
@@ -180,6 +187,7 @@ func removeDaemonSetPatch(ctx context.Context, c *Client, d *appsv1.DaemonSet, r
 
 	updated := d.DeepCopy()
 	updated.Spec.Template.Spec.Containers = filterContainers(updated.Spec.Template.Spec.Containers, rs.ContainerNames)
+	updated.Spec.Template.Spec.Volumes = filterVolumes(updated.Spec.Template.Spec.Volumes, rs.VolumeNames)
 	applyAnnotationChanges(updated.Spec.Template.Annotations, rs.SetAnnotations, rs.DeleteAnnotations)
 
 	after, _ := marshalYAMLSpec(updated)
@@ -205,6 +213,23 @@ func filterContainers(containers []corev1.Container, remove []string) []corev1.C
 	for _, c := range containers {
 		if !removeSet[c.Name] {
 			out = append(out, c)
+		}
+	}
+	return out
+}
+
+func filterVolumes(volumes []corev1.Volume, remove []string) []corev1.Volume {
+	if len(remove) == 0 {
+		return volumes
+	}
+	removeSet := make(map[string]bool, len(remove))
+	for _, name := range remove {
+		removeSet[name] = true
+	}
+	out := make([]corev1.Volume, 0, len(volumes))
+	for _, v := range volumes {
+		if !removeSet[v.Name] {
+			out = append(out, v)
 		}
 	}
 	return out

@@ -11,9 +11,9 @@ import (
 
 // ResourceWarning describes a potential resource issue.
 type ResourceWarning struct {
-	Level   string // "warn"
-	Check   string // "quota", "limitrange", "capacity"
-	Message string
+	Level   string `json:"level"` // "warn"
+	Check   string `json:"check"` // "quota", "limitrange", "capacity"
+	Message string `json:"message"`
 }
 
 // CheckResources inspects namespace quotas, limit ranges, and node capacity
@@ -44,11 +44,11 @@ func CheckResources(ctx context.Context, c *Client, replicas int32, memReq, cpuR
 
 // QuotaSummary describes a single ResourceQuota's usage for display.
 type QuotaSummary struct {
-	Name    string
-	MemHard string
-	MemUsed string
-	CPUHard string
-	CPUUsed string
+	Name    string `json:"name"`
+	MemHard string `json:"mem_hard,omitempty"`
+	MemUsed string `json:"mem_used,omitempty"`
+	CPUHard string `json:"cpu_hard,omitempty"`
+	CPUUsed string `json:"cpu_used,omitempty"`
 }
 
 // GetQuotaSummary returns structured quota data for the namespace.
