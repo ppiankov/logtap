@@ -20,7 +20,9 @@ func newTapCmd() *cobra.Command {
 		daemonset     string
 		namespace     string
 		selector      string
+		all           bool
 		target        string
+		forwarder     string
 		dryRun        bool
 		force         bool
 		allowProd     bool
@@ -33,6 +35,10 @@ func newTapCmd() *cobra.Command {
 		Use:   "tap",
 		Short: "Inject logtap forwarder sidecar into workloads",
 		Long:  "Tap patches Kubernetes workloads to add a logtap log-forwarding sidecar container. The sidecar sends logs to the logtap receiver via the Loki push API.",
+		PreRunE: func(cmd *cobra.Command, args []string) error {
+			applyConfigDefaults(cmd)
+			return nil
+		},
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runTap(tapOpts{
 				deployment:    deployment,
@@ -40,7 +46,9 @@ func newTapCmd() *cobra.Command {
 				daemonset:     daemonset,
 				namespace:     namespace,
 				selector:      selector,
+				all:           all,
 				target:        target,
+				forwarder:     forwarder,
 				dryRun:        dryRun,
 				force:         force,
 				allowProd:     allowProd,
@@ -56,7 +64,9 @@ func newTapCmd() *cobra.Command {
 	cmd.Flags().StringVar(&daemonset, "daemonset", "", "daemonset name")
 	cmd.Flags().StringVarP(&namespace, "namespace", "n", "", "namespace (defaults to current context)")
 	cmd.Flags().StringVarP(&selector, "selector", "l", "", "label selector")
+	cmd.Flags().BoolVar(&all, "all", false, "tap all workloads in namespace (requires --force)")
 	cmd.Flags().StringVar(&target, "target", "", "receiver address (required)")
+	cmd.Flags().StringVar(&forwarder, "forwarder", sidecar.ForwarderLogtap, "forwarder type (logtap or fluent-bit)")
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "show diff without applying")
 	cmd.Flags().BoolVar(&force, "force", false, "proceed despite warnings")
 	cmd.Flags().BoolVar(&allowProd, "allow-prod", false, "allow tapping production namespaces")
@@ -74,7 +84,9 @@ type tapOpts struct {
 	daemonset     string
 	namespace     string
 	selector      string
+	all           bool
 	target        string
+	forwarder     string
 	dryRun        bool
 	force         bool
 	allowProd     bool
@@ -84,7 +96,7 @@ type tapOpts struct {
 }
 
 func runTap(opts tapOpts) error {
-	// Validate targeting mode: exactly one of deployment/statefulset/daemonset/selector
+	// Validate targeting mode: exactly one of deployment/statefulset/daemonset/selector/all
 	modes := 0
 	if opts.deployment != "" {
 		modes++
@@ -98,11 +110,23 @@ func runTap(opts tapOpts) error {
 	if opts.selector != "" {
 		modes++
 	}
+	if opts.all {
+		modes++
+	}
 	if modes == 0 {
-		return fmt.Errorf("specify one of --deployment, --statefulset, --daemonset, or --selector")
+		return fmt.Errorf("specify one of --deployment, --statefulset, --daemonset, --selector, or --all")
 	}
 	if modes > 1 {
-		return fmt.Errorf("specify only one of --deployment, --statefulset, --daemonset, or --selector")
+		return fmt.Errorf("specify only one of --deployment, --statefulset, --daemonset, --selector, or --all")
+	}
+	if opts.all && !opts.dryRun && !opts.force {
+		return fmt.Errorf("--all requires --force to confirm bulk tapping (or use --dry-run)")
+	}
+	if opts.forwarder != sidecar.ForwarderLogtap && opts.forwarder != sidecar.ForwarderFluentBit {
+		return fmt.Errorf("--forwarder must be %q or %q", sidecar.ForwarderLogtap, sidecar.ForwarderFluentBit)
+	}
+	if opts.forwarder == sidecar.ForwarderFluentBit && opts.image == sidecar.DefaultImage {
+		return fmt.Errorf("--image is required when using --forwarder fluent-bit (no default Fluent Bit image)")
 	}
 
 	ctx := context.Background()
@@ -163,6 +187,20 @@ func runTap(opts tapOpts) error {
 			return fmt.Errorf("no workloads found matching selector %q", opts.selector)
 		}
 		workloads = wl
+	case opts.all:
+		wl, err := k8s.DiscoverBySelector(ctx, c, "")
+		if err != nil {
+			return err
+		}
+		// Filter out already-tapped workloads
+		for _, w := range wl {
+			if w.Annotations[sidecar.AnnotationTapped] == "" {
+				workloads = append(workloads, w)
+			}
+		}
+		if len(workloads) == 0 {
+			return fmt.Errorf("no untapped workloads found in namespace %q", c.NS)
+		}
 	}
 
 	// Generate session ID
@@ -189,10 +227,11 @@ func runTap(opts tapOpts) error {
 	}
 
 	// Build sidecar config
-	cfg := sidecar.SidecarConfig{
+	scfg := sidecar.SidecarConfig{
 		SessionID:  sessionID,
 		Target:     opts.target,
 		Image:      opts.image,
+		Forwarder:  opts.forwarder,
 		MemRequest: opts.sidecarMemory,
 		MemLimit:   memLimit,
 		CPURequest: opts.sidecarCPU,
@@ -201,7 +240,7 @@ func runTap(opts tapOpts) error {
 
 	// Inject into each workload
 	for _, w := range workloads {
-		result, err := sidecar.Inject(ctx, c, w, cfg, opts.dryRun)
+		result, err := sidecar.Inject(ctx, c, w, scfg, opts.dryRun)
 		if err != nil {
 			return fmt.Errorf("inject %s/%s: %w", w.Kind, w.Name, err)
 		}

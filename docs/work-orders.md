@@ -1000,7 +1000,7 @@ will detect these as orphans.
 
 ---
 
-### WO-12: Capture Grep
+### WO-12: Capture Grep ✅
 
 **Goal:** Cross-file regex search on a capture directory. Currently users must decompress and pipe through `rg` manually.
 
@@ -1018,9 +1018,13 @@ will detect these as orphans.
 
 **Verification:** `make test` passes, grep finds known patterns across compressed files.
 
+**Results:**
+- archive coverage: 86.7% (up from 86.6%)
+- 9 tests: basic, no-matches, count-mode, time-filter, label-filter, compressed, multi-file, empty, progress
+
 ---
 
-### WO-13: Capture Merge
+### WO-13: Capture Merge ✅
 
 **Goal:** Combine multiple capture directories into one. Common scenario: two load test runs that should be analyzed together.
 
@@ -1037,9 +1041,13 @@ will detect these as orphans.
 
 **Verification:** `make test` passes, merged capture opens correctly in `logtap open`.
 
+**Results:**
+- archive coverage: 86.2%
+- 8 tests: basic, name-collision, compressed, overlapping-time, labels-merge, too-few-sources, progress, three-sources
+
 ---
 
-### WO-14: Shell Completion
+### WO-14: Shell Completion ✅
 
 **Goal:** Tab completion for bash, zsh, and fish.
 
@@ -1055,9 +1063,13 @@ will detect these as orphans.
 
 **Verification:** Tab completion works in bash and zsh.
 
+**Results:**
+- `logtap completion bash|zsh|fish` generates valid completion scripts
+- Long help text includes install instructions for all 3 shells
+
 ---
 
-### WO-15: Config File Support
+### WO-15: Config File Support ✅
 
 **Goal:** Persistent defaults via `~/.logtap/config.yaml` so operators don't repeat flags.
 
@@ -1090,9 +1102,14 @@ defaults:
 
 **Verification:** `make test` passes, config file defaults apply when flags not set.
 
+**Results:**
+- config coverage: 100%
+- 7 tests: load-from-file, missing-file, empty-load, env-overrides, verbose-env, all-env-vars, partial-config
+- Integrated via `applyConfigDefaults` PreRunE on recv and tap commands
+
 ---
 
-### WO-16: JSON Output for All Commands
+### WO-16: JSON Output for All Commands ✅
 
 **Goal:** Machine-readable output for scripting. Currently `inspect` and `triage` have text-only output.
 
@@ -1109,6 +1126,14 @@ defaults:
 - Add JSON formatters to `internal/k8s/status.go`, `internal/k8s/check.go`
 
 **Verification:** `make test` passes, JSON output is valid and parseable.
+
+**Results:**
+- inspect: already had --json (pre-existing)
+- triage: added --json flag + WriteJSON method, --out no longer required when --json used
+- status: added --json flag, outputs TappedStatus array
+- check: added --json flag, outputs checkResult struct with cluster/rbac/quotas/orphans/candidates
+- Added JSON tags to all k8s types: Workload, TappedStatus, PodStatus, ClusterInfo, RBACCheck, RBACResult, QuotaSummary, ResourceWarning, OrphanResult, OrphanedSidecar, StaleAnnotation, OrphanedReceiver
+- Added JSON tags to triage types: TriageResult, TriageBucket, ErrorSignature, TalkerEntry
 
 ---
 
@@ -1154,7 +1179,7 @@ test-integration:
 
 ---
 
-### WO-18: Performance Benchmarks
+### WO-18: Performance Benchmarks ✅
 
 **Goal:** Formal benchmarks for the receiver pipeline, archive reader, triage scanner.
 
@@ -1178,9 +1203,11 @@ test-integration:
 - Results include allocations (`-benchmem`)
 - No flaky timing assertions
 
+**Result:** 14 benchmarks across 3 packages. `make bench` target added. Baseline numbers (Apple M2 Max): FilterSkipFile 4ns/op 0 alloc, FilterMatchEntry 58ns/op 0 alloc, ReaderScan 10ms/10k entries, RotatorWrite 1.6μs/op, Writer 3.8ns/op, Redact 10-144μs depending on message size.
+
 ---
 
-### WO-19: Multi-Workload Tap
+### WO-19: Multi-Workload Tap ✅
 
 **Goal:** Tap multiple workloads in one command using label selectors.
 
@@ -1206,9 +1233,11 @@ Currently `logtap tap` targets a single deployment. Load tests involve many serv
 - `logtap untap --session lt-XXXX` removes all sidecars from that session
 - `make test && make lint` clean
 
+**Result:** Most features already existed from Phase 2. Added `--all` flag to tap (requires `--force`, filters out already-tapped workloads). `--selector`, shared session ID, `untap --session`, and session display in status were already implemented.
+
 ---
 
-### WO-20: Snapshot Export
+### WO-20: Snapshot Export ✅
 
 **Goal:** Package a capture directory into a single compressed file for transfer.
 
@@ -1227,9 +1256,11 @@ Currently `logtap tap` targets a single deployment. Load tests involve many serv
 - Round-trip: snapshot → extract → `logtap open` works
 - `make test` passes
 
+**Result:** Pack/Unpack functions in `internal/archive/snapshot.go`. Path traversal protection on extract. Validates metadata.json + index.jsonl on unpack. 6 tests including round-trip with Reader.Scan verification. archive coverage 85.3%.
+
 ---
 
-### WO-21: Fluent Bit Sidecar Variant
+### WO-21: Fluent Bit Sidecar Variant ✅
 
 **Goal:** Support Fluent Bit as an alternative sidecar forwarder for environments that already run Fluent Bit.
 
@@ -1254,3 +1285,5 @@ Currently `logtap tap` targets a single deployment. Load tests involve many serv
 - Logs arrive at receiver in same Loki push format
 - `logtap untap` removes sidecar + ConfigMap
 - `make test && make lint` clean
+
+**Result:** `internal/sidecar/fluentbit.go` with config generation, container spec, ConfigMap create/delete. Extended PatchSpec/RemovePatchSpec with volume support. `--forwarder` flag on tap (requires --image for fluent-bit). Remove/RemoveAll clean up ConfigMaps and volumes. 5 unit tests. sidecar coverage 79.7%.

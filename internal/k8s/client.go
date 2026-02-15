@@ -55,8 +55,8 @@ func NewClientFromInterface(cs kubernetes.Interface, ns string) *Client {
 
 // ClusterInfo holds basic cluster metadata for display.
 type ClusterInfo struct {
-	Version   string
-	Namespace string
+	Version   string `json:"version"`
+	Namespace string `json:"namespace"`
 }
 
 // GetClusterInfo retrieves the cluster version and current namespace.

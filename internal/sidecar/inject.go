@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"strings"
 
+	corev1 "k8s.io/api/core/v1"
+
 	"github.com/ppiankov/logtap/internal/k8s"
 )
 
@@ -43,9 +45,27 @@ func Inject(ctx context.Context, c *k8s.Client, w *k8s.Workload, cfg SidecarConf
 		AnnotationTarget: cfg.Target,
 	}
 
-	container := BuildContainer(cfg)
+	var container corev1.Container
+	var volumes []corev1.Volume
+
+	if cfg.Forwarder == ForwarderFluentBit {
+		if cfg.Image == "" {
+			return nil, fmt.Errorf("--image is required when using --forwarder fluent-bit")
+		}
+		annotations[AnnotationForwarder] = ForwarderFluentBit
+		container = BuildFluentBitContainer(cfg)
+		volumes = FluentBitVolumes(cfg.SessionID)
+
+		if err := CreateFluentBitConfigMap(ctx, c, cfg.SessionID, cfg.Target, dryRun); err != nil {
+			return nil, fmt.Errorf("create fluent-bit configmap: %w", err)
+		}
+	} else {
+		container = BuildContainer(cfg)
+	}
+
 	ps := k8s.PatchSpec{
 		Container:   container,
+		Volumes:     volumes,
 		Annotations: annotations,
 	}
 

@@ -19,12 +19,12 @@ const (
 
 // Workload is a normalized representation of a Kubernetes workload.
 type Workload struct {
-	Kind        WorkloadKind
-	Name        string
-	Namespace   string
-	Replicas    int32
-	Annotations map[string]string
-	Raw         any
+	Kind        WorkloadKind      `json:"kind"`
+	Name        string            `json:"name"`
+	Namespace   string            `json:"namespace"`
+	Replicas    int32             `json:"replicas"`
+	Annotations map[string]string `json:"-"`
+	Raw         any               `json:"-"`
 }
 
 func workloadFromDeployment(d *appsv1.Deployment) *Workload {
