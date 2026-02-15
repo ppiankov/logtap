@@ -148,6 +148,26 @@ func buildReceiverPod(spec ReceiverSpec) *corev1.Pod {
 					Ports: []corev1.ContainerPort{
 						{ContainerPort: spec.Port, Protocol: corev1.ProtocolTCP},
 					},
+					LivenessProbe: &corev1.Probe{
+						ProbeHandler: corev1.ProbeHandler{
+							HTTPGet: &corev1.HTTPGetAction{
+								Path: "/healthz",
+								Port: intstr.FromInt32(spec.Port),
+							},
+						},
+						InitialDelaySeconds: 5,
+						PeriodSeconds:       10,
+					},
+					ReadinessProbe: &corev1.Probe{
+						ProbeHandler: corev1.ProbeHandler{
+							HTTPGet: &corev1.HTTPGetAction{
+								Path: "/readyz",
+								Port: intstr.FromInt32(spec.Port),
+							},
+						},
+						InitialDelaySeconds: 2,
+						PeriodSeconds:       5,
+					},
 					VolumeMounts: []corev1.VolumeMount{
 						{Name: "data", MountPath: "/data"},
 					},

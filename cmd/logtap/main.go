@@ -38,6 +38,7 @@ func execute() error {
 	root.AddCommand(newGrepCmd())
 	root.AddCommand(newMergeCmd())
 	root.AddCommand(newSnapshotCmd())
+	root.AddCommand(newDiffCmd())
 	root.AddCommand(newCompletionCmd())
 	root.AddCommand(newTapCmd())
 	root.AddCommand(newUntapCmd())

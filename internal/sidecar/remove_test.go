@@ -225,6 +225,81 @@ func TestRemoveAll(t *testing.T) {
 	}
 }
 
+func TestRemove_FluentBit(t *testing.T) {
+	deploy := makeTappedDeployment("api-gw", "lt-fb01")
+	deploy.Spec.Template.Annotations[AnnotationForwarder] = ForwarderFluentBit
+	deploy.Spec.Template.Spec.Volumes = []corev1.Volume{
+		{Name: "logtap-fb-config", VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}}},
+		{Name: "logtap-fb-varlog", VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}}},
+	}
+
+	// Create a ConfigMap for the session
+	cm := &corev1.ConfigMap{
+		ObjectMeta: metav1.ObjectMeta{Name: "logtap-fb-lt-fb01", Namespace: "default"},
+		Data:       map[string]string{"fluent-bit.conf": "test"},
+	}
+
+	cs := fake.NewSimpleClientset(deploy, cm) //nolint:staticcheck // NewClientset requires generated apply configs
+	c := k8s.NewClientFromInterface(cs, "default")
+
+	w, err := k8s.DiscoverByName(context.Background(), c, k8s.KindDeployment, "api-gw")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	result, err := Remove(context.Background(), c, w, "lt-fb01", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !result.Applied {
+		t.Error("Applied = false, want true")
+	}
+
+	updated, err := cs.AppsV1().Deployments("default").Get(context.Background(), "api-gw", metav1.GetOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(updated.Spec.Template.Spec.Volumes) != 0 {
+		t.Errorf("volumes = %d, want 0 (fluent-bit volumes removed)", len(updated.Spec.Template.Spec.Volumes))
+	}
+	if _, ok := updated.Spec.Template.Annotations[AnnotationForwarder]; ok {
+		t.Error("forwarder annotation should be deleted")
+	}
+}
+
+func TestRemoveAll_FluentBit(t *testing.T) {
+	deploy := makeTappedDeployment("api-gw", "lt-fb01", "lt-fb02")
+	deploy.Spec.Template.Annotations[AnnotationForwarder] = ForwarderFluentBit
+	deploy.Spec.Template.Spec.Volumes = []corev1.Volume{
+		{Name: "logtap-fb-config", VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}}},
+		{Name: "logtap-fb-varlog", VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}}},
+	}
+
+	cs := fake.NewSimpleClientset(deploy) //nolint:staticcheck // NewClientset requires generated apply configs
+	c := k8s.NewClientFromInterface(cs, "default")
+
+	w, err := k8s.DiscoverByName(context.Background(), c, k8s.KindDeployment, "api-gw")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	results, err := RemoveAll(context.Background(), c, w, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(results) != 2 {
+		t.Errorf("results = %d, want 2", len(results))
+	}
+
+	updated, err := cs.AppsV1().Deployments("default").Get(context.Background(), "api-gw", metav1.GetOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(updated.Spec.Template.Spec.Volumes) != 0 {
+		t.Errorf("volumes = %d, want 0", len(updated.Spec.Template.Spec.Volumes))
+	}
+}
+
 func TestRemoveAll_NotTapped(t *testing.T) {
 	deploy := &appsv1.Deployment{
 		ObjectMeta: metav1.ObjectMeta{Name: "api-gw", Namespace: "default"},
