@@ -1,10 +1,11 @@
 FROM golang:1.25 AS build
 ARG VERSION=dev
+ARG COMMIT=none
 WORKDIR /src
 COPY go.mod go.sum ./
 RUN go mod download
 COPY . .
-RUN CGO_ENABLED=0 go build -ldflags="-s -w -X main.version=${VERSION}" -o /logtap ./cmd/logtap
+RUN CGO_ENABLED=0 go build -ldflags="-s -w -X main.version=${VERSION} -X main.commit=${COMMIT} -X main.date=$(date -u +%Y-%m-%dT%H:%M:%SZ)" -o /logtap ./cmd/logtap
 
 FROM scratch
 COPY --from=build /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/
