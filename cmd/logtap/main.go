@@ -48,6 +48,7 @@ func execute() error {
 	root.AddCommand(newRecvCmd())
 	root.AddCommand(newOpenCmd())
 	root.AddCommand(newInspectCmd())
+	root.AddCommand(newGCCmd())
 	root.AddCommand(newSliceCmd())
 	root.AddCommand(newExportCmd())
 	root.AddCommand(newTriageCmd())
