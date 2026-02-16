@@ -17,11 +17,13 @@ type Config struct {
 
 // RecvConfig holds receiver defaults.
 type RecvConfig struct {
-	Addr           string `yaml:"addr"`
-	Dir            string `yaml:"dir"`
-	DiskCap        string `yaml:"disk_cap"`
-	Redact         string `yaml:"redact"`
-	RedactPatterns string `yaml:"redact_patterns"`
+	Addr           string   `yaml:"addr"`
+	Dir            string   `yaml:"dir"`
+	DiskCap        string   `yaml:"disk_cap"`
+	Redact         string   `yaml:"redact"`
+	RedactPatterns string   `yaml:"redact_patterns"`
+	Webhooks       []string `yaml:"webhooks"`
+	WebhookEvents  string   `yaml:"webhook_events"`
 }
 
 // TapConfig holds tap defaults.
@@ -87,6 +89,12 @@ func applyEnv(cfg *Config) {
 	}
 	if v := os.Getenv("LOGTAP_RECV_REDACT"); v != "" {
 		cfg.Recv.Redact = v
+	}
+	if v := os.Getenv("LOGTAP_RECV_WEBHOOKS"); v != "" {
+		cfg.Recv.Webhooks = strings.Split(v, ",")
+	}
+	if v := os.Getenv("LOGTAP_RECV_WEBHOOK_EVENTS"); v != "" {
+		cfg.Recv.WebhookEvents = v
 	}
 	if v := os.Getenv("LOGTAP_TAP_NAMESPACE"); v != "" {
 		cfg.Tap.Namespace = v

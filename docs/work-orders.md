@@ -1929,7 +1929,9 @@ logtap download s3://bucket/prefix/capture-2024-01-15/ --out ./capture
 
 ---
 
-### WO-46: Webhook Notifications
+### WO-46: Webhook Notifications [DONE]
+
+**Result:** WebhookDispatcher with fire-and-forget HTTP POST. Events: start, stop, rotation, error, disk-warning. CLI flags: `--webhook` (repeatable), `--webhook-events`. Config: `recv.webhooks` array, `recv.webhook_events`, env vars. Rotator `SetOnDiskWarning` callback at 80% threshold with repeat-fire prevention. recv coverage 90.0%, rotate 87.0%, config 100%.
 
 **Goal:** Send webhook notifications on capture lifecycle events.
 
