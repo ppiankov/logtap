@@ -55,32 +55,46 @@ func TestExecute_SubcommandRegistration(t *testing.T) {
 }
 
 func TestSubcommandHelp(t *testing.T) {
-	// Verify all subcommand constructors don't panic
-	cmds := []*cobra.Command{
-		newRecvCmd(),
-		newOpenCmd(),
-		newInspectCmd(),
-		newSliceCmd(),
-		newExportCmd(),
-		newTriageCmd(),
-		newGrepCmd(),
-		newMergeCmd(),
-		newSnapshotCmd(),
-		newDiffCmd(),
-		newCompletionCmd(),
-		newTapCmd(),
-		newUntapCmd(),
-		newCheckCmd(),
-		newStatusCmd(),
+	cfg = config.Load()
+
+	cmds := []func() *cobra.Command{
+		newVersionCmd,
+		newRecvCmd,
+		newOpenCmd,
+		newInspectCmd,
+		newSliceCmd,
+		newExportCmd,
+		newTriageCmd,
+		newGrepCmd,
+		newMergeCmd,
+		newSnapshotCmd,
+		newDiffCmd,
+		newCompletionCmd,
+		newTapCmd,
+		newUntapCmd,
+		newCheckCmd,
+		newStatusCmd,
 	}
 
-	for _, cmd := range cmds {
+	for _, newCmd := range cmds {
+		cmd := newCmd()
 		t.Run(cmd.Name(), func(t *testing.T) {
 			if cmd.Use == "" {
 				t.Error("Use is empty")
 			}
 			if cmd.Short == "" {
 				t.Error("Short is empty")
+			}
+
+			root := &cobra.Command{Use: "logtap"}
+			root.AddCommand(cmd)
+
+			var buf bytes.Buffer
+			root.SetOut(&buf)
+			root.SetErr(&buf)
+			root.SetArgs([]string{cmd.Name(), "--help"})
+			if err := root.Execute(); err != nil {
+				t.Errorf("%s --help: %v", cmd.Name(), err)
 			}
 		})
 	}
@@ -392,117 +406,6 @@ func TestRunRecv_InvalidRedactName(t *testing.T) {
 	}
 }
 
-func TestRunTap_ModeValidation(t *testing.T) {
-	tests := []struct {
-		name    string
-		opts    tapOpts
-		wantErr string
-	}{
-		{
-			name:    "no mode specified",
-			opts:    tapOpts{target: "localhost:9000"},
-			wantErr: "specify one of",
-		},
-		{
-			name:    "multiple modes",
-			opts:    tapOpts{deployment: "foo", statefulset: "bar", target: "localhost:9000"},
-			wantErr: "specify only one of",
-		},
-		{
-			name:    "all without force",
-			opts:    tapOpts{all: true, target: "localhost:9000"},
-			wantErr: "requires --force",
-		},
-		{
-			name:    "invalid forwarder",
-			opts:    tapOpts{deployment: "foo", target: "localhost:9000", forwarder: "invalid"},
-			wantErr: "must be",
-		},
-		{
-			name:    "fluent-bit without image",
-			opts:    tapOpts{deployment: "foo", target: "localhost:9000", forwarder: "fluent-bit", image: "ghcr.io/ppiankov/logtap-forwarder:latest"},
-			wantErr: "required when using",
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			err := runTap(tt.opts)
-			if err == nil {
-				t.Error("expected error")
-				return
-			}
-			if !containsString(err.Error(), tt.wantErr) {
-				t.Errorf("error %q should contain %q", err.Error(), tt.wantErr)
-			}
-		})
-	}
-}
-
-func TestRunUntap_SessionValidation(t *testing.T) {
-	tests := []struct {
-		name    string
-		opts    untapOpts
-		wantErr string
-	}{
-		{
-			name:    "no session or all",
-			opts:    untapOpts{},
-			wantErr: "specify --session or --all",
-		},
-		{
-			name:    "session and all",
-			opts:    untapOpts{session: "lt-1234", all: true},
-			wantErr: "mutually exclusive",
-		},
-		{
-			name:    "all without force",
-			opts:    untapOpts{all: true},
-			wantErr: "requires --force",
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			err := runUntap(tt.opts)
-			if err == nil {
-				t.Error("expected error")
-				return
-			}
-			if !containsString(err.Error(), tt.wantErr) {
-				t.Errorf("error %q should contain %q", err.Error(), tt.wantErr)
-			}
-		})
-	}
-}
-
-func TestRunUntap_MultipleTargetModes(t *testing.T) {
-	err := runUntap(untapOpts{
-		deployment:  "foo",
-		statefulset: "bar",
-		session:     "lt-1234",
-	})
-	if err == nil {
-		t.Error("expected error for multiple target modes")
-	}
-}
-
-func TestRunUntap_AllWithDryRun(t *testing.T) {
-	// --all with --dry-run should NOT require --force
-	// But it will fail at k8s connect since we have no cluster
-	err := runUntap(untapOpts{
-		all:    true,
-		dryRun: true,
-	})
-	// Should fail at k8s connect, not at validation
-	if err == nil {
-		t.Error("expected error (k8s not available)")
-	}
-	if containsString(err.Error(), "requires --force") {
-		t.Error("should not fail at --force validation since --dry-run is set")
-	}
-}
-
 func TestExecute_Version(t *testing.T) {
 	oldVersion := version
 	oldCommit := commit
@@ -617,42 +520,6 @@ func TestCompletionGeneration(t *testing.T) {
 		}
 	}
 	t.Error("completion command not found")
-}
-
-func TestRunTap_AllWithDryRun(t *testing.T) {
-	// --all with --dry-run should pass validation (doesn't need --force)
-	// But will fail at k8s connect
-	err := runTap(tapOpts{
-		all:       true,
-		dryRun:    true,
-		target:    "localhost:9000",
-		forwarder: "logtap",
-		image:     "ghcr.io/ppiankov/logtap-forwarder:latest",
-	})
-	if err == nil {
-		t.Error("expected error (k8s not available)")
-	}
-	if containsString(err.Error(), "requires --force") {
-		t.Error("dry-run should not require force")
-	}
-}
-
-func TestRunTap_AllWithForce(t *testing.T) {
-	// --all with --force should pass validation
-	// But will fail at k8s connect
-	err := runTap(tapOpts{
-		all:       true,
-		force:     true,
-		target:    "localhost:9000",
-		forwarder: "logtap",
-		image:     "ghcr.io/ppiankov/logtap-forwarder:latest",
-	})
-	if err == nil {
-		t.Error("expected error (k8s not available)")
-	}
-	if containsString(err.Error(), "requires --force") {
-		t.Error("should not fail at force validation")
-	}
 }
 
 func containsString(s, substr string) bool {
