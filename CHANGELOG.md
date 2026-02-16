@@ -4,6 +4,28 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.4.0] - 2026-02-16
+
+### Added
+
+- End-to-end log flow tests with real forwarder and receiver images in Kind (WO-42)
+- Kind integration tests for k8s package: 13 subtests against real cluster (WO-17)
+- Health endpoint unit tests (healthz, readyz, readyz backpressure)
+- `terminationGracePeriodSeconds` recommendation in `tap --dry-run` output
+- CI jobs: `integration` and `e2e` with Kind clusters
+- Makefile targets: `test-integration`, `test-e2e`
+
+### Fixed
+
+- Retry sidecar remove on k8s optimistic concurrency conflict in integration tests
+- Kind image loading (use separate `kind load` per image, avoid multi-platform digest errors)
+- Integration test namespace isolation for quota checks
+
+### Testing
+
+- rotate coverage: 84.9% -> 86.5% (callback tests for SetOnRotate/SetOnError)
+- recv coverage: 88.4% -> 89.9% (healthz/readyz endpoint tests)
+
 ## [0.3.0] - 2026-02-15
 
 ### Added
