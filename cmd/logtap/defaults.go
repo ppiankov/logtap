@@ -49,6 +49,7 @@ func applyConfigDefaults(cmd *cobra.Command) {
 	setDefault("max-disk", cfg.Recv.DiskCap)
 	setDefault("redact", cfg.Recv.Redact)
 	setDefault("redact-patterns", cfg.Recv.RedactPatterns)
+	setDefault("webhook-events", cfg.Recv.WebhookEvents)
 
 	// tap defaults
 	setDefault("namespace", cfg.Tap.Namespace)

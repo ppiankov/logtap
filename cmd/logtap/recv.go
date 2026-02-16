@@ -37,6 +37,8 @@ func newRecvCmd() *cobra.Command {
 		image          string
 		namespace      string
 		ttlStr         string
+		webhookURLs    []string
+		webhookEvents  string
 	)
 
 	cmd := &cobra.Command{
@@ -74,7 +76,7 @@ func newRecvCmd() *cobra.Command {
 			if dir == "" {
 				return fmt.Errorf("--dir is required (or use --in-cluster)")
 			}
-			return runRecv(listen, dir, maxFileStr, maxDiskStr, compress, redactFlag, redactPatterns, bufSize, headless, tlsCert, tlsKey)
+			return runRecv(listen, dir, maxFileStr, maxDiskStr, compress, redactFlag, redactPatterns, bufSize, headless, tlsCert, tlsKey, webhookURLs, webhookEvents)
 		},
 	}
 
@@ -93,11 +95,13 @@ func newRecvCmd() *cobra.Command {
 	cmd.Flags().StringVar(&image, "image", "", "container image for in-cluster receiver (required with --in-cluster)")
 	cmd.Flags().StringVarP(&namespace, "namespace", "n", "logtap", "namespace for in-cluster resources")
 	cmd.Flags().StringVar(&ttlStr, "ttl", "4h", "receiver pod TTL for in-cluster mode (e.g. 4h, 30m)")
+	cmd.Flags().StringSliceVar(&webhookURLs, "webhook", nil, "webhook URLs to notify on lifecycle events (repeatable)")
+	cmd.Flags().StringVar(&webhookEvents, "webhook-events", "", "comma-separated event filter (start,stop,rotation,error,disk-warning)")
 
 	return cmd
 }
 
-func runRecv(listen, dir, maxFileStr, maxDiskStr string, compress bool, redactFlag, redactPatterns string, bufSize int, headless bool, tlsCert, tlsKey string) error {
+func runRecv(listen, dir, maxFileStr, maxDiskStr string, compress bool, redactFlag, redactPatterns string, bufSize int, headless bool, tlsCert, tlsKey string, webhookURLs []string, webhookEvents string) error {
 	maxFile, err := parseByteSize(maxFileStr)
 	if err != nil {
 		return fmt.Errorf("invalid --max-file: %w", err)
@@ -150,6 +154,16 @@ func runRecv(listen, dir, maxFileStr, maxDiskStr string, compress bool, redactFl
 		return fmt.Errorf("init rotator: %w", err)
 	}
 
+	// webhook dispatcher — merge config URLs if CLI provided none
+	if len(webhookURLs) == 0 && cfg != nil && len(cfg.Recv.Webhooks) > 0 {
+		webhookURLs = cfg.Recv.Webhooks
+	}
+	var eventFilter []string
+	if webhookEvents != "" {
+		eventFilter = strings.Split(webhookEvents, ",")
+	}
+	dispatcher := recv.NewWebhookDispatcher(webhookURLs, eventFilter)
+
 	// metrics
 	reg := prometheus.DefaultRegisterer
 	metrics := recv.NewMetrics(reg)
@@ -158,9 +172,22 @@ func runRecv(listen, dir, maxFileStr, maxDiskStr string, compress bool, redactFl
 	writer := recv.NewWriter(bufSize, rot, rot.TrackLine)
 	writer.SetQueueGauge(func(v float64) { metrics.WriterQueueLength.Set(v) })
 
-	// rotation metrics
-	rot.SetOnRotate(func(reason string) { metrics.RotationTotal.WithLabelValues(reason).Inc() })
-	rot.SetOnError(func() { metrics.RotationErrors.Inc() })
+	// rotation metrics + webhook notifications
+	rot.SetOnRotate(func(reason string) {
+		metrics.RotationTotal.WithLabelValues(reason).Inc()
+		dispatcher.Fire(recv.WebhookEvent{Event: "rotation", Detail: reason})
+	})
+	rot.SetOnError(func() {
+		metrics.RotationErrors.Inc()
+		dispatcher.Fire(recv.WebhookEvent{Event: "error"})
+	})
+	rot.SetOnDiskWarning(func(usage, cap int64) {
+		dispatcher.Fire(recv.WebhookEvent{
+			Event: "disk-warning",
+			Dir:   dir,
+			Stats: &recv.WebhookStats{DiskUsage: usage, DiskCap: cap},
+		})
+	})
 
 	// stats and ring (needed by both TUI and server hooks)
 	stats := recv.NewStats()
@@ -183,6 +210,7 @@ func runRecv(listen, dir, maxFileStr, maxDiskStr string, compress bool, redactFl
 	srv.SetAuditLogger(audit)
 
 	audit.Log(recv.AuditEntry{Event: "server_started"})
+	dispatcher.Fire(recv.WebhookEvent{Event: "start", Dir: dir})
 
 	// shutdown performs graceful teardown of all components
 	shutdown := func() {
@@ -204,6 +232,17 @@ func runRecv(listen, dir, maxFileStr, maxDiskStr string, compress bool, redactFl
 
 		audit.Log(recv.AuditEntry{Event: "server_stopped"})
 		_ = audit.Close()
+
+		dispatcher.Fire(recv.WebhookEvent{
+			Event: "stop",
+			Dir:   dir,
+			Stats: &recv.WebhookStats{
+				LinesWritten: writer.LinesWritten(),
+				BytesWritten: writer.BytesWritten(),
+				DiskUsage:    rot.DiskUsage(),
+				DiskCap:      maxDisk,
+			},
+		})
 
 		metrics.DiskUsage.Set(float64(rot.DiskUsage()))
 	}
