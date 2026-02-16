@@ -187,28 +187,6 @@ func TestParseByteSize(t *testing.T) {
 	}
 }
 
-func TestDoubleResource(t *testing.T) {
-	tests := []struct {
-		input string
-		want  string
-	}{
-		{"16Mi", "32Mi"},
-		{"25m", "50m"},
-		{"100m", "200m"},
-		{"1Gi", "2Gi"},
-		{"invalid", "invalid"},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.input, func(t *testing.T) {
-			got := doubleResource(tt.input)
-			if got != tt.want {
-				t.Errorf("doubleResource(%q) = %q, want %q", tt.input, got, tt.want)
-			}
-		})
-	}
-}
-
 func TestParseExportFormat(t *testing.T) {
 	tests := []struct {
 		input   string
