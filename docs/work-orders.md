@@ -1831,7 +1831,7 @@ Focus: CLI test coverage, cloud storage integration, operational polish, and v1.
 
 ---
 
-### WO-43: CLI Test Coverage to 50%
+### WO-43: CLI Test Coverage to 50% [DONE]
 
 **Goal:** Bring `cmd/logtap` from 33% to 50%+ coverage.
 
@@ -1857,9 +1857,11 @@ Most subcommands have zero test coverage. Flag parsing and validation are covere
 - `go test -cover ./cmd/logtap/` reports >= 50%
 - `make test && make lint` clean
 
+**Result:** cmd/logtap 33% → 50%. Created tap_test.go (doubleResource, checkReceiver, runTap validation), untap_test.go (runUntap validation), archive_cmd_test.go (runInspect/Diff/Grep/Slice/Export/Merge/Snapshot/Triage), k8s_error_test.go (runStatus/runCheck no-kubeconfig), open_test.go (runOpen invalid speed), recv_test.go (runHeadless/runRecv), status_test.go (fetchReceiverMetrics mock). Executed via Codex/runforge.
+
 ---
 
-### WO-44: Forwarder Test Coverage
+### WO-44: Forwarder Test Coverage [DONE]
 
 **Goal:** Add tests for `cmd/logtap-forwarder` (currently 0%).
 
@@ -1881,6 +1883,8 @@ The forwarder binary has zero test coverage. The main function, health endpoint,
 **Acceptance:**
 - `go test -cover ./cmd/logtap-forwarder/` reports >= 40%
 - `make test && make lint` clean
+
+**Result:** cmd/logtap-forwarder 0% → 65.3%. Refactored main.go: extracted run(), Config, Dependencies for testability. Added NewPusherWithClient to forward/push.go. Created main_test.go with 10 tests (health, config validation, env loading, run pipeline, reader errors, buffer exceeded). Executed via Codex/runforge.
 
 ---
 
@@ -1954,7 +1958,7 @@ logtap recv --webhook https://hooks.slack.com/services/... --webhook-events star
 
 ---
 
-### WO-47: Capture Retention Policy
+### WO-47: Capture Retention Policy [DONE]
 
 **Goal:** Auto-delete old capture directories based on age or total size.
 
@@ -1984,6 +1988,8 @@ logtap gc ./captures/ --max-age 7d --max-total 100GB --dry-run
 - Actual deletion removes entire capture directories
 - Non-capture directories are never deleted
 - `make test && make lint` clean
+
+**Result:** gc subcommand with --max-age (supports "7d"/"24h"), --max-total, --dry-run, --json flags. GC() scans subdirs for metadata.json, marks by age/total, sorts oldest-first. 6 tests: MaxAge, MaxTotal, DryRun, SkipNonCapture, EmptyDir, BothFlags. Executed via Codex/runforge.
 
 ---
 

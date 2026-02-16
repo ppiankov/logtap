@@ -2,8 +2,10 @@ package archive
 
 import (
 	"bytes"
+	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -139,6 +141,101 @@ func TestGC_BothFlags(t *testing.T) {
 	assertMissing(t, oldDir)
 	assertMissing(t, midDir)
 	assertExists(t, newDir)
+}
+
+func TestGCResult_WriteJSON(t *testing.T) {
+	result := &GCResult{
+		Root:         "/captures",
+		CaptureCount: 3,
+		TotalBytes:   1024,
+		DryRun:       false,
+		Deletions: []GCDeletion{
+			{Dir: "/captures/old", Started: time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC), SizeBytes: 512, Reasons: []string{"max-age"}},
+		},
+	}
+	var buf bytes.Buffer
+	if err := result.WriteJSON(&buf); err != nil {
+		t.Fatalf("WriteJSON error: %v", err)
+	}
+	out := buf.String()
+	if !strings.Contains(out, "/captures/old") {
+		t.Errorf("expected dir in JSON output, got: %s", out)
+	}
+	if !strings.Contains(out, "max-age") {
+		t.Errorf("expected reason in JSON output, got: %s", out)
+	}
+	// Verify valid JSON
+	var parsed []GCDeletion
+	if err := json.Unmarshal(buf.Bytes(), &parsed); err != nil {
+		t.Fatalf("WriteJSON produced invalid JSON: %v", err)
+	}
+	if len(parsed) != 1 {
+		t.Fatalf("expected 1 deletion, got %d", len(parsed))
+	}
+}
+
+func TestGCResult_WriteText(t *testing.T) {
+	now := time.Date(2024, 7, 1, 12, 0, 0, 0, time.UTC)
+	result := &GCResult{
+		Root:         "/captures",
+		CaptureCount: 3,
+		TotalBytes:   2048,
+		DryRun:       true,
+		Deletions: []GCDeletion{
+			{Dir: "/captures/old", Started: now.Add(-48 * time.Hour), SizeBytes: 512, Reasons: []string{"max-age"}},
+			{Dir: "/captures/big", Started: now.Add(-1 * time.Hour), SizeBytes: 1024, Reasons: []string{"max-total"}},
+		},
+		now: now,
+	}
+	var buf bytes.Buffer
+	result.WriteText(&buf)
+	out := buf.String()
+	if !strings.Contains(out, "Captures: 3") {
+		t.Errorf("expected capture count, got: %s", out)
+	}
+	if !strings.Contains(out, "Dry run") {
+		t.Errorf("expected dry run notice, got: %s", out)
+	}
+	if !strings.Contains(out, "/captures/old") {
+		t.Errorf("expected old dir in output, got: %s", out)
+	}
+	if !strings.Contains(out, "max-age") {
+		t.Errorf("expected reason in output, got: %s", out)
+	}
+}
+
+func TestGCResult_WriteText_NoDeletions(t *testing.T) {
+	result := &GCResult{
+		Root:         "/captures",
+		CaptureCount: 2,
+		TotalBytes:   512,
+		DryRun:       false,
+		Deletions:    nil,
+	}
+	var buf bytes.Buffer
+	result.WriteText(&buf)
+	out := buf.String()
+	if !strings.Contains(out, "Deleted 0") {
+		t.Errorf("expected 'Deleted 0', got: %s", out)
+	}
+}
+
+func TestGCResult_WriteText_ZeroStarted(t *testing.T) {
+	result := &GCResult{
+		Root:         "/captures",
+		CaptureCount: 1,
+		TotalBytes:   256,
+		DryRun:       false,
+		Deletions: []GCDeletion{
+			{Dir: "/captures/unknown", SizeBytes: 256, Reasons: []string{"max-age"}},
+		},
+	}
+	var buf bytes.Buffer
+	result.WriteText(&buf)
+	out := buf.String()
+	if !strings.Contains(out, "unknown") {
+		t.Errorf("expected 'unknown' in output, got: %s", out)
+	}
 }
 
 func createCapture(t *testing.T, root, name string, started time.Time, size int) string {
