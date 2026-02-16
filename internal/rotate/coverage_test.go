@@ -523,6 +523,44 @@ func TestEnforceDiskCapReadDirError(t *testing.T) {
 	}
 }
 
+func TestOnDiskWarningCallback(t *testing.T) {
+	dir := t.TempDir()
+	maxDisk := int64(300)
+	r, err := New(Config{Dir: dir, MaxFile: 30, MaxDisk: maxDisk})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var warningUsage, warningCap int64
+	var warningCount int
+	r.SetOnDiskWarning(func(usage, cap int64) {
+		warningCount++
+		warningUsage = usage
+		warningCap = cap
+	})
+
+	line := []byte(`{"msg":"disk warning test data!!"}` + "\n")
+	for i := 0; i < 30; i++ {
+		r.TrackLine(time.Now(), nil)
+		if _, err := r.Write(line); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := r.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	if warningCount == 0 {
+		t.Error("expected disk warning callback to fire")
+	}
+	if warningCap != maxDisk {
+		t.Errorf("warning cap = %d, want %d", warningCap, maxDisk)
+	}
+	if warningUsage == 0 {
+		t.Error("warning usage should be > 0")
+	}
+}
+
 func TestDiskUsageGetter(t *testing.T) {
 	dir := t.TempDir()
 	r, err := New(Config{Dir: dir, MaxFile: 4096, MaxDisk: 1 << 20})

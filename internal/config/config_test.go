@@ -172,6 +172,54 @@ func TestAllEnvVars(t *testing.T) {
 	}
 }
 
+func TestWebhookConfig(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.yaml")
+	content := `recv:
+  addr: ":3100"
+  webhooks:
+    - "https://hooks.example.com/a"
+    - "https://hooks.example.com/b"
+  webhook_events: "start,stop"
+`
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg, err := LoadFrom(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if len(cfg.Recv.Webhooks) != 2 {
+		t.Fatalf("expected 2 webhook URLs, got %d", len(cfg.Recv.Webhooks))
+	}
+	if cfg.Recv.Webhooks[0] != "https://hooks.example.com/a" {
+		t.Errorf("webhook[0] = %q", cfg.Recv.Webhooks[0])
+	}
+	if cfg.Recv.WebhookEvents != "start,stop" {
+		t.Errorf("webhook_events = %q", cfg.Recv.WebhookEvents)
+	}
+}
+
+func TestWebhookEnvOverride(t *testing.T) {
+	t.Setenv("LOGTAP_RECV_WEBHOOKS", "https://a.com/hook,https://b.com/hook")
+	t.Setenv("LOGTAP_RECV_WEBHOOK_EVENTS", "start,stop,error")
+
+	cfg := &Config{}
+	applyEnv(cfg)
+
+	if len(cfg.Recv.Webhooks) != 2 {
+		t.Fatalf("expected 2 webhook URLs from env, got %d", len(cfg.Recv.Webhooks))
+	}
+	if cfg.Recv.Webhooks[0] != "https://a.com/hook" {
+		t.Errorf("webhook[0] = %q", cfg.Recv.Webhooks[0])
+	}
+	if cfg.Recv.WebhookEvents != "start,stop,error" {
+		t.Errorf("webhook_events = %q", cfg.Recv.WebhookEvents)
+	}
+}
+
 func TestPartialConfig(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "config.yaml")
