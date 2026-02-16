@@ -1822,3 +1822,246 @@ WO-17 tests k8s API interactions (patch, discover, deploy) but not actual log de
 - CI: `e2e` job builds Docker images, loads into Kind, runs TestE2E
 - `make test-e2e` target added
 - Deferred to future: network policy testing (needs Calico), OOMKill enforcement, port-forward stability
+
+---
+
+## Phase 8: Polish & Ecosystem (v0.5.x)
+
+Focus: CLI test coverage, cloud storage integration, operational polish, and v1.0 readiness.
+
+---
+
+### WO-43: CLI Test Coverage to 50%
+
+**Goal:** Bring `cmd/logtap` from 33% to 50%+ coverage.
+
+**Problem:**
+Most subcommands have zero test coverage. Flag parsing and validation are covered (WO-34) but `runTap`, `runUntap`, `runRecv`, `runCheck`, `runStatus`, and helper functions like `doubleResource`, `checkReceiver`, `rollbackTap` are untested.
+
+**Details:**
+- Test `doubleResource()` with various inputs (Mi, m, Gi, plain numbers, empty)
+- Test `checkReceiver()` with httptest server (reachable/unreachable)
+- Test `rollbackTap()` with mock k8s client
+- Test `runTap()` validation paths (mode counting, all+force, forwarder validation)
+- Test `runUntap()` validation paths
+- Test `runCheck()` and `runStatus()` output formatting
+- Use interface-based mocking where k8s client is needed
+
+**Steps:**
+1. Create `cmd/logtap/tap_test.go` — test doubleResource, validation paths
+2. Create `cmd/logtap/untap_test.go` — test validation paths
+3. Extend `cmd/logtap/cmd_test.go` — test more subcommand wiring
+4. Target: cmd/logtap coverage >= 50%
+
+**Acceptance:**
+- `go test -cover ./cmd/logtap/` reports >= 50%
+- `make test && make lint` clean
+
+---
+
+### WO-44: Forwarder Test Coverage
+
+**Goal:** Add tests for `cmd/logtap-forwarder` (currently 0%).
+
+**Problem:**
+The forwarder binary has zero test coverage. The main function, health endpoint, and signal handling are completely untested.
+
+**Details:**
+- Test health endpoint (`/healthz` on port 9091) with httptest
+- Test graceful shutdown signal handling
+- Test argument parsing and validation
+- Test the forwarder startup sequence (without requiring a real k8s cluster)
+- Use httptest for the receiver target mock
+
+**Steps:**
+1. Create `cmd/logtap-forwarder/main_test.go`
+2. Extract testable functions from main.go if needed
+3. Target: >= 40% coverage
+
+**Acceptance:**
+- `go test -cover ./cmd/logtap-forwarder/` reports >= 40%
+- `make test && make lint` clean
+
+---
+
+### WO-45: Cloud Capture Upload (S3/GCS)
+
+**Goal:** Upload capture directories to cloud object storage for team sharing.
+
+**Problem:**
+Currently captures must be transferred via `tar | ssh`, `rsync`, or `logtap snapshot`. Teams using cloud infrastructure want to upload directly to S3/GCS and share a URL.
+
+**CLI interface:**
+```
+logtap upload ./capture --to s3://bucket/prefix/
+logtap upload ./capture --to gs://bucket/prefix/
+logtap download s3://bucket/prefix/capture-2024-01-15/ --out ./capture
+```
+
+**Details:**
+- Upload preserves capture directory structure (metadata.json, index.jsonl, *.jsonl.zst)
+- No re-compression — files are already zstd compressed
+- Progress output: `Uploading: 14/23 files (4.2 GB / 8.4 GB)`
+- `--concurrency` flag for parallel uploads (default: 4)
+- Uses standard AWS/GCP credential chains (env vars, profiles, instance metadata)
+- Download reconstructs local capture directory from cloud prefix
+
+**Dependencies:** `github.com/aws/aws-sdk-go-v2`, `cloud.google.com/go/storage`
+
+**Files:**
+- `cmd/logtap/upload.go` — upload subcommand
+- `cmd/logtap/download.go` — download subcommand
+- `internal/cloud/s3.go` — S3 upload/download
+- `internal/cloud/gcs.go` — GCS upload/download
+- `internal/cloud/cloud.go` — common interface
+
+**Acceptance:**
+- `logtap upload ./capture --to s3://test-bucket/` uploads all files
+- `logtap download s3://test-bucket/capture/ --out ./local` restores capture
+- `logtap open ./local` works after download
+- `make test && make lint` clean
+
+---
+
+### WO-46: Webhook Notifications
+
+**Goal:** Send webhook notifications on capture lifecycle events.
+
+**Problem:**
+Long-running captures have no external notification mechanism. Teams want Slack/PagerDuty/email alerts when a capture starts, hits disk limits, or completes.
+
+**CLI interface:**
+```
+logtap recv --webhook https://hooks.slack.com/services/... --webhook-events start,stop,disk-warning
+```
+
+**Details:**
+- Events: `start` (receiver begins), `stop` (receiver stops), `disk-warning` (>80% of max-disk), `rotation` (file rotated), `error` (write error)
+- Payload: JSON with event type, timestamp, capture dir, disk usage, line count
+- Configurable via config file (`recv.webhooks` array)
+- Fire-and-forget with 5s timeout — never block the receiver pipeline
+- `--webhook-events` filter (default: `start,stop,disk-warning`)
+
+**Files:**
+- `internal/recv/webhook.go` + `webhook_test.go` — webhook dispatcher
+- Update `internal/recv/server.go` — wire webhook events
+- Update `cmd/logtap/recv.go` — add flags
+
+**Acceptance:**
+- Webhook fires on start/stop/disk-warning events
+- Webhook timeout doesn't block receiver
+- `make test && make lint` clean
+
+---
+
+### WO-47: Capture Retention Policy
+
+**Goal:** Auto-delete old capture directories based on age or total size.
+
+**Problem:**
+Repeated load test runs accumulate capture directories. No built-in way to clean up old captures. Operators must manually delete or write cron scripts.
+
+**CLI interface:**
+```
+logtap gc ./captures/ --max-age 7d
+logtap gc ./captures/ --max-total 100GB
+logtap gc ./captures/ --max-age 7d --max-total 100GB --dry-run
+```
+
+**Details:**
+- Reads `metadata.json` from each subdirectory to determine capture age
+- Deletes oldest captures first when `--max-total` exceeded
+- `--dry-run` shows what would be deleted without acting
+- `--json` flag for scripted cleanup
+- Safe: refuses to delete if directory doesn't look like a capture (no metadata.json)
+
+**Files:**
+- `cmd/logtap/gc.go` — gc subcommand
+- `internal/archive/gc.go` + `gc_test.go` — retention logic
+
+**Acceptance:**
+- `logtap gc ./captures/ --max-age 7d --dry-run` lists expired captures
+- Actual deletion removes entire capture directories
+- Non-capture directories are never deleted
+- `make test && make lint` clean
+
+---
+
+### WO-48: HTML Triage Report
+
+**Goal:** Generate a self-contained HTML report from triage output.
+
+**Problem:**
+`logtap triage` produces text files. Teams want a shareable report they can open in a browser — with interactive charts for timeline, error distribution, and top talkers.
+
+**CLI interface:**
+```
+logtap triage ./capture --out ./triage --html
+```
+
+**Details:**
+- Generates `triage/report.html` — single self-contained HTML file (inline CSS/JS)
+- Timeline chart: line chart of logs/min and errors/min (uses inline SVG, no external JS libs)
+- Error table: sortable top errors with counts and percentages
+- Top talkers: bar chart by label value
+- Recommended slices: clickable `logtap slice` commands
+- No external dependencies — works offline, can be attached to a Jira ticket
+
+**Files:**
+- `internal/archive/triage_html.go` + `triage_html_test.go` — HTML template + renderer
+- Update `cmd/logtap/triage.go` — add `--html` flag
+
+**Acceptance:**
+- `report.html` opens in browser with interactive charts
+- No external resource dependencies (fully self-contained)
+- `make test && make lint` clean
+
+---
+
+### WO-49: Forwarder Reliability Improvements
+
+**Goal:** Add reconnection, buffering, and backoff to the forwarder sidecar.
+
+**Problem:**
+If the receiver is temporarily unreachable, the forwarder drops all logs immediately. Brief network blips cause permanent data loss. The forwarder needs a small retry buffer.
+
+**Details:**
+- Add retry with exponential backoff (1s, 2s, 4s, 8s, max 30s)
+- Add in-memory ring buffer (default 1MB, configurable via `LOGTAP_BUFFER_SIZE`)
+- On buffer full: drop oldest entries (not newest — preserve most recent logs)
+- Add `/metrics` endpoint to forwarder: `logtap_forwarder_retries_total`, `logtap_forwarder_buffer_usage_bytes`, `logtap_forwarder_drops_total`
+- Add `--retry-max` flag (default: 10 retries before giving up on a batch)
+
+**Files:**
+- `internal/forward/push.go` — add retry logic and buffer
+- `internal/forward/buffer.go` + `buffer_test.go` — ring buffer
+- Update `cmd/logtap-forwarder/main.go` — wire retry config
+
+**Acceptance:**
+- Forwarder reconnects after receiver restart
+- Buffer prevents data loss during brief outages
+- `make test && make lint` clean
+
+---
+
+### WO-50: v1.0 Release Preparation
+
+**Goal:** Final polish for v1.0 release.
+
+**Depends on:** WO-43 through WO-49 (or subset agreed upon)
+
+**Steps:**
+1. Audit all `--help` text for clarity and consistency
+2. Verify all commands have `--json` output where applicable
+3. Run full benchmark suite, document baseline numbers
+4. Update README: remove "alpha" / "experimental" language
+5. Update CHANGELOG.md with v1.0 section
+6. Review all `internal/` APIs for consistency (error wrapping, context propagation)
+7. Final coverage audit: all packages >= 85%
+8. Tag `v1.0.0`, push, verify release workflow
+
+**Acceptance:**
+- GitHub release page shows v1.0.0
+- All packages >= 85% coverage
+- No known critical bugs
+- README reflects stable status
