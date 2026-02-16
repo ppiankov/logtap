@@ -1272,7 +1272,7 @@ Phase 5 closes operational gaps, improves distribution, and adds one high-value 
 
 ---
 
-### WO-22: Health & Readiness Endpoints
+### WO-22: Health & Readiness Endpoints [DONE]
 
 **Goal:** Add Kubernetes-native health probes so the in-cluster receiver works with pod readiness gates and load balancers.
 
@@ -1298,7 +1298,7 @@ The receiver exposes `/metrics` but has no `/healthz` or `/readyz`. In-cluster d
 
 ---
 
-### WO-23: Sidecar Lifecycle Hooks
+### WO-23: Sidecar Lifecycle Hooks [DONE]
 
 **Goal:** Add PreStop hooks to forwarder sidecars so in-flight logs drain before pod termination.
 

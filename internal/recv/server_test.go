@@ -137,6 +137,115 @@ func TestBackpressure(t *testing.T) {
 	}
 }
 
+func TestHealthzEndpoint(t *testing.T) {
+	var buf bytes.Buffer
+	w := NewWriter(1024, &buf, nil)
+	defer w.Close()
+
+	srv := NewServer(":0", w, nil, nil, nil, nil)
+	ts := httptest.NewServer(srv.httpSrv.Handler)
+	defer ts.Close()
+
+	resp, err := http.Get(ts.URL + "/healthz")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	if resp.StatusCode != http.StatusOK {
+		t.Errorf("expected 200, got %d", resp.StatusCode)
+	}
+	if ct := resp.Header.Get("Content-Type"); ct != "application/json" {
+		t.Errorf("content-type = %q, want application/json", ct)
+	}
+
+	var result struct {
+		Status string `json:"status"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		t.Fatal(err)
+	}
+	if result.Status != "ok" {
+		t.Errorf("status = %q, want %q", result.Status, "ok")
+	}
+}
+
+func TestReadyzEndpoint(t *testing.T) {
+	var buf bytes.Buffer
+	w := NewWriter(1024, &buf, nil)
+	defer w.Close()
+
+	srv := NewServer(":0", w, nil, nil, nil, nil)
+	ts := httptest.NewServer(srv.httpSrv.Handler)
+	defer ts.Close()
+
+	// Healthy writer should return 200.
+	resp, err := http.Get(ts.URL + "/readyz")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	if resp.StatusCode != http.StatusOK {
+		t.Errorf("expected 200, got %d", resp.StatusCode)
+	}
+
+	var result struct {
+		Status string `json:"status"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		t.Fatal(err)
+	}
+	if result.Status != "ok" {
+		t.Errorf("status = %q, want %q", result.Status, "ok")
+	}
+}
+
+func TestReadyzBackpressure(t *testing.T) {
+	var buf bytes.Buffer
+	// Channel size 1 — fill it to trigger backpressure.
+	w := NewWriter(1, &buf, nil)
+	defer w.Close()
+
+	// Fill the channel to make Healthy() return false.
+	w.Send(LogEntry{Message: "fill"})
+	// Small sleep to ensure the entry is in the channel (not yet drained).
+	time.Sleep(10 * time.Millisecond)
+
+	// Only test if channel is actually full.
+	if w.Healthy() {
+		t.Skip("writer drained too fast, cannot test backpressure")
+	}
+
+	srv := NewServer(":0", w, nil, nil, nil, nil)
+	ts := httptest.NewServer(srv.httpSrv.Handler)
+	defer ts.Close()
+
+	resp, err := http.Get(ts.URL + "/readyz")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	if resp.StatusCode != http.StatusServiceUnavailable {
+		t.Errorf("expected 503, got %d", resp.StatusCode)
+	}
+
+	var result struct {
+		Status string `json:"status"`
+		Reason string `json:"reason"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		t.Fatal(err)
+	}
+	if result.Status != "not_ready" {
+		t.Errorf("status = %q, want %q", result.Status, "not_ready")
+	}
+	if result.Reason != "writer backpressure" {
+		t.Errorf("reason = %q, want %q", result.Reason, "writer backpressure")
+	}
+}
+
 func TestMetricsEndpoint(t *testing.T) {
 	var buf bytes.Buffer
 	w := NewWriter(1024, &buf, nil)
