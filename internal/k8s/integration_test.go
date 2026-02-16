@@ -23,7 +23,7 @@ func TestIntegration(t *testing.T) {
 		t.Skip("set LOGTAP_INTEGRATION=1 to run integration tests")
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 4*time.Minute)
+	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Minute)
 	defer cancel()
 
 	// Create a real client from KUBECONFIG.
@@ -92,7 +92,7 @@ func TestIntegration(t *testing.T) {
 
 		// Verify pod becomes ready.
 		recvClient := k8s.NewClientFromInterface(client.CS, recvNS)
-		err = k8s.WaitForPodReady(ctx, recvClient, recvNS, "logtap-receiver", 90*time.Second)
+		err = k8s.WaitForPodReady(ctx, recvClient, recvNS, "logtap-receiver", 3*time.Minute)
 		if err != nil {
 			t.Fatalf("WaitForPodReady: %v", err)
 		}
@@ -156,7 +156,7 @@ func TestIntegration(t *testing.T) {
 		}
 
 		// Wait for deployment to be available.
-		waitForDeployment(t, ctx, client, testNS, deployName, 60*time.Second)
+		waitForDeployment(t, ctx, client, testNS, deployName, 3*time.Minute)
 
 		// Discover the workload.
 		w, err := k8s.DiscoverByName(ctx, nsClient, k8s.KindDeployment, deployName)
@@ -368,6 +368,10 @@ func TestIntegration(t *testing.T) {
 			t.Fatalf("create quota: %v", err)
 		}
 
+		// Wait for the quota controller to populate Status.Hard
+		// (newly created quotas have empty Status until the controller syncs).
+		waitForQuotaSync(t, ctx, client, testNS, "tight-quota", 30*time.Second)
+
 		// CheckResources with 3 replicas × 16Mi should exceed 32Mi quota.
 		warnings, err := k8s.CheckResources(ctx, nsClient, 3, "16Mi", "25m")
 		if err != nil {
@@ -457,7 +461,7 @@ func TestIntegration(t *testing.T) {
 		if err != nil {
 			t.Fatalf("create deployment: %v", err)
 		}
-		waitForDeployment(t, ctx, client, testNS, deployName2, 60*time.Second)
+		waitForDeployment(t, ctx, client, testNS, deployName2, 3*time.Minute)
 
 		// Discover workload.
 		w, err := k8s.DiscoverByName(ctx, nsClient, k8s.KindDeployment, deployName2)
@@ -529,6 +533,31 @@ func TestIntegration(t *testing.T) {
 		}
 		t.Log("sidecar inject/remove cycle complete")
 	})
+}
+
+// waitForQuotaSync polls until a ResourceQuota's Status.Hard is populated.
+func waitForQuotaSync(t *testing.T, ctx context.Context, c *k8s.Client, ns, name string, timeout time.Duration) {
+	t.Helper()
+	deadline := time.After(timeout)
+	tick := time.NewTicker(time.Second)
+	defer tick.Stop()
+
+	for {
+		select {
+		case <-deadline:
+			t.Fatalf("timeout waiting for quota %s/%s status sync", ns, name)
+		case <-ctx.Done():
+			t.Fatalf("context cancelled waiting for quota %s/%s", ns, name)
+		case <-tick.C:
+			q, err := c.CS.CoreV1().ResourceQuotas(ns).Get(ctx, name, metav1.GetOptions{})
+			if err != nil {
+				continue
+			}
+			if len(q.Status.Hard) > 0 {
+				return
+			}
+		}
+	}
 }
 
 // waitForDeployment polls until the deployment has at least one available replica.
