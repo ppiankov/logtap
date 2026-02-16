@@ -288,7 +288,7 @@ func TestRunTriage_Success(t *testing.T) {
 		restore := redirectOutput(t)
 		defer restore()
 
-		if err := runTriage(dir, "", 1, time.Minute, 5, true); err != nil {
+		if err := runTriage(dir, "", 1, time.Minute, 5, true, false); err != nil {
 			t.Fatalf("runTriage json: %v", err)
 		}
 	})
@@ -298,7 +298,7 @@ func TestRunTriage_Success(t *testing.T) {
 		defer restore()
 
 		outDir := filepath.Join(t.TempDir(), "triage")
-		if err := runTriage(dir, outDir, 1, time.Minute, 5, false); err != nil {
+		if err := runTriage(dir, outDir, 1, time.Minute, 5, false, false); err != nil {
 			t.Fatalf("runTriage files: %v", err)
 		}
 		if _, err := os.Stat(filepath.Join(outDir, "summary.md")); err != nil {

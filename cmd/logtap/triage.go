@@ -19,6 +19,7 @@ func newTriageCmd() *cobra.Command {
 		windowStr  string
 		top        int
 		jsonOutput bool
+		htmlOutput bool
 	)
 
 	cmd := &cobra.Command{
@@ -31,7 +32,7 @@ func newTriageCmd() *cobra.Command {
 			if err != nil {
 				return fmt.Errorf("invalid --window: %w", err)
 			}
-			return runTriage(args[0], outDir, jobs, window, top, jsonOutput)
+			return runTriage(args[0], outDir, jobs, window, top, jsonOutput, htmlOutput)
 		},
 	}
 
@@ -40,11 +41,12 @@ func newTriageCmd() *cobra.Command {
 	cmd.Flags().StringVar(&windowStr, "window", "1m", "histogram bucket width")
 	cmd.Flags().IntVar(&top, "top", 50, "number of top error signatures")
 	cmd.Flags().BoolVar(&jsonOutput, "json", false, "output as JSON to stdout")
+	cmd.Flags().BoolVar(&htmlOutput, "html", false, "generate self-contained HTML report")
 
 	return cmd
 }
 
-func runTriage(src, outDir string, jobs int, window time.Duration, top int, jsonOutput bool) error {
+func runTriage(src, outDir string, jobs int, window time.Duration, top int, jsonOutput, htmlOutput bool) error {
 	triageCfg := archive.TriageConfig{
 		Jobs:   jobs,
 		Window: window,
@@ -91,6 +93,13 @@ func runTriage(src, outDir string, jobs int, window time.Duration, top int, json
 		{"top_errors.txt", func(f *os.File) { result.WriteTopErrors(f) }},
 		{"top_talkers.txt", func(f *os.File) { result.WriteTopTalkers(f) }},
 		{"windows.json", func(f *os.File) { _ = result.WriteWindows(f) }},
+	}
+
+	if htmlOutput {
+		outputs = append(outputs, struct {
+			name string
+			fn   func(*os.File)
+		}{"report.html", func(f *os.File) { _ = result.WriteHTML(f) }})
 	}
 
 	for _, out := range outputs {
