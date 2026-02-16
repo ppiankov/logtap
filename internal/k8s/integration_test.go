@@ -90,11 +90,11 @@ func TestIntegration(t *testing.T) {
 			t.Error("expected namespace to be created")
 		}
 
-		// Verify pod becomes ready.
-		recvClient := k8s.NewClientFromInterface(client.CS, recvNS)
-		err = k8s.WaitForPodReady(ctx, recvClient, recvNS, "logtap-receiver", 3*time.Minute)
+		// Verify pod was created (don't wait for Ready — nginx:alpine
+		// doesn't serve /healthz and /readyz that the probe spec requires).
+		_, err = client.CS.CoreV1().Pods(recvNS).Get(ctx, "logtap-receiver", metav1.GetOptions{})
 		if err != nil {
-			t.Fatalf("WaitForPodReady: %v", err)
+			t.Fatalf("get pod: %v", err)
 		}
 
 		// Verify service exists.
@@ -350,11 +350,25 @@ func TestIntegration(t *testing.T) {
 	// --- Quota check ---
 
 	t.Run("QuotaCheck", func(t *testing.T) {
+		// Use a separate namespace so the quota doesn't block other tests.
+		quotaNS := testNS + "-quota"
+		quotaNsObj := &corev1.Namespace{
+			ObjectMeta: metav1.ObjectMeta{Name: quotaNS},
+		}
+		_, err := client.CS.CoreV1().Namespaces().Create(ctx, quotaNsObj, metav1.CreateOptions{})
+		if err != nil {
+			t.Fatalf("create quota namespace: %v", err)
+		}
+		t.Cleanup(func() {
+			_ = client.CS.CoreV1().Namespaces().Delete(context.Background(), quotaNS, metav1.DeleteOptions{})
+		})
+		quotaClient := k8s.NewClientFromInterface(client.CS, quotaNS)
+
 		// Create a tight quota.
 		quota := &corev1.ResourceQuota{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      "tight-quota",
-				Namespace: testNS,
+				Namespace: quotaNS,
 			},
 			Spec: corev1.ResourceQuotaSpec{
 				Hard: corev1.ResourceList{
@@ -363,17 +377,17 @@ func TestIntegration(t *testing.T) {
 				},
 			},
 		}
-		_, err := client.CS.CoreV1().ResourceQuotas(testNS).Create(ctx, quota, metav1.CreateOptions{})
+		_, err = client.CS.CoreV1().ResourceQuotas(quotaNS).Create(ctx, quota, metav1.CreateOptions{})
 		if err != nil {
 			t.Fatalf("create quota: %v", err)
 		}
 
 		// Wait for the quota controller to populate Status.Hard
 		// (newly created quotas have empty Status until the controller syncs).
-		waitForQuotaSync(t, ctx, client, testNS, "tight-quota", 30*time.Second)
+		waitForQuotaSync(t, ctx, client, quotaNS, "tight-quota", 30*time.Second)
 
 		// CheckResources with 3 replicas × 16Mi should exceed 32Mi quota.
-		warnings, err := k8s.CheckResources(ctx, nsClient, 3, "16Mi", "25m")
+		warnings, err := k8s.CheckResources(ctx, quotaClient, 3, "16Mi", "25m")
 		if err != nil {
 			t.Fatalf("CheckResources: %v", err)
 		}
