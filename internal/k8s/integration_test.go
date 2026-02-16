@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -517,16 +518,26 @@ func TestIntegration(t *testing.T) {
 			t.Error("sidecar container not found after Inject")
 		}
 
-		// Re-discover (need fresh Raw for Remove).
-		w, err = k8s.DiscoverByName(ctx, nsClient, k8s.KindDeployment, deployName2)
-		if err != nil {
-			t.Fatalf("DiscoverByName: %v", err)
+		// Remove sidecar with retry — the deployment controller may update
+		// the resource after Inject, causing an optimistic concurrency conflict.
+		var removeResult *sidecar.RemoveResult
+		for attempt := 0; attempt < 5; attempt++ {
+			w, err = k8s.DiscoverByName(ctx, nsClient, k8s.KindDeployment, deployName2)
+			if err != nil {
+				t.Fatalf("DiscoverByName: %v", err)
+			}
+			removeResult, err = sidecar.Remove(ctx, nsClient, w, sessionID, false)
+			if err == nil {
+				break
+			}
+			if !strings.Contains(err.Error(), "the object has been modified") {
+				t.Fatalf("Remove: %v", err)
+			}
+			t.Logf("retry %d: conflict on Remove, re-discovering...", attempt+1)
+			time.Sleep(time.Second)
 		}
-
-		// Remove sidecar.
-		removeResult, err := sidecar.Remove(ctx, nsClient, w, sessionID, false)
 		if err != nil {
-			t.Fatalf("Remove: %v", err)
+			t.Fatalf("Remove: exhausted retries: %v", err)
 		}
 		if !removeResult.Applied {
 			t.Error("expected Applied=true")
