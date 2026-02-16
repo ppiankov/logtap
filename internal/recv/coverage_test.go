@@ -149,6 +149,15 @@ func TestParseNanoTimestampWhitespace(t *testing.T) {
 	}
 }
 
+func postJSON(t *testing.T, handler http.Handler, path, payload string) *httptest.ResponseRecorder {
+	t.Helper()
+	req := httptest.NewRequest(http.MethodPost, path, strings.NewReader(payload))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+	return rec
+}
+
 func TestRawPushWithRedaction(t *testing.T) {
 	var buf bytes.Buffer
 	w := NewWriter(1024, &buf, nil)
@@ -160,17 +169,11 @@ func TestRawPushWithRedaction(t *testing.T) {
 	}
 
 	srv := NewServer(":0", w, redactor, nil, nil, nil)
-	ts := httptest.NewServer(srv.httpSrv.Handler)
-	defer ts.Close()
 
 	payload := `{"ts":"2024-01-01T00:00:00Z","msg":"user test@example.com logged in"}`
-	resp, err := http.Post(ts.URL+"/logtap/raw", "application/json", strings.NewReader(payload))
-	if err != nil {
-		t.Fatal(err)
-	}
-	_ = resp.Body.Close()
-	if resp.StatusCode != http.StatusNoContent {
-		t.Errorf("expected 204, got %d", resp.StatusCode)
+	rec := postJSON(t, srv.httpSrv.Handler, "/logtap/raw", payload)
+	if rec.Code != http.StatusNoContent {
+		t.Errorf("expected 204, got %d", rec.Code)
 	}
 
 	time.Sleep(50 * time.Millisecond)
@@ -191,18 +194,12 @@ func TestRawPushZeroTimestamp(t *testing.T) {
 	defer w.Close()
 
 	srv := NewServer(":0", w, nil, nil, nil, nil)
-	ts := httptest.NewServer(srv.httpSrv.Handler)
-	defer ts.Close()
 
 	// send entry without timestamp
 	payload := `{"msg":"no timestamp"}`
-	resp, err := http.Post(ts.URL+"/logtap/raw", "application/json", strings.NewReader(payload))
-	if err != nil {
-		t.Fatal(err)
-	}
-	_ = resp.Body.Close()
-	if resp.StatusCode != http.StatusNoContent {
-		t.Errorf("expected 204, got %d", resp.StatusCode)
+	rec := postJSON(t, srv.httpSrv.Handler, "/logtap/raw", payload)
+	if rec.Code != http.StatusNoContent {
+		t.Errorf("expected 204, got %d", rec.Code)
 	}
 
 	time.Sleep(50 * time.Millisecond)
@@ -219,16 +216,10 @@ func TestRawPushInvalidJSON(t *testing.T) {
 	defer w.Close()
 
 	srv := NewServer(":0", w, nil, nil, nil, nil)
-	ts := httptest.NewServer(srv.httpSrv.Handler)
-	defer ts.Close()
 
-	resp, err := http.Post(ts.URL+"/logtap/raw", "application/json", strings.NewReader("{bad json"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	_ = resp.Body.Close()
-	if resp.StatusCode != http.StatusBadRequest {
-		t.Errorf("expected 400, got %d", resp.StatusCode)
+	rec := postJSON(t, srv.httpSrv.Handler, "/logtap/raw", "{bad json")
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("expected 400, got %d", rec.Code)
 	}
 }
 
@@ -243,17 +234,11 @@ func TestRawPushWithMetricsAndStats(t *testing.T) {
 	ring := NewLogRing(100)
 
 	srv := NewServer(":0", w, nil, m, stats, ring)
-	ts := httptest.NewServer(srv.httpSrv.Handler)
-	defer ts.Close()
 
 	payload := `{"ts":"2024-01-01T00:00:00Z","labels":{"app":"test"},"msg":"tracked"}`
-	resp, err := http.Post(ts.URL+"/logtap/raw", "application/json", strings.NewReader(payload))
-	if err != nil {
-		t.Fatal(err)
-	}
-	_ = resp.Body.Close()
-	if resp.StatusCode != http.StatusNoContent {
-		t.Errorf("expected 204, got %d", resp.StatusCode)
+	rec := postJSON(t, srv.httpSrv.Handler, "/logtap/raw", payload)
+	if rec.Code != http.StatusNoContent {
+		t.Errorf("expected 204, got %d", rec.Code)
 	}
 
 	time.Sleep(50 * time.Millisecond)
@@ -274,8 +259,6 @@ func TestRawPushBackpressure(t *testing.T) {
 	stats := NewStats()
 
 	srv := NewServer(":0", w, nil, m, stats, nil)
-	ts := httptest.NewServer(srv.httpSrv.Handler)
-	defer ts.Close()
 
 	// send many entries in a single raw push
 	var lines []string
@@ -284,15 +267,10 @@ func TestRawPushBackpressure(t *testing.T) {
 	}
 	payload := strings.Join(lines, "\n")
 
-	resp, err := http.Post(ts.URL+"/logtap/raw", "application/json", strings.NewReader(payload))
-	if err != nil {
-		t.Fatal(err)
-	}
-	_ = resp.Body.Close()
-
+	rec := postJSON(t, srv.httpSrv.Handler, "/logtap/raw", payload)
 	// should still return 204
-	if resp.StatusCode != http.StatusNoContent {
-		t.Errorf("expected 204, got %d", resp.StatusCode)
+	if rec.Code != http.StatusNoContent {
+		t.Errorf("expected 204, got %d", rec.Code)
 	}
 }
 

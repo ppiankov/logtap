@@ -1,33 +1,42 @@
 package forward
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
+	"io"
 	"net/http"
-	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
 )
 
+type roundTripperFunc func(*http.Request) (*http.Response, error)
+
+func (f roundTripperFunc) RoundTrip(r *http.Request) (*http.Response, error) {
+	return f(r)
+}
+
 func TestPush_Success(t *testing.T) {
 	var received lokiPushRequest
-	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodPost {
-			t.Errorf("method = %s, want POST", r.Method)
-		}
-		if !strings.HasSuffix(r.URL.Path, pushPath) {
-			t.Errorf("path = %s, want %s", r.URL.Path, pushPath)
-		}
-		if err := json.NewDecoder(r.Body).Decode(&received); err != nil {
-			t.Fatalf("decode: %v", err)
-		}
-		w.WriteHeader(http.StatusNoContent)
-	}))
-	defer ts.Close()
+	var decodeErr error
+	var gotMethod string
+	var gotPath string
+	client := &http.Client{
+		Transport: roundTripperFunc(func(r *http.Request) (*http.Response, error) {
+			gotMethod = r.Method
+			gotPath = r.URL.Path
+			decodeErr = json.NewDecoder(r.Body).Decode(&received)
+			return &http.Response{
+				StatusCode: http.StatusNoContent,
+				Body:       io.NopCloser(bytes.NewReader(nil)),
+				Header:     make(http.Header),
+			}, nil
+		}),
+	}
 
-	addr := strings.TrimPrefix(ts.URL, "http://")
-	p := NewPusher(addr)
+	p := NewPusherWithClient("receiver:3100", client)
 
 	labels := map[string]string{"namespace": "default", "pod": "api-gw-abc"}
 	lines := []TimestampedLine{
@@ -38,6 +47,15 @@ func TestPush_Success(t *testing.T) {
 	err := p.Push(context.Background(), labels, lines)
 	if err != nil {
 		t.Fatal(err)
+	}
+	if decodeErr != nil {
+		t.Fatalf("decode: %v", decodeErr)
+	}
+	if gotMethod != http.MethodPost {
+		t.Errorf("method = %s, want POST", gotMethod)
+	}
+	if !strings.HasSuffix(gotPath, pushPath) {
+		t.Errorf("path = %s, want %s", gotPath, pushPath)
 	}
 
 	if len(received.Streams) != 1 {
@@ -56,14 +74,17 @@ func TestPush_Success(t *testing.T) {
 
 func TestPush_ServerError(t *testing.T) {
 	calls := 0
-	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		calls++
-		w.WriteHeader(http.StatusInternalServerError)
-	}))
-	defer ts.Close()
-
-	addr := strings.TrimPrefix(ts.URL, "http://")
-	p := NewPusher(addr)
+	client := &http.Client{
+		Transport: roundTripperFunc(func(r *http.Request) (*http.Response, error) {
+			calls++
+			return &http.Response{
+				StatusCode: http.StatusInternalServerError,
+				Body:       io.NopCloser(bytes.NewReader(nil)),
+				Header:     make(http.Header),
+			}, nil
+		}),
+	}
+	p := NewPusherWithClient("receiver:3100", client)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
@@ -104,11 +125,12 @@ func TestPush_EmptyLines(t *testing.T) {
 }
 
 func TestPush_ConnectionError(t *testing.T) {
-	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {}))
-	ts.Close() // close immediately to trigger connection refused
-
-	addr := strings.TrimPrefix(ts.URL, "http://")
-	p := NewPusher(addr)
+	client := &http.Client{
+		Transport: roundTripperFunc(func(r *http.Request) (*http.Response, error) {
+			return nil, errors.New("connection refused")
+		}),
+	}
+	p := NewPusherWithClient("receiver:3100", client)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
@@ -123,14 +145,17 @@ func TestPush_ConnectionError(t *testing.T) {
 
 func TestPush_ClientError(t *testing.T) {
 	calls := 0
-	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		calls++
-		w.WriteHeader(http.StatusBadRequest)
-	}))
-	defer ts.Close()
-
-	addr := strings.TrimPrefix(ts.URL, "http://")
-	p := NewPusher(addr)
+	client := &http.Client{
+		Transport: roundTripperFunc(func(r *http.Request) (*http.Response, error) {
+			calls++
+			return &http.Response{
+				StatusCode: http.StatusBadRequest,
+				Body:       io.NopCloser(bytes.NewReader(nil)),
+				Header:     make(http.Header),
+			}, nil
+		}),
+	}
+	p := NewPusherWithClient("receiver:3100", client)
 
 	err := p.Push(context.Background(), map[string]string{"pod": "test"}, []TimestampedLine{
 		{Timestamp: time.Now(), Line: "test"},

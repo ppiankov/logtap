@@ -40,9 +40,17 @@ type Pusher struct {
 
 // NewPusher creates a Pusher targeting the given receiver address.
 func NewPusher(target string) *Pusher {
+	return NewPusherWithClient(target, &http.Client{Timeout: 10 * time.Second})
+}
+
+// NewPusherWithClient creates a Pusher with a custom HTTP client (useful for tests).
+func NewPusherWithClient(target string, client *http.Client) *Pusher {
+	if client == nil {
+		client = &http.Client{Timeout: 10 * time.Second}
+	}
 	return &Pusher{
 		target: target,
-		client: &http.Client{Timeout: 10 * time.Second},
+		client: client,
 	}
 }
 
