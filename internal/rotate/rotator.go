@@ -50,8 +50,11 @@ type Rotator struct {
 	labels map[string]map[string]int64
 
 	// optional callbacks for metrics
-	onRotate func(reason string) // called on successful rotation
-	onError  func()              // called on rotation error
+	onRotate      func(reason string)    // called on successful rotation
+	onError       func()                 // called on rotation error
+	onDiskWarning func(usage, cap int64) // called when disk usage exceeds 80%
+
+	diskWarningFired bool // avoid repeat-firing
 }
 
 // New creates a Rotator, scanning any existing files for disk usage.
@@ -80,6 +83,12 @@ func (r *Rotator) SetOnRotate(fn func(reason string)) {
 // SetOnError sets a callback invoked on each rotation error.
 func (r *Rotator) SetOnError(fn func()) {
 	r.onError = fn
+}
+
+// SetOnDiskWarning sets a callback invoked when disk usage exceeds 80% of MaxDisk.
+// The callback fires once when crossing the threshold and resets when usage drops below.
+func (r *Rotator) SetOnDiskWarning(fn func(usage, cap int64)) {
+	r.onDiskWarning = fn
 }
 
 // Write appends data to the active file, rotating if over MaxFile.
@@ -318,6 +327,17 @@ func (r *Rotator) enforceDiskCap() error {
 			continue
 		}
 		r.diskUsage += info.Size()
+	}
+
+	// fire disk warning when usage exceeds 80% of cap
+	if r.onDiskWarning != nil && r.cfg.MaxDisk > 0 {
+		threshold := int64(float64(r.cfg.MaxDisk) * 0.8)
+		if r.diskUsage > threshold && !r.diskWarningFired {
+			r.diskWarningFired = true
+			r.onDiskWarning(r.diskUsage, r.cfg.MaxDisk)
+		} else if r.diskUsage <= threshold {
+			r.diskWarningFired = false
+		}
 	}
 
 	if r.diskUsage <= r.cfg.MaxDisk {
