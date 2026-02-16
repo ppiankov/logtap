@@ -43,7 +43,10 @@ Annotation-based opt-in. Accepts Loki push API, writes compressed JSONL to disk,
 ## Quick start
 
 ```bash
-# Install (macOS Apple Silicon)
+# Install with Homebrew (macOS / Linux)
+brew install ppiankov/tap/logtap
+
+# Or download binary (macOS Apple Silicon)
 curl -LO https://github.com/ppiankov/logtap/releases/latest/download/logtap_darwin_arm64.tar.gz
 tar -xzf logtap_darwin_arm64.tar.gz
 sudo mv logtap /usr/local/bin/
@@ -51,7 +54,7 @@ sudo mv logtap /usr/local/bin/
 # Or build from source
 git clone https://github.com/ppiankov/logtap.git
 cd logtap && make build
-./bin/logtap --version
+./bin/logtap version
 
 # Start receiver
 logtap recv --listen :3100 --dir ./capture --max-disk 1GB --redact
