@@ -269,6 +269,7 @@ func runTap(opts tapOpts) error {
 		if opts.dryRun {
 			fmt.Fprintf(os.Stderr, "[dry-run] %s/%s:\n", w.Kind, w.Name)
 			_, _ = fmt.Fprintln(os.Stdout, result.Diff)
+			fmt.Fprintf(os.Stderr, "  Note: ensure terminationGracePeriodSeconds >= 10 for graceful sidecar drain\n")
 		} else {
 			tapped = append(tapped, w)
 			fmt.Fprintf(os.Stderr, "Tapped %s/%s (session %s)\n", w.Kind, w.Name, sessionID)
