@@ -1,6 +1,9 @@
 package main
 
 import (
+	"bytes"
+	"encoding/json"
+	"strings"
 	"testing"
 
 	"github.com/ppiankov/logtap/internal/config"
@@ -12,11 +15,11 @@ func TestExecute_SubcommandRegistration(t *testing.T) {
 	cfg = config.Load()
 
 	root := &cobra.Command{
-		Use:     "logtap",
-		Short:   "Ephemeral log mirror for load testing",
-		Version: "test",
+		Use:   "logtap",
+		Short: "Ephemeral log mirror for load testing",
 	}
 	root.PersistentFlags().StringVar(&timeoutStr, "timeout", "", "timeout for cluster operations")
+	root.AddCommand(newVersionCmd())
 	root.AddCommand(newRecvCmd())
 	root.AddCommand(newOpenCmd())
 	root.AddCommand(newInspectCmd())
@@ -34,7 +37,7 @@ func TestExecute_SubcommandRegistration(t *testing.T) {
 	root.AddCommand(newStatusCmd())
 
 	expected := []string{
-		"recv", "open", "inspect", "slice", "export", "triage",
+		"version", "recv", "open", "inspect", "slice", "export", "triage",
 		"grep", "merge", "snapshot", "diff", "completion",
 		"tap", "untap", "check", "status",
 	}
@@ -501,37 +504,63 @@ func TestRunUntap_AllWithDryRun(t *testing.T) {
 }
 
 func TestExecute_Version(t *testing.T) {
-	// Simulate running the full command tree with --version
 	oldVersion := version
-	defer func() { version = oldVersion }()
-	version = "test-version"
+	oldCommit := commit
+	oldDate := date
+	defer func() { version = oldVersion; commit = oldCommit; date = oldDate }()
+	version = "1.2.3"
+	commit = "abc1234"
+	date = "2026-01-01T00:00:00Z"
 
 	cfg = config.Load()
 	root := &cobra.Command{
-		Use:     "logtap",
-		Short:   "Ephemeral log mirror for load testing",
-		Version: version,
+		Use:   "logtap",
+		Short: "Ephemeral log mirror for load testing",
 	}
 	root.PersistentFlags().StringVar(&timeoutStr, "timeout", "", "timeout")
-	root.AddCommand(newRecvCmd())
-	root.AddCommand(newOpenCmd())
-	root.AddCommand(newInspectCmd())
-	root.AddCommand(newSliceCmd())
-	root.AddCommand(newExportCmd())
-	root.AddCommand(newTriageCmd())
-	root.AddCommand(newGrepCmd())
-	root.AddCommand(newMergeCmd())
-	root.AddCommand(newSnapshotCmd())
-	root.AddCommand(newDiffCmd())
-	root.AddCommand(newCompletionCmd())
-	root.AddCommand(newTapCmd())
-	root.AddCommand(newUntapCmd())
-	root.AddCommand(newCheckCmd())
-	root.AddCommand(newStatusCmd())
+	root.AddCommand(newVersionCmd())
 
-	root.SetArgs([]string{"--version"})
+	var buf bytes.Buffer
+	root.SetOut(&buf)
+	root.SetArgs([]string{"version"})
 	if err := root.Execute(); err != nil {
-		t.Errorf("execute --version: %v", err)
+		t.Errorf("execute version: %v", err)
+	}
+
+	out := buf.String()
+	if !strings.Contains(out, "logtap 1.2.3") {
+		t.Errorf("expected version in output, got: %s", out)
+	}
+	if !strings.Contains(out, "commit: abc1234") {
+		t.Errorf("expected commit in output, got: %s", out)
+	}
+}
+
+func TestExecute_VersionJSON(t *testing.T) {
+	oldVersion := version
+	defer func() { version = oldVersion }()
+	version = "1.2.3"
+
+	cfg = config.Load()
+	root := &cobra.Command{
+		Use:   "logtap",
+		Short: "Ephemeral log mirror for load testing",
+	}
+	root.AddCommand(newVersionCmd())
+
+	var buf bytes.Buffer
+	root.SetOut(&buf)
+	root.SetArgs([]string{"version", "--json"})
+	if err := root.Execute(); err != nil {
+		t.Errorf("execute version --json: %v", err)
+	}
+
+	var info buildInfo
+	if err := json.Unmarshal(buf.Bytes(), &info); err != nil {
+		t.Fatalf("invalid JSON: %v", err)
+	}
+	if info.Version != "1.2.3" {
+		t.Errorf("version = %q, want 1.2.3", info.Version)
 	}
 }
 
