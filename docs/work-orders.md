@@ -1137,45 +1137,21 @@ defaults:
 
 ---
 
-### WO-17: Integration Tests with Kind
+### WO-17: Integration Tests with Kind [DONE]
 
 **Goal:** End-to-end tests against a real Kubernetes cluster using Kind (Kubernetes in Docker).
 
 **Problem:**
-The k8s package (1,301 lines) is tested with mocks. Real cluster interactions — patch application, sidecar injection, port-forward, orphan detection — are untested. `tunnel.go` and `client.go` NewClient path have zero coverage.
+The k8s package (2,300+ lines) is tested with mocks. Real cluster interactions — patch application, sidecar injection, orphan detection — are untested. `client.go` NewClient path has zero coverage.
 
-**Approach:**
-- Use Kind to create a single-node cluster in CI
-- Guard with `//go:build integration` tag
-- Test full lifecycle: `tap` → `recv` → `untap` → verify logs captured
-- Test `check` against real RBAC and quotas
-- Test `status` with real tapped workloads
-- Test orphan detection after unclean shutdown
-
-**Steps:**
-1. Create `internal/k8s/k8s_integration_test.go` guarded by build tag
-2. Helper: `setupKindCluster(t)` creates cluster, returns kubeconfig
-3. Deploy test workload (nginx), tap it, send logs, verify capture
-4. Test untap removes sidecar cleanly
-5. Test check reports real RBAC permissions
-6. Add `make test-integration` target
-7. Add Kind setup to CI workflow
-
-**CI Workflow:**
-```yaml
-test-integration:
-  runs-on: ubuntu-latest
-  steps:
-    - uses: actions/checkout@v4
-    - uses: actions/setup-go@v5
-    - uses: helm/kind-action@v1
-    - run: make test-integration
-```
-
-**Acceptance:**
-- Full tap → recv → untap lifecycle tested against real cluster
-- `make test` still works without Kind
-- No flaky timing
+**Result:**
+- `internal/k8s/integration_test.go` — 13 subtests against real Kind cluster
+- Tests: ClusterInfo, Namespace, DeployReceiver, DeleteReceiver, DeploymentPatch, DiscoverByName, DiscoverBySelector, DiscoverTapped, FindOrphans, RemovePatch, DiscoverTappedEmpty, ProdNamespace, QuotaCheck, NodeCapacity, RBAC, SidecarInjectRemove
+- CI: `integration` job in ci.yml using `helm/kind-action@v1` with pre-pulled images
+- Guard: `LOGTAP_INTEGRATION=1` env var (not build tag, per Go best practice)
+- `make test-integration` target added
+- `make test` unaffected (tests skip without LOGTAP_INTEGRATION)
+- Things Kind can't test moved to WO-42
 
 ---
 
@@ -1825,3 +1801,40 @@ Users don't know which CLI flags, capture formats, or API endpoints are stable a
 - Container images tagged v0.3.0
 - CI green on main
 - All internal packages ≥ 85% coverage
+
+---
+
+## Phase 7: Advanced Integration Testing
+
+---
+
+### WO-42: End-to-End Log Flow Testing
+
+**Goal:** Test the full forwarder→receiver log flow in a Kind cluster.
+
+**Problem:**
+WO-17 tests k8s API interactions (patch, discover, deploy) but not actual log delivery. The forwarder image must be built, loaded into Kind, and verified to send logs that the receiver captures.
+
+**Details:**
+- Build forwarder and receiver images, load into Kind with `kind load docker-image`
+- Deploy receiver pod in-cluster
+- Deploy test workload with sidecar (real forwarder image)
+- Generate logs from test workload, verify they appear in receiver capture
+- Test multi-namespace isolation
+- Test RBAC restriction (create restricted ServiceAccount, verify tap fails without permissions)
+- Test port-forward / tunnel stability under load
+
+**Gaps from WO-17 that this covers:**
+| Gap | Solution |
+|-----|----------|
+| Real forwarder→receiver log flow | Build+load images into Kind |
+| RBAC restriction testing | Create restricted SA with limited role |
+| Network policy testing | Apply network policies in Kind |
+| Resource limit enforcement | Set tight limits, verify container behavior |
+| Port-forward stability | Long-running test with reconnection |
+
+**Acceptance:**
+- Full tap→recv→logs flow tested with real images
+- RBAC restriction prevents unauthorized tap
+- `make test-e2e` target added
+- CI job runs after integration tests pass
