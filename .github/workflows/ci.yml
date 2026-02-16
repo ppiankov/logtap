@@ -88,7 +88,8 @@ jobs:
         run: |
           docker pull nginx:alpine
           docker pull busybox:1.36
-          kind load docker-image nginx:alpine busybox:1.36 --name logtap-test
+          kind load docker-image nginx:alpine --name logtap-test
+          kind load docker-image busybox:1.36 --name logtap-test
       - name: Run integration tests
         env:
           LOGTAP_INTEGRATION: "1"
