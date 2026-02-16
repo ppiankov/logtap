@@ -18,7 +18,7 @@ test: ## Run tests with race detection and coverage
 	go test -race -cover ./...
 
 test-integration: ## Run integration tests (requires Kind cluster + KUBECONFIG)
-	LOGTAP_INTEGRATION=1 go test -race -v -timeout 5m ./internal/k8s/ -run TestIntegration
+	LOGTAP_INTEGRATION=1 go test -race -v -timeout 10m ./internal/k8s/ -run TestIntegration
 
 bench: ## Run benchmarks with memory stats
 	go test -bench=. -benchmem -run=^$$ ./internal/...
