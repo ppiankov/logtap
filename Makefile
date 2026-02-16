@@ -4,7 +4,7 @@ COMMIT := $(shell git rev-parse --short HEAD 2>/dev/null || echo "none")
 DATE := $(shell date -u +%Y-%m-%dT%H:%M:%SZ)
 LDFLAGS := -ldflags "-X main.version=$(VERSION) -X main.commit=$(COMMIT) -X main.date=$(DATE)"
 
-.PHONY: all build build-forwarder test test-integration bench lint fmt clean deps install coverage help
+.PHONY: all build build-forwarder test test-integration test-e2e bench lint fmt clean deps install coverage help
 
 all: deps fmt lint test build ## Run deps, fmt, lint, test, and build
 
@@ -19,6 +19,10 @@ test: ## Run tests with race detection and coverage
 
 test-integration: ## Run integration tests (requires Kind cluster + KUBECONFIG)
 	LOGTAP_INTEGRATION=1 go test -race -v -timeout 10m ./internal/k8s/ -run TestIntegration
+
+test-e2e: ## Run E2E tests (requires Kind cluster + loaded images)
+	LOGTAP_E2E=1 LOGTAP_FORWARDER_IMAGE=logtap-forwarder:e2e LOGTAP_RECEIVER_IMAGE=logtap-receiver:e2e \
+	go test -race -v -timeout 10m ./internal/k8s/ -run TestE2E
 
 bench: ## Run benchmarks with memory stats
 	go test -bench=. -benchmem -run=^$$ ./internal/...
