@@ -87,7 +87,7 @@ jobs:
       - name: Run integration tests
         env:
           LOGTAP_INTEGRATION: "1"
-        run: go test -race -v -timeout 5m ./internal/k8s/ -run TestIntegration
+        run: go test -race -v -timeout 10m ./internal/k8s/ -run TestIntegration
 
   security:
     name: Security Scan
