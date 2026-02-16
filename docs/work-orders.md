@@ -1997,7 +1997,9 @@ logtap gc ./captures/ --max-age 7d --max-total 100GB --dry-run
 
 ---
 
-### WO-48: HTML Triage Report
+### WO-48: HTML Triage Report [DONE]
+
+**Result:** `WriteHTML(w io.Writer) error` method on TriageResult using `html/template`. Self-contained HTML with inline CSS, SVG timeline chart (polyline for total/errors), horizontal bar charts for top talkers, sortable error table, recommended slices. `--html` flag on `logtap triage`. 4 tests. Archive coverage 85.9%.
 
 **Goal:** Generate a self-contained HTML report from triage output.
 
