@@ -70,6 +70,30 @@ jobs:
       - run: make fmt
       - run: git diff --exit-code
 
+  integration:
+    name: Integration Tests
+    runs-on: ubuntu-latest
+    needs: test
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.25'
+      - run: make deps
+      - uses: helm/kind-action@v1
+        with:
+          cluster_name: logtap-test
+          wait: 120s
+      - name: Pre-pull images into Kind
+        run: |
+          docker pull nginx:alpine
+          docker pull busybox:1.36
+          kind load docker-image nginx:alpine busybox:1.36 --name logtap-test
+      - name: Run integration tests
+        env:
+          LOGTAP_INTEGRATION: "1"
+        run: go test -race -v -timeout 5m ./internal/k8s/ -run TestIntegration
+
   security:
     name: Security Scan
     runs-on: ubuntu-latest
