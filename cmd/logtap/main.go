@@ -57,6 +57,8 @@ func execute() error {
 	root.AddCommand(newSnapshotCmd())
 	root.AddCommand(newDiffCmd())
 	root.AddCommand(newCompletionCmd())
+	root.AddCommand(newUploadCmd())
+	root.AddCommand(newDownloadCmd())
 	root.AddCommand(newTapCmd())
 	root.AddCommand(newUntapCmd())
 	root.AddCommand(newCheckCmd())

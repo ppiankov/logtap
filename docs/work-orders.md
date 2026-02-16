@@ -1888,7 +1888,7 @@ The forwarder binary has zero test coverage. The main function, health endpoint,
 
 ---
 
-### WO-45: Cloud Capture Upload (S3/GCS)
+### WO-45: Cloud Capture Upload (S3/GCS) [DONE]
 
 **Goal:** Upload capture directories to cloud object storage for team sharing.
 
@@ -1924,6 +1924,8 @@ logtap download s3://bucket/prefix/capture-2024-01-15/ --out ./capture
 - `logtap download s3://test-bucket/capture/ --out ./local` restores capture
 - `logtap open ./local` works after download
 - `make test && make lint` clean
+
+**Result:** Backend interface with S3 (PutObject/GetObject/ListObjectsV2) and GCS (Writer/Reader/Objects iterator) implementations. Upload: validates capture dir, walks files, parallel upload with semaphore+WaitGroup. Download: lists objects, parallel download, validates metadata post-download. ParseURL supports s3:// and gs:// schemes. 15 tests in cloud_test.go + upload_test.go + download_test.go. cloud coverage 25% (S3/GCS constructors need real credentials).
 
 ---
 
