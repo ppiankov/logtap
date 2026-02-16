@@ -361,7 +361,7 @@ func TestRunOpen_InvalidDir(t *testing.T) {
 }
 
 func TestRunTriage_InvalidDir(t *testing.T) {
-	err := runTriage("/nonexistent/dir", "/tmp/out", 1, 60000000000, 50, false)
+	err := runTriage("/nonexistent/dir", "/tmp/out", 1, 60000000000, 50, false, false)
 	if err == nil {
 		t.Error("expected error for nonexistent dir")
 	}
