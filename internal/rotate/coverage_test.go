@@ -236,6 +236,46 @@ func TestPruneIndexWithEntries(t *testing.T) {
 	}
 }
 
+func TestOnRotateCallback(t *testing.T) {
+	dir := t.TempDir()
+	r, err := New(Config{Dir: dir, MaxFile: 30, MaxDisk: 1 << 20})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var rotateCount int
+	var lastReason string
+	r.SetOnRotate(func(reason string) {
+		rotateCount++
+		lastReason = reason
+	})
+
+	var errorCount int
+	r.SetOnError(func() {
+		errorCount++
+	})
+
+	line := []byte(`{"msg":"callback test data"}` + "\n")
+	for i := 0; i < 5; i++ {
+		if _, err := r.Write(line); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := r.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	if rotateCount == 0 {
+		t.Error("expected onRotate callback to fire at least once")
+	}
+	if lastReason != "size" {
+		t.Errorf("expected reason %q, got %q", "size", lastReason)
+	}
+	if errorCount != 0 {
+		t.Errorf("expected 0 error callbacks, got %d", errorCount)
+	}
+}
+
 func TestNewWithBadDir(t *testing.T) {
 	_, err := New(Config{Dir: "/proc/0/nonexistent", MaxFile: 4096, MaxDisk: 1 << 20})
 	if err == nil {
