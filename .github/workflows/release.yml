@@ -59,7 +59,9 @@ jobs:
           VERSION=${{ steps.tag.outputs.version }}
           VERSION_NUM=${VERSION#v}
           PROJECT=${{ steps.project.outputs.name }}
-          LDFLAGS="-s -w -X main.version=${VERSION_NUM}"
+          COMMIT=$(git rev-parse --short HEAD)
+          DATE=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+          LDFLAGS="-s -w -X main.version=${VERSION_NUM} -X main.commit=${COMMIT} -X main.date=${DATE}"
 
           platforms=(
             "linux/amd64"
@@ -222,6 +224,7 @@ jobs:
           push: true
           build-args: |
             VERSION=${{ steps.tag.outputs.version_num }}
+            COMMIT=${{ github.sha }}
           tags: |
             ghcr.io/${{ github.repository_owner }}/logtap:latest
             ghcr.io/${{ github.repository_owner }}/logtap:${{ steps.tag.outputs.version }}
