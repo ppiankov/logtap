@@ -240,6 +240,64 @@ func TestLoadConfigFromEnv(t *testing.T) {
 	}
 }
 
+func TestLoadConfigFromEnvWithBufferAndRetry(t *testing.T) {
+	env := map[string]string{
+		envTarget:     "target",
+		envSession:    "session",
+		envPodName:    "pod",
+		envNamespace:  "namespace",
+		envBufferSize: "2097152",
+		envRetryMax:   "5",
+	}
+
+	cfg, err := loadConfigFromEnv(func(key string) string {
+		return env[key]
+	})
+	if err != nil {
+		t.Fatalf("loadConfigFromEnv: %v", err)
+	}
+	if cfg.BufferSize != 2097152 {
+		t.Errorf("BufferSize = %d, want 2097152", cfg.BufferSize)
+	}
+	if cfg.MaxRetries != 5 {
+		t.Errorf("MaxRetries = %d, want 5", cfg.MaxRetries)
+	}
+}
+
+func TestLoadConfigFromEnvInvalidBuffer(t *testing.T) {
+	env := map[string]string{
+		envTarget:     "target",
+		envSession:    "session",
+		envPodName:    "pod",
+		envNamespace:  "namespace",
+		envBufferSize: "notanumber",
+	}
+
+	_, err := loadConfigFromEnv(func(key string) string {
+		return env[key]
+	})
+	if err == nil || !strings.Contains(err.Error(), envBufferSize) {
+		t.Fatalf("err = %v, want invalid %s", err, envBufferSize)
+	}
+}
+
+func TestLoadConfigFromEnvInvalidRetry(t *testing.T) {
+	env := map[string]string{
+		envTarget:    "target",
+		envSession:   "session",
+		envPodName:   "pod",
+		envNamespace: "namespace",
+		envRetryMax:  "abc",
+	}
+
+	_, err := loadConfigFromEnv(func(key string) string {
+		return env[key]
+	})
+	if err == nil || !strings.Contains(err.Error(), envRetryMax) {
+		t.Fatalf("err = %v, want invalid %s", err, envRetryMax)
+	}
+}
+
 func TestLoadConfigFromEnvMissing(t *testing.T) {
 	_, err := loadConfigFromEnv(func(string) string { return "" })
 	if err == nil || !strings.Contains(err.Error(), envTarget) {

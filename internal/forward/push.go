@@ -11,9 +11,10 @@ import (
 )
 
 const (
-	maxBufferBytes = 1 << 20 // 1MB
-	maxRetries     = 3
-	pushPath       = "/loki/api/v1/push"
+	maxBufferBytes    = 1 << 20 // 1MB
+	defaultMaxRetries = 3
+	defaultMaxBackoff = 30 * time.Second
+	pushPath          = "/loki/api/v1/push"
 )
 
 // TimestampedLine is a single log line with its timestamp.
@@ -34,8 +35,11 @@ type lokiStream struct {
 
 // Pusher sends log lines to a logtap receiver via the Loki push API.
 type Pusher struct {
-	target string
-	client *http.Client
+	target     string
+	client     *http.Client
+	maxRetries int
+	maxBackoff time.Duration
+	onRetry    func()
 }
 
 // NewPusher creates a Pusher targeting the given receiver address.
@@ -49,10 +53,21 @@ func NewPusherWithClient(target string, client *http.Client) *Pusher {
 		client = &http.Client{Timeout: 10 * time.Second}
 	}
 	return &Pusher{
-		target: target,
-		client: client,
+		target:     target,
+		client:     client,
+		maxRetries: defaultMaxRetries,
+		maxBackoff: defaultMaxBackoff,
 	}
 }
+
+// SetMaxRetries sets the maximum number of retry attempts per push.
+func (p *Pusher) SetMaxRetries(n int) { p.maxRetries = n }
+
+// SetMaxBackoff sets the maximum backoff duration between retries.
+func (p *Pusher) SetMaxBackoff(d time.Duration) { p.maxBackoff = d }
+
+// SetOnRetry sets a callback invoked on each retry attempt.
+func (p *Pusher) SetOnRetry(fn func()) { p.onRetry = fn }
 
 // Push sends a batch of log lines with the given labels to the receiver.
 // Returns ErrBufferExceeded if the serialized payload exceeds 1MB.
@@ -85,7 +100,7 @@ func (p *Pusher) Push(ctx context.Context, labels map[string]string, lines []Tim
 	url := "http://" + p.target + pushPath
 
 	var lastErr error
-	for attempt := range maxRetries {
+	for attempt := range p.maxRetries {
 		if err := ctx.Err(); err != nil {
 			return err
 		}
@@ -99,7 +114,12 @@ func (p *Pusher) Push(ctx context.Context, labels map[string]string, lines []Tim
 		resp, err := p.client.Do(httpReq)
 		if err != nil {
 			lastErr = err
-			backoff(ctx, attempt)
+			if attempt < p.maxRetries-1 {
+				if p.onRetry != nil {
+					p.onRetry()
+				}
+				backoff(ctx, attempt, p.maxBackoff)
+			}
 			continue
 		}
 		_ = resp.Body.Close()
@@ -114,7 +134,12 @@ func (p *Pusher) Push(ctx context.Context, labels map[string]string, lines []Tim
 			return lastErr // client error, no retry
 		}
 
-		backoff(ctx, attempt)
+		if attempt < p.maxRetries-1 {
+			if p.onRetry != nil {
+				p.onRetry()
+			}
+			backoff(ctx, attempt, p.maxBackoff)
+		}
 	}
 
 	return lastErr
@@ -123,8 +148,11 @@ func (p *Pusher) Push(ctx context.Context, labels map[string]string, lines []Tim
 // ErrBufferExceeded is returned when the serialized payload exceeds the buffer limit.
 var ErrBufferExceeded = fmt.Errorf("payload exceeds %d byte buffer limit", maxBufferBytes)
 
-func backoff(ctx context.Context, attempt int) {
+func backoff(ctx context.Context, attempt int, maxBackoff time.Duration) {
 	d := time.Duration(1<<uint(attempt)) * time.Second
+	if d > maxBackoff {
+		d = maxBackoff
+	}
 	t := time.NewTimer(d)
 	defer t.Stop()
 	select {
