@@ -1,6 +1,7 @@
 # Build artifacts
 bin/
 dist/
+logtap
 *.exe
 *.exe~
 *.dll
@@ -8,7 +9,15 @@ dist/
 *.dylib
 *.test
 *.out
+*.cover
 
 # OS
 .DS_Store
 
+
+# Session notes
+notes/
+
+# RunForge
+.runforge/
+runforge-*.json
