@@ -96,8 +96,8 @@ func TestPush_ServerError(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error for server error")
 	}
-	if calls != maxRetries {
-		t.Errorf("calls = %d, want %d (should retry)", calls, maxRetries)
+	if calls != defaultMaxRetries {
+		t.Errorf("calls = %d, want %d (should retry)", calls, defaultMaxRetries)
 	}
 }
 
@@ -186,10 +186,70 @@ func TestBackoff_ContextCancel(t *testing.T) {
 	cancel()
 
 	start := time.Now()
-	backoff(ctx, 5) // attempt 5 would normally sleep 32s
+	backoff(ctx, 5, defaultMaxBackoff) // attempt 5 would normally sleep 32s
 	elapsed := time.Since(start)
 
 	if elapsed > 100*time.Millisecond {
 		t.Errorf("backoff took %v, expected immediate return on cancelled context", elapsed)
+	}
+}
+
+func TestPush_MaxBackoffCap(t *testing.T) {
+	calls := 0
+	client := &http.Client{
+		Transport: roundTripperFunc(func(r *http.Request) (*http.Response, error) {
+			calls++
+			return &http.Response{
+				StatusCode: http.StatusInternalServerError,
+				Body:       io.NopCloser(bytes.NewReader(nil)),
+				Header:     make(http.Header),
+			}, nil
+		}),
+	}
+	p := NewPusherWithClient("receiver:3100", client)
+	p.SetMaxRetries(5)
+	p.SetMaxBackoff(10 * time.Millisecond)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	start := time.Now()
+	_ = p.Push(ctx, map[string]string{"pod": "test"}, []TimestampedLine{
+		{Timestamp: time.Now(), Line: "test"},
+	})
+	elapsed := time.Since(start)
+
+	if calls != 5 {
+		t.Errorf("calls = %d, want 5", calls)
+	}
+	// with 10ms max backoff, 4 retries should complete in well under 1s
+	if elapsed > 1*time.Second {
+		t.Errorf("took %v, expected fast completion with low max backoff", elapsed)
+	}
+}
+
+func TestPush_OnRetryCallback(t *testing.T) {
+	client := &http.Client{
+		Transport: roundTripperFunc(func(r *http.Request) (*http.Response, error) {
+			return nil, errors.New("connection refused")
+		}),
+	}
+	p := NewPusherWithClient("receiver:3100", client)
+	p.SetMaxRetries(4)
+	p.SetMaxBackoff(1 * time.Millisecond)
+
+	retryCount := 0
+	p.SetOnRetry(func() { retryCount++ })
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	_ = p.Push(ctx, map[string]string{"pod": "test"}, []TimestampedLine{
+		{Timestamp: time.Now(), Line: "test"},
+	})
+
+	// 4 attempts = 3 retries (first attempt is not a retry)
+	if retryCount != 3 {
+		t.Errorf("retryCount = %d, want 3", retryCount)
 	}
 }
