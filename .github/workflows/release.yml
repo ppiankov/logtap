@@ -81,10 +81,10 @@ jobs:
 
             if [ "$GOOS" = "windows" ]; then
               binary="${binary}.exe"
-              GOOS=$GOOS GOARCH=$GOARCH go build -ldflags="$LDFLAGS" -o "staging/${binary}" ./cmd/${PROJECT}/
+              CGO_ENABLED=0 GOOS=$GOOS GOARCH=$GOARCH go build -ldflags="$LDFLAGS" -o "staging/${binary}" ./cmd/${PROJECT}/
               cd staging && zip "../dist/${archive}.zip" "${binary}" && cd ..
             else
-              GOOS=$GOOS GOARCH=$GOARCH go build -ldflags="$LDFLAGS" -o "staging/${binary}" ./cmd/${PROJECT}/
+              CGO_ENABLED=0 GOOS=$GOOS GOARCH=$GOARCH go build -ldflags="$LDFLAGS" -o "staging/${binary}" ./cmd/${PROJECT}/
               tar -czf "dist/${archive}.tar.gz" -C staging "${binary}"
             fi
             rm -f "staging/${binary}"
