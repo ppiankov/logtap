@@ -64,6 +64,7 @@ func execute() error {
 	root.AddCommand(newCheckCmd())
 	root.AddCommand(newStatusCmd())
 	root.AddCommand(newDeployCmd())
+	root.AddCommand(newWatchCmd())
 	return root.Execute()
 }
 

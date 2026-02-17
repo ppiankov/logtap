@@ -3,6 +3,8 @@ package k8s_test
 import (
 	"context"
 	"fmt"
+	"io"
+	"net/http"
 	"os"
 	"strconv"
 	"strings"
@@ -190,6 +192,56 @@ func TestE2E(t *testing.T) {
 			t.Fatalf("logtap_logs_received_total = %v, want > 0", val)
 		}
 		t.Logf("logtap_logs_received_total = %v — full pipeline verified", val)
+	})
+
+	t.Run("PortForward", func(t *testing.T) {
+		// Verify basic port-forward connectivity to the receiver pod.
+		if client.RestConfig == nil {
+			t.Fatal("RestConfig is nil — cannot create port-forward")
+		}
+
+		spec := k8s.PortForwardSpec{
+			Namespace:  testNS,
+			PodName:    "logtap-recv",
+			RemotePort: 3100,
+			LocalPort:  0,
+		}
+
+		tunnel, err := k8s.NewPortForwardTunnel(client.RestConfig, client.CS, spec, io.Discard, io.Discard)
+		if err != nil {
+			t.Fatalf("NewPortForwardTunnel: %v", err)
+		}
+
+		errCh := make(chan error, 1)
+		go func() { errCh <- tunnel.Run() }()
+
+		select {
+		case <-tunnel.ReadyCh():
+			t.Log("port-forward ready")
+		case err := <-errCh:
+			t.Fatalf("port-forward failed: %v", err)
+		case <-time.After(30 * time.Second):
+			t.Fatal("timeout waiting for port-forward")
+		}
+
+		port, err := tunnel.GetLocalPort()
+		if err != nil {
+			t.Fatalf("GetLocalPort: %v", err)
+		}
+		t.Logf("forwarding localhost:%d -> logtap-recv:3100", port)
+
+		// Verify connectivity via healthz endpoint.
+		resp, err := http.Get(fmt.Sprintf("http://localhost:%d/healthz", port))
+		if err != nil {
+			t.Fatalf("healthz request: %v", err)
+		}
+		_ = resp.Body.Close()
+		if resp.StatusCode != http.StatusOK {
+			t.Errorf("healthz status = %d, want 200", resp.StatusCode)
+		}
+
+		tunnel.Stop()
+		t.Log("port-forward stopped")
 	})
 
 	t.Run("RBACRestriction", func(t *testing.T) {

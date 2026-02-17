@@ -48,6 +48,13 @@ type TUIModel struct {
 	searchIdx   int   // current match index in filtered results
 	matches     []int // indices into lines
 
+	// label filter
+	filtering    bool
+	filterInput  string
+	filterKey    string // parsed key
+	filterVal    string // parsed value
+	filterActive bool
+
 	// gg detection
 	lastGPress time.Time
 
@@ -122,7 +129,11 @@ func (m TUIModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		newVersion := m.ring.Version()
 		if newVersion != m.ringVersion {
-			m.lines = m.ring.Snapshot()
+			if m.filterActive {
+				m.lines = m.ring.SnapshotFiltered(m.labelPredicate())
+			} else {
+				m.lines = m.ring.Snapshot()
+			}
 			m.ringVersion = newVersion
 			m.updateSearchMatches()
 			if m.follow {
@@ -133,6 +144,9 @@ func (m TUIModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, tickCmd()
 
 	case tea.KeyMsg:
+		if m.filtering {
+			return m.updateFilter(msg)
+		}
 		if m.searching {
 			return m.updateSearch(msg)
 		}
@@ -195,9 +209,60 @@ func (m TUIModel) updateNormal(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 	case "N":
 		m.nextMatch(-1)
+
+	case "l":
+		m.filtering = true
+		m.filterInput = ""
 	}
 
 	return m, nil
+}
+
+func (m TUIModel) updateFilter(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch msg.String() {
+	case "enter":
+		m.filtering = false
+		if m.filterInput == "" {
+			m.filterActive = false
+			m.filterKey = ""
+			m.filterVal = ""
+		} else if idx := strings.IndexByte(m.filterInput, '='); idx > 0 {
+			m.filterKey = m.filterInput[:idx]
+			m.filterVal = m.filterInput[idx+1:]
+			m.filterActive = true
+		}
+		// force re-read from ring
+		m.ringVersion = -1
+
+	case "esc":
+		m.filtering = false
+		m.filterInput = ""
+		m.filterActive = false
+		m.filterKey = ""
+		m.filterVal = ""
+		// force re-read from ring
+		m.ringVersion = -1
+
+	case "backspace":
+		if len(m.filterInput) > 0 {
+			m.filterInput = m.filterInput[:len(m.filterInput)-1]
+		}
+
+	default:
+		if len(msg.String()) == 1 {
+			m.filterInput += msg.String()
+		}
+	}
+
+	return m, nil
+}
+
+func (m TUIModel) labelPredicate() func(LogEntry) bool {
+	key, val := m.filterKey, m.filterVal
+	return func(e LogEntry) bool {
+		v, ok := e.Labels[key]
+		return ok && v == val
+	}
 }
 
 func (m TUIModel) updateSearch(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
@@ -382,9 +447,20 @@ func (m TUIModel) View() string {
 
 	// status bar
 	var status strings.Builder
+	if m.filtering {
+		status.WriteString(filterBadge.Render(fmt.Sprintf("filter: %s", m.filterInput)))
+	} else if m.filterActive {
+		status.WriteString(filterBadge.Render(fmt.Sprintf("FILTER: %s=%s", m.filterKey, m.filterVal)))
+	}
 	if m.searching {
+		if status.Len() > 0 {
+			status.WriteString(" ")
+		}
 		status.WriteString(searchBadge.Render(fmt.Sprintf("/%s", m.searchInput)))
 	} else if m.searchRegex != nil {
+		if status.Len() > 0 {
+			status.WriteString(" ")
+		}
 		status.WriteString(searchBadge.Render(fmt.Sprintf("[%d/%d] /%s", m.searchIdx+1, len(m.matches), m.searchRegex.String())))
 	}
 	if m.follow {
@@ -472,6 +548,7 @@ var (
 	warnStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("226")).Bold(true)
 	searchBadge  = lipgloss.NewStyle().Background(lipgloss.Color("226")).Foreground(lipgloss.Color("0")).Padding(0, 1)
 	followBadge  = lipgloss.NewStyle().Background(lipgloss.Color("34")).Foreground(lipgloss.Color("15")).Padding(0, 1)
+	filterBadge  = lipgloss.NewStyle().Background(lipgloss.Color("63")).Foreground(lipgloss.Color("15")).Padding(0, 1)
 )
 
 // helpers

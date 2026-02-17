@@ -39,6 +39,7 @@ func newRecvCmd() *cobra.Command {
 		ttlStr         string
 		webhookURLs    []string
 		webhookEvents  string
+		alertRulesPath string
 	)
 
 	cmd := &cobra.Command{
@@ -76,7 +77,7 @@ func newRecvCmd() *cobra.Command {
 			if dir == "" {
 				return fmt.Errorf("--dir is required (or use --in-cluster)")
 			}
-			return runRecv(listen, dir, maxFileStr, maxDiskStr, compress, redactFlag, redactPatterns, bufSize, headless, tlsCert, tlsKey, webhookURLs, webhookEvents)
+			return runRecv(listen, dir, maxFileStr, maxDiskStr, compress, redactFlag, redactPatterns, bufSize, headless, tlsCert, tlsKey, webhookURLs, webhookEvents, alertRulesPath)
 		},
 	}
 
@@ -97,11 +98,12 @@ func newRecvCmd() *cobra.Command {
 	cmd.Flags().StringVar(&ttlStr, "ttl", "4h", "receiver pod TTL for in-cluster mode (e.g. 4h, 30m)")
 	cmd.Flags().StringSliceVar(&webhookURLs, "webhook", nil, "webhook URLs to notify on lifecycle events (repeatable)")
 	cmd.Flags().StringVar(&webhookEvents, "webhook-events", "", "comma-separated event filter (start,stop,rotation,error,disk-warning)")
+	cmd.Flags().StringVar(&alertRulesPath, "alert-rules", "", "path to alert rules YAML file")
 
 	return cmd
 }
 
-func runRecv(listen, dir, maxFileStr, maxDiskStr string, compress bool, redactFlag, redactPatterns string, bufSize int, headless bool, tlsCert, tlsKey string, webhookURLs []string, webhookEvents string) error {
+func runRecv(listen, dir, maxFileStr, maxDiskStr string, compress bool, redactFlag, redactPatterns string, bufSize int, headless bool, tlsCert, tlsKey string, webhookURLs []string, webhookEvents string, alertRulesPath string) error {
 	maxFile, err := parseByteSize(maxFileStr)
 	if err != nil {
 		return fmt.Errorf("invalid --max-file: %w", err)
@@ -200,6 +202,16 @@ func runRecv(listen, dir, maxFileStr, maxDiskStr string, compress bool, redactFl
 	stats := recv.NewStats()
 	ring := recv.NewLogRing(0)
 
+	// alert engine
+	var alertEngine *recv.AlertEngine
+	if alertRulesPath != "" {
+		alertRules, err := recv.LoadAlertRules(alertRulesPath)
+		if err != nil {
+			return fmt.Errorf("load alert rules: %w", err)
+		}
+		alertEngine = recv.NewAlertEngine(alertRules, dispatcher)
+	}
+
 	// write initial metadata
 	if err := recv.WriteMetadata(dir, meta); err != nil {
 		return fmt.Errorf("write metadata: %w", err)
@@ -252,6 +264,22 @@ func runRecv(listen, dir, maxFileStr, maxDiskStr string, compress bool, redactFl
 		})
 
 		metrics.DiskUsage.Set(float64(rot.DiskUsage()))
+	}
+
+	// alert evaluation loop
+	if alertEngine != nil {
+		go func() {
+			ticker := time.NewTicker(time.Second)
+			defer ticker.Stop()
+			for range ticker.C {
+				var diskUsage int64
+				if rot != nil {
+					diskUsage = rot.DiskUsage()
+				}
+				snap := stats.Snapshot(diskUsage, maxDisk, writer.BytesWritten())
+				alertEngine.Evaluate(snap)
+			}
+		}()
 	}
 
 	// start HTTP server in background
