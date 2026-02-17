@@ -10,9 +10,22 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 )
 
+// s3API abstracts the S3 client methods used by s3Backend.
+type s3API interface {
+	PutObject(ctx context.Context, params *s3.PutObjectInput, optFns ...func(*s3.Options)) (*s3.PutObjectOutput, error)
+	GetObject(ctx context.Context, params *s3.GetObjectInput, optFns ...func(*s3.Options)) (*s3.GetObjectOutput, error)
+}
+
+// s3Paginator abstracts the S3 list paginator.
+type s3Paginator interface {
+	HasMorePages() bool
+	NextPage(ctx context.Context, optFns ...func(*s3.Options)) (*s3.ListObjectsV2Output, error)
+}
+
 type s3Backend struct {
-	client *s3.Client
-	bucket string
+	client       s3API
+	bucket       string
+	newPaginator func(client s3API, bucket, prefix string) s3Paginator
 }
 
 func newS3Backend(ctx context.Context, bucket string) (*s3Backend, error) {
@@ -20,7 +33,17 @@ func newS3Backend(ctx context.Context, bucket string) (*s3Backend, error) {
 	if err != nil {
 		return nil, fmt.Errorf("load AWS config: %w", err)
 	}
-	return &s3Backend{client: s3.NewFromConfig(cfg), bucket: bucket}, nil
+	client := s3.NewFromConfig(cfg)
+	return &s3Backend{
+		client: client,
+		bucket: bucket,
+		newPaginator: func(c s3API, b, p string) s3Paginator {
+			return s3.NewListObjectsV2Paginator(client, &s3.ListObjectsV2Input{
+				Bucket: &b,
+				Prefix: &p,
+			})
+		},
+	}, nil
 }
 
 func (b *s3Backend) Upload(ctx context.Context, key string, r io.Reader, size int64) error {
@@ -58,10 +81,7 @@ func (b *s3Backend) List(ctx context.Context, prefix string) ([]ObjectInfo, erro
 	}
 
 	var objects []ObjectInfo
-	paginator := s3.NewListObjectsV2Paginator(b.client, &s3.ListObjectsV2Input{
-		Bucket: &b.bucket,
-		Prefix: &listPrefix,
-	})
+	paginator := b.newPaginator(b.client, b.bucket, listPrefix)
 
 	for paginator.HasMorePages() {
 		page, err := paginator.NextPage(ctx)

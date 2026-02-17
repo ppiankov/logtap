@@ -307,6 +307,93 @@ func TestRunTriage_Success(t *testing.T) {
 	})
 }
 
+func TestRunTriage_HTML(t *testing.T) {
+	dir := makeCaptureDir(t, sampleEntries(time.Date(2025, 1, 15, 10, 0, 0, 0, time.UTC)))
+	outDir := filepath.Join(t.TempDir(), "triage-html")
+
+	restore := redirectOutput(t)
+	defer restore()
+
+	if err := runTriage(dir, outDir, 1, time.Minute, 5, false, true); err != nil {
+		t.Fatalf("runTriage html: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(outDir, "report.html")); err != nil {
+		t.Fatalf("triage HTML missing: %v", err)
+	}
+}
+
+func TestRunGrep_NoMatches(t *testing.T) {
+	dir := makeCaptureDir(t, sampleEntries(time.Date(2025, 1, 15, 10, 0, 0, 0, time.UTC)))
+	restore := redirectOutput(t)
+	defer restore()
+
+	if err := runGrep("zzz_no_match_zzz", dir, "", "", nil, false); err != nil {
+		t.Fatalf("runGrep no match: %v", err)
+	}
+}
+
+func TestRunGrep_WithLabelFilter(t *testing.T) {
+	dir := makeCaptureDir(t, sampleEntries(time.Date(2025, 1, 15, 10, 0, 0, 0, time.UTC)))
+	restore := redirectOutput(t)
+	defer restore()
+
+	if err := runGrep("hello", dir, "", "", []string{"app=web"}, false); err != nil {
+		t.Fatalf("runGrep label: %v", err)
+	}
+}
+
+func TestRunExport_CSV(t *testing.T) {
+	dir := makeCaptureDir(t, sampleEntries(time.Date(2025, 1, 15, 10, 0, 0, 0, time.UTC)))
+	outPath := filepath.Join(t.TempDir(), "export.csv")
+
+	restore := redirectOutput(t)
+	defer restore()
+
+	if err := runExport(dir, "csv", "", "", nil, "", outPath); err != nil {
+		t.Fatalf("runExport csv: %v", err)
+	}
+	if _, err := os.Stat(outPath); err != nil {
+		t.Fatalf("csv output missing: %v", err)
+	}
+}
+
+func TestRunExport_Parquet(t *testing.T) {
+	dir := makeCaptureDir(t, sampleEntries(time.Date(2025, 1, 15, 10, 0, 0, 0, time.UTC)))
+	outPath := filepath.Join(t.TempDir(), "export.parquet")
+
+	restore := redirectOutput(t)
+	defer restore()
+
+	if err := runExport(dir, "parquet", "", "", nil, "", outPath); err != nil {
+		t.Fatalf("runExport parquet: %v", err)
+	}
+	if _, err := os.Stat(outPath); err != nil {
+		t.Fatalf("parquet output missing: %v", err)
+	}
+}
+
+func TestRunSlice_WithFilter(t *testing.T) {
+	dir := makeCaptureDir(t, sampleEntries(time.Date(2025, 1, 15, 10, 0, 0, 0, time.UTC)))
+	outDir := filepath.Join(t.TempDir(), "slice-filtered")
+
+	restore := redirectOutput(t)
+	defer restore()
+
+	if err := runSlice(dir, "", "", []string{"app=web"}, "", outDir); err != nil {
+		t.Fatalf("runSlice with filter: %v", err)
+	}
+}
+
+func TestRunMerge_SingleDir(t *testing.T) {
+	dir := makeCaptureDir(t, sampleEntries(time.Date(2025, 1, 15, 10, 0, 0, 0, time.UTC)))
+	outDir := filepath.Join(t.TempDir(), "merged")
+
+	err := runMerge([]string{dir}, outDir)
+	if err == nil {
+		t.Fatal("expected error for single capture merge")
+	}
+}
+
 func TestCompletionCommand_RunE(t *testing.T) {
 	shells := []string{"bash", "zsh", "fish"}
 

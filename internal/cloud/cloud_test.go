@@ -60,3 +60,16 @@ func TestNewBackendUnsupportedScheme(t *testing.T) {
 		t.Fatal("expected error for unsupported scheme")
 	}
 }
+
+func TestNewBackendS3(t *testing.T) {
+	// S3 backend creation succeeds even without real credentials —
+	// config.LoadDefaultConfig returns empty config and s3.NewFromConfig
+	// creates a client that will fail on actual API calls, not construction.
+	b, err := NewBackend(context.Background(), "s3", "test-bucket")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if b == nil {
+		t.Fatal("expected non-nil backend")
+	}
+}
