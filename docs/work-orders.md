@@ -2079,3 +2079,49 @@ If the receiver is temporarily unreachable, the forwarder drops all logs immedia
 - All packages >= 85% coverage
 - No known critical bugs
 - README reflects stable status
+
+---
+
+## Phase 7: Cluster-Native Receiver
+
+### WO-51: In-Cluster Receiver Deployment
+
+**Goal:** Provide a `logtap deploy` subcommand that deploys the receiver as a Pod+Service inside the cluster, eliminating the need for external network access from pods to the user's machine.
+
+**Problem:** When the user runs `logtap recv` locally, the forwarder sidecar inside k8s pods often can't reach the user's machine due to VPN routing, firewalls, or service mesh proxying. Running the receiver in-cluster solves all these issues.
+
+**CLI interface:**
+```
+logtap deploy --namespace my-team --image ghcr.io/ppiankov/logtap:v1.0.2
+logtap deploy --namespace my-team --cleanup
+```
+
+**Flags:**
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--namespace, -n` | current context | Namespace to deploy into |
+| `--image` | `ghcr.io/ppiankov/logtap:latest` | Receiver image |
+| `--max-disk` | `10GB` | Disk cap for in-cluster captures |
+| `--port` | `3100` | Receiver listen port |
+| `--cleanup` | `false` | Remove deployed receiver resources |
+| `--dry-run` | `false` | Show resources without applying |
+
+**Behavior:**
+- Creates a Pod `logtap-recv` with the receiver running in headless mode
+- Creates a Service `logtap-recv` exposing the receiver port
+- Prints the in-cluster target address: `logtap-recv.<ns>.svc.cluster.local:<port>`
+- User then runs: `logtap tap --target logtap-recv.<ns>.svc.cluster.local:<port> ...`
+- Captures retrieved via: `kubectl cp <ns>/logtap-recv:/data/capture ./capture`
+- `--cleanup` removes Pod + Service
+
+**Files:**
+- `cmd/logtap/deploy.go` — deploy/cleanup subcommand
+- `internal/k8s/deploy.go` — Pod + Service creation/deletion helpers
+- `internal/k8s/deploy_test.go` — tests with fake clientset
+
+**Acceptance:**
+- `logtap deploy` creates Pod + Service, prints target address
+- `logtap deploy --cleanup` removes both
+- `logtap deploy --dry-run` shows resources without creating
+- Forwarder sidecar can reach in-cluster receiver (no network issues)
+- Tests pass with -race, lint clean
