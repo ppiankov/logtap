@@ -168,6 +168,13 @@ func runRecv(listen, dir, maxFileStr, maxDiskStr string, compress bool, redactFl
 	reg := prometheus.DefaultRegisterer
 	metrics := recv.NewMetrics(reg)
 
+	// wire redaction hit counts to metrics
+	if redactor != nil {
+		redactor.SetOnRedact(func(pattern string) {
+			metrics.RedactionsTotal.WithLabelValues(pattern).Inc()
+		})
+	}
+
 	// writer
 	writer := recv.NewWriter(bufSize, rot, rot.TrackLine)
 	writer.SetQueueGauge(func(v float64) { metrics.WriterQueueLength.Set(v) })
