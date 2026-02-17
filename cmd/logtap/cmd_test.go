@@ -37,11 +37,17 @@ func TestExecute_SubcommandRegistration(t *testing.T) {
 	root.AddCommand(newUntapCmd())
 	root.AddCommand(newCheckCmd())
 	root.AddCommand(newStatusCmd())
+	root.AddCommand(newDeployCmd())
+	root.AddCommand(newUploadCmd())
+	root.AddCommand(newDownloadCmd())
+	root.AddCommand(newGCCmd())
+	root.AddCommand(newWatchCmd())
 
 	expected := []string{
 		"version", "recv", "open", "inspect", "slice", "export", "triage",
 		"grep", "merge", "snapshot", "diff", "completion",
-		"tap", "untap", "check", "status",
+		"tap", "untap", "check", "status", "deploy", "upload", "download", "gc",
+		"watch",
 	}
 
 	commands := make(map[string]bool)
@@ -76,6 +82,11 @@ func TestSubcommandHelp(t *testing.T) {
 		newUntapCmd,
 		newCheckCmd,
 		newStatusCmd,
+		newDeployCmd,
+		newUploadCmd,
+		newDownloadCmd,
+		newGCCmd,
+		newWatchCmd,
 	}
 
 	for _, newCmd := range cmds {
@@ -370,14 +381,14 @@ func TestRunTriage_InvalidDir(t *testing.T) {
 }
 
 func TestRunRecv_InvalidByteSize(t *testing.T) {
-	err := runRecv(":3100", "/tmp", "invalid", "50GB", true, "", "", 100, true, "", "", nil, "")
+	err := runRecv(":3100", "/tmp", "invalid", "50GB", true, "", "", 100, true, "", "", nil, "", "")
 	if err == nil {
 		t.Error("expected error for invalid max-file size")
 	}
 }
 
 func TestRunRecv_InvalidDiskSize(t *testing.T) {
-	err := runRecv(":3100", "/tmp", "256MB", "invalid", true, "", "", 100, true, "", "", nil, "")
+	err := runRecv(":3100", "/tmp", "256MB", "invalid", true, "", "", 100, true, "", "", nil, "", "")
 	if err == nil {
 		t.Error("expected error for invalid max-disk size")
 	}
@@ -385,7 +396,7 @@ func TestRunRecv_InvalidDiskSize(t *testing.T) {
 
 func TestRunRecv_InvalidRedactPatterns(t *testing.T) {
 	dir := t.TempDir()
-	err := runRecv(":0", dir, "256MB", "50GB", true, "true", "/nonexistent/patterns.yaml", 100, true, "", "", nil, "")
+	err := runRecv(":0", dir, "256MB", "50GB", true, "true", "/nonexistent/patterns.yaml", 100, true, "", "", nil, "", "")
 	if err == nil {
 		t.Error("expected error for nonexistent redact patterns file")
 	}
@@ -393,7 +404,7 @@ func TestRunRecv_InvalidRedactPatterns(t *testing.T) {
 
 func TestRunRecv_MissingDir(t *testing.T) {
 	// --dir is required
-	err := runRecv(":0", "", "256MB", "50GB", true, "", "", 100, true, "", "", nil, "")
+	err := runRecv(":0", "", "256MB", "50GB", true, "", "", 100, true, "", "", nil, "", "")
 	// We check this in the command RunE, but runRecv itself creates the dir.
 	// Pass an empty dir — os.MkdirAll("") may fail on some systems.
 	// Just verify it doesn't panic.
@@ -402,7 +413,7 @@ func TestRunRecv_MissingDir(t *testing.T) {
 
 func TestRunRecv_InvalidRedactName(t *testing.T) {
 	dir := t.TempDir()
-	err := runRecv(":0", dir, "256MB", "50GB", true, "nonexistent_pattern_name", "", 100, true, "", "", nil, "")
+	err := runRecv(":0", dir, "256MB", "50GB", true, "nonexistent_pattern_name", "", 100, true, "", "", nil, "", "")
 	if err == nil {
 		t.Error("expected error for invalid redact pattern name")
 	}
