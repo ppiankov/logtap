@@ -4,6 +4,28 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [1.0.0] - 2026-02-17
+
+### Added
+
+- Cloud upload/download for captures to S3 and GCS (`upload`, `download` subcommands)
+- Webhook lifecycle notifications on capture start, rotate, and stop
+- HTML triage reports (`triage --html`)
+- Forwarder retry buffer with ring-buffer backlog and Prometheus metrics
+- Garbage collection command (`gc`) with `--max-age` and `--max-total` policies
+
+### Changed
+
+- S3 and GCS backends refactored with injectable interfaces for testability
+- README updated to reflect stable release status
+
+### Testing
+
+- Cloud package coverage: 25% -> 89.5% (mock-based S3 and GCS tests)
+- cmd/logtap coverage: 32.3% -> 56.2% (GC, version, expanded archive/cmd tests)
+- cmd/logtap-forwarder coverage: 62.5% -> 81.9% (flush, multi-container, retry tests)
+- 14 benchmarks across recv, archive, rotate packages
+
 ## [0.4.0] - 2026-02-16
 
 ### Added
