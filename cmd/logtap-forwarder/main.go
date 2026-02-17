@@ -8,21 +8,29 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strconv"
 	"syscall"
 	"time"
+
+	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 
 	"github.com/ppiankov/logtap/internal/forward"
 )
 
 const (
-	envTarget    = "LOGTAP_TARGET"
-	envSession   = "LOGTAP_SESSION"
-	envPodName   = "LOGTAP_POD_NAME"
-	envNamespace = "LOGTAP_NAMESPACE"
+	envTarget     = "LOGTAP_TARGET"
+	envSession    = "LOGTAP_SESSION"
+	envPodName    = "LOGTAP_POD_NAME"
+	envNamespace  = "LOGTAP_NAMESPACE"
+	envBufferSize = "LOGTAP_BUFFER_SIZE"
+	envRetryMax   = "LOGTAP_RETRY_MAX"
 
 	defaultHealthAddr    = ":9091"
 	defaultBatchSize     = 100
 	defaultFlushInterval = 500 * time.Millisecond
+	defaultBufferSize    = 1 << 20 // 1MB
+	defaultRetryMax      = 10
 )
 
 type Config struct {
@@ -31,6 +39,8 @@ type Config struct {
 	PodName    string
 	Namespace  string
 	HealthAddr string
+	BufferSize int
+	MaxRetries int
 }
 
 type logReader interface {
@@ -85,6 +95,22 @@ func loadConfigFromEnv(getenv func(string) string) (Config, error) {
 		PodName:    getenv(envPodName),
 		Namespace:  getenv(envNamespace),
 		HealthAddr: defaultHealthAddr,
+		BufferSize: defaultBufferSize,
+		MaxRetries: defaultRetryMax,
+	}
+	if v := getenv(envBufferSize); v != "" {
+		n, err := strconv.Atoi(v)
+		if err != nil {
+			return Config{}, fmt.Errorf("invalid %s: %w", envBufferSize, err)
+		}
+		cfg.BufferSize = n
+	}
+	if v := getenv(envRetryMax); v != "" {
+		n, err := strconv.Atoi(v)
+		if err != nil {
+			return Config{}, fmt.Errorf("invalid %s: %w", envRetryMax, err)
+		}
+		cfg.MaxRetries = n
 	}
 	if err := validateConfig(cfg); err != nil {
 		return Config{}, err
@@ -108,12 +134,32 @@ func validateConfig(cfg Config) error {
 	return nil
 }
 
+var (
+	retriesTotal = prometheus.NewCounter(prometheus.CounterOpts{
+		Name: "logtap_forwarder_retries_total",
+		Help: "Total number of push retry attempts.",
+	})
+	bufferUsage = prometheus.NewGauge(prometheus.GaugeOpts{
+		Name: "logtap_forwarder_buffer_usage_bytes",
+		Help: "Current retry buffer usage in bytes.",
+	})
+	dropsTotal = prometheus.NewCounter(prometheus.CounterOpts{
+		Name: "logtap_forwarder_drops_total",
+		Help: "Total number of batches dropped due to buffer overflow.",
+	})
+)
+
+func init() {
+	prometheus.MustRegister(retriesTotal, bufferUsage, dropsTotal)
+}
+
 func healthHandler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{"status":"ok"}`))
 	})
+	mux.Handle("GET /metrics", promhttp.Handler())
 	return mux
 }
 
@@ -167,6 +213,24 @@ func run(ctx context.Context, cfg Config, deps Dependencies) error {
 
 	pusher := deps.NewPusher(cfg.Target)
 
+	// apply defaults for zero-valued config
+	bufSize := cfg.BufferSize
+	if bufSize <= 0 {
+		bufSize = defaultBufferSize
+	}
+	maxRetries := cfg.MaxRetries
+	if maxRetries <= 0 {
+		maxRetries = defaultRetryMax
+	}
+
+	// configure retry and buffer
+	if p, ok := pusher.(*forward.Pusher); ok {
+		p.SetMaxRetries(maxRetries)
+		p.SetOnRetry(func() { retriesTotal.Inc() })
+	}
+
+	buf := forward.NewBuffer(bufSize)
+
 	logCh := make(chan forward.LogLine, 1024)
 
 	go func() {
@@ -200,10 +264,26 @@ func run(ctx context.Context, cfg Config, deps Dependencies) error {
 			if err == forward.ErrBufferExceeded {
 				_, _ = fmt.Fprintf(deps.LogWriter, "batch too large, dropping %d lines\n", len(batch))
 			} else if ctx.Err() == nil {
-				_, _ = fmt.Fprintf(deps.LogWriter, "push error: %v\n", err)
+				_, _ = fmt.Fprintf(deps.LogWriter, "push error, buffering %d lines: %v\n", len(batch), err)
+				saved := make([]forward.TimestampedLine, len(batch))
+				copy(saved, batch)
+				dropsBefore := buf.Drops()
+				buf.Add(forward.Batch{
+					Labels: labels,
+					Lines:  saved,
+					Size:   forward.EstimateBatchSize(labels, saved),
+				})
+				if buf.Drops() > dropsBefore {
+					dropsTotal.Add(float64(buf.Drops() - dropsBefore))
+				}
+				bufferUsage.Set(float64(buf.Size()))
 			}
 		}
 		batch = batch[:0]
+
+		// drain buffered batches
+		drainBuffer(ctx, buf, pusher, deps.LogWriter)
+		bufferUsage.Set(float64(buf.Size()))
 	}
 
 	for {
@@ -230,6 +310,29 @@ func run(ctx context.Context, cfg Config, deps Dependencies) error {
 			flush()
 			_, _ = fmt.Fprintln(deps.LogWriter, "logtap-forwarder stopped")
 			return nil
+		}
+	}
+}
+
+// drainBuffer attempts to re-push all buffered batches. On first failure,
+// remaining batches are re-added to the buffer for the next drain cycle.
+func drainBuffer(ctx context.Context, buf *forward.Buffer, pusher logPusher, log io.Writer) {
+	batches := buf.Drain()
+	for i, b := range batches {
+		if ctx.Err() != nil {
+			// context cancelled — re-buffer remaining
+			for _, remaining := range batches[i:] {
+				buf.Add(remaining)
+			}
+			return
+		}
+		if err := pusher.Push(ctx, b.Labels, b.Lines); err != nil {
+			// re-buffer this and all remaining batches
+			for _, remaining := range batches[i:] {
+				buf.Add(remaining)
+			}
+			_, _ = fmt.Fprintf(log, "drain retry failed, %d batches re-buffered: %v\n", len(batches)-i, err)
+			return
 		}
 	}
 }

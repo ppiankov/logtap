@@ -2030,7 +2030,9 @@ logtap triage ./capture --out ./triage --html
 
 ---
 
-### WO-49: Forwarder Reliability Improvements
+### WO-49: Forwarder Reliability Improvements [DONE]
+
+**Result:** Ring buffer (`internal/forward/buffer.go`) with FIFO eviction and drop counting. Configurable retry (SetMaxRetries, SetMaxBackoff) with backoff capped at 30s. Failed batches buffered and drained on next flush. Prometheus metrics: `logtap_forwarder_retries_total`, `logtap_forwarder_buffer_usage_bytes`, `logtap_forwarder_drops_total` on `/metrics` endpoint. Env vars: `LOGTAP_BUFFER_SIZE` (default 1MB), `LOGTAP_RETRY_MAX` (default 10). Forward coverage 90.1%.
 
 **Goal:** Add reconnection, buffering, and backoff to the forwarder sidecar.
 
