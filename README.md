@@ -122,6 +122,13 @@ logtap export ./capture --format csv --grep "error|timeout" --out errors.csv
 
 # Triage
 logtap triage ./capture --out ./triage --jobs 8
+
+# PII redaction — all built-in patterns (email, credit_card, jwt, bearer, ip_v4, ssn, phone)
+logtap recv --redact --dir ./capture
+# Specific patterns only
+logtap recv --redact=email,jwt --dir ./capture
+# Custom patterns from YAML
+logtap recv --redact --redact-patterns ./patterns.yaml --dir ./capture
 ```
 
 ### TUI keybindings

@@ -21,6 +21,7 @@ type RedactPattern struct {
 // Redactor holds active patterns and redacts matching content.
 type Redactor struct {
 	patterns []RedactPattern
+	onRedact func(pattern string) // optional callback for each redaction hit
 }
 
 var builtinPatterns = []RedactPattern{
@@ -101,18 +102,31 @@ func (r *Redactor) LoadCustomPatterns(path string) error {
 	return nil
 }
 
+// SetOnRedact sets a callback invoked for each redaction hit with the pattern name.
+func (r *Redactor) SetOnRedact(fn func(pattern string)) {
+	r.onRedact = fn
+}
+
 // Redact replaces all matching PII in msg with redaction markers.
 func (r *Redactor) Redact(msg string) string {
 	for _, p := range r.patterns {
 		if p.validate != nil {
+			name := p.Name
 			msg = p.re.ReplaceAllStringFunc(msg, func(match string) string {
 				if p.validate(match) {
+					if r.onRedact != nil {
+						r.onRedact(name)
+					}
 					return p.Replacement
 				}
 				return match
 			})
 		} else {
+			before := msg
 			msg = p.re.ReplaceAllString(msg, p.Replacement)
+			if msg != before && r.onRedact != nil {
+				r.onRedact(p.Name)
+			}
 		}
 	}
 	return msg
