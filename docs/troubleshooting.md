@@ -125,13 +125,20 @@ kubectl port-forward pod/logtap-receiver 9000:9000 --pod-running-timeout=0
 
 **Solution:**
 ```bash
-# Check what patterns are active
-logtap recv --redact --redact-show-patterns
+# Check what patterns were active in a capture
+cat ./capture/metadata.json | jq '.redaction'
 
-# Add custom patterns via config file (~/.config/logtap/config.yaml)
-# redact_patterns:
-#   - "SSN:\\s*\\d{3}-\\d{2}-\\d{4}"
-#   - "api_key=[A-Za-z0-9]{32}"
+# Built-in patterns: credit_card, email, jwt, bearer, ip_v4, ssn, phone
+# Enable specific patterns only
+logtap recv --redact=email,jwt --dir ./capture
+
+# Add custom patterns via YAML file
+logtap recv --redact --redact-patterns ./my-patterns.yaml --dir ./capture
+
+# Custom patterns YAML format:
+# - name: api_key
+#   pattern: "api_key=[A-Za-z0-9]{32}"
+#   replacement: "[REDACTED:api_key]"
 
 # Test a pattern against sample data
 echo 'user email: test@example.com' | grep -oP 'your-pattern-here'
