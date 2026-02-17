@@ -185,7 +185,7 @@ capture/
 
 ## Known limitations
 
-- **v0.x** — API and capture format may change before v1.0
+- **Capture format** — capture directory structure is stable; compression codec may evolve
 - **Sidecar resource overhead** — each sidecar adds 16Mi/25m requests by default
 - **No browser UI** — TUI only, terminal required
 - **No CRDs or operators** — imperative CLI workflow

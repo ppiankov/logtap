@@ -9,9 +9,16 @@ import (
 	"google.golang.org/api/iterator"
 )
 
+// gcsObjectIterator abstracts the GCS object iterator.
+type gcsObjectIterator interface {
+	Next() (*gstorage.ObjectAttrs, error)
+}
+
 type gcsBackend struct {
-	client *gstorage.Client
-	bucket string
+	bucket      string
+	newWriter   func(ctx context.Context, bucket, key string) io.WriteCloser
+	newReader   func(ctx context.Context, bucket, key string) (io.ReadCloser, error)
+	newIterator func(ctx context.Context, bucket, prefix string) gcsObjectIterator
 }
 
 func newGCSBackend(ctx context.Context, bucket string) (*gcsBackend, error) {
@@ -19,12 +26,22 @@ func newGCSBackend(ctx context.Context, bucket string) (*gcsBackend, error) {
 	if err != nil {
 		return nil, fmt.Errorf("create GCS client: %w", err)
 	}
-	return &gcsBackend{client: client, bucket: bucket}, nil
+	return &gcsBackend{
+		bucket: bucket,
+		newWriter: func(ctx context.Context, b, key string) io.WriteCloser {
+			return client.Bucket(b).Object(key).NewWriter(ctx)
+		},
+		newReader: func(ctx context.Context, b, key string) (io.ReadCloser, error) {
+			return client.Bucket(b).Object(key).NewReader(ctx)
+		},
+		newIterator: func(ctx context.Context, b, prefix string) gcsObjectIterator {
+			return client.Bucket(b).Objects(ctx, &gstorage.Query{Prefix: prefix})
+		},
+	}, nil
 }
 
-func (b *gcsBackend) Upload(ctx context.Context, key string, r io.Reader, size int64) error {
-	obj := b.client.Bucket(b.bucket).Object(key)
-	w := obj.NewWriter(ctx)
+func (b *gcsBackend) Upload(ctx context.Context, key string, r io.Reader, _ int64) error {
+	w := b.newWriter(ctx, b.bucket, key)
 	if _, err := io.Copy(w, r); err != nil {
 		_ = w.Close()
 		return fmt.Errorf("gcs upload %s: %w", key, err)
@@ -36,8 +53,7 @@ func (b *gcsBackend) Upload(ctx context.Context, key string, r io.Reader, size i
 }
 
 func (b *gcsBackend) Download(ctx context.Context, key string, w io.Writer) error {
-	obj := b.client.Bucket(b.bucket).Object(key)
-	r, err := obj.NewReader(ctx)
+	r, err := b.newReader(ctx, b.bucket, key)
 	if err != nil {
 		return fmt.Errorf("gcs get %s: %w", key, err)
 	}
@@ -55,7 +71,7 @@ func (b *gcsBackend) List(ctx context.Context, prefix string) ([]ObjectInfo, err
 	}
 
 	var objects []ObjectInfo
-	it := b.client.Bucket(b.bucket).Objects(ctx, &gstorage.Query{Prefix: listPrefix})
+	it := b.newIterator(ctx, b.bucket, listPrefix)
 	for {
 		attrs, err := it.Next()
 		if err == iterator.Done {
