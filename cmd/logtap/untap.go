@@ -196,6 +196,14 @@ func runUntap(opts untapOpts) error {
 
 	if !opts.dryRun {
 		fmt.Fprintf(os.Stderr, "\nRemoved %d session(s) from %d workload(s)\n", totalRemoved, len(workloads))
+
+		// Clean up RBAC if no tapped workloads remain
+		remaining, err := k8s.DiscoverTapped(ctx, c, sidecar.AnnotationTapped)
+		if err == nil && len(remaining) == 0 {
+			if err := k8s.DeleteForwarderRBAC(ctx, c, false); err != nil {
+				fmt.Fprintf(os.Stderr, "Warning: could not clean up forwarder RBAC: %v\n", err)
+			}
+		}
 	}
 
 	return nil

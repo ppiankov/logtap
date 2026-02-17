@@ -214,6 +214,19 @@ func runTap(opts tapOpts) error {
 		}
 	}
 
+	// Ensure RBAC for forwarder sidecar
+	saSet := make(map[string]bool)
+	for _, w := range workloads {
+		saSet[k8s.ServiceAccountName(w)] = true
+	}
+	serviceAccounts := make([]string, 0, len(saSet))
+	for sa := range saSet {
+		serviceAccounts = append(serviceAccounts, sa)
+	}
+	if err := k8s.EnsureForwarderRBAC(ctx, c, serviceAccounts, opts.dryRun); err != nil {
+		return fmt.Errorf("ensure forwarder RBAC: %w", err)
+	}
+
 	// Generate session ID
 	sessionID, err := sidecar.GenerateSessionID()
 	if err != nil {

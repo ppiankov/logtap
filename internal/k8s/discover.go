@@ -80,6 +80,24 @@ func workloadFromDaemonSet(d *appsv1.DaemonSet) *Workload {
 	}
 }
 
+// ServiceAccountName returns the service account used by the workload's pods.
+// Returns "default" if none is set.
+func ServiceAccountName(w *Workload) string {
+	var sa string
+	switch obj := w.Raw.(type) {
+	case *appsv1.Deployment:
+		sa = obj.Spec.Template.Spec.ServiceAccountName
+	case *appsv1.StatefulSet:
+		sa = obj.Spec.Template.Spec.ServiceAccountName
+	case *appsv1.DaemonSet:
+		sa = obj.Spec.Template.Spec.ServiceAccountName
+	}
+	if sa == "" {
+		return "default"
+	}
+	return sa
+}
+
 // DiscoverByName finds a single workload by kind and name.
 func DiscoverByName(ctx context.Context, c *Client, kind WorkloadKind, name string) (*Workload, error) {
 	switch kind {
