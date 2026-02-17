@@ -45,6 +45,13 @@ func Inject(ctx context.Context, c *k8s.Client, w *k8s.Workload, cfg SidecarConf
 		AnnotationTarget: cfg.Target,
 	}
 
+	// Add service mesh bypass annotations if Linkerd/Istio detected
+	if port := extractPort(cfg.Target); port != "" {
+		for k, v := range MeshBypassAnnotations(w.Annotations, port) {
+			annotations[k] = v
+		}
+	}
+
 	var container corev1.Container
 	var volumes []corev1.Volume
 
