@@ -63,6 +63,7 @@ func execute() error {
 	root.AddCommand(newUntapCmd())
 	root.AddCommand(newCheckCmd())
 	root.AddCommand(newStatusCmd())
+	root.AddCommand(newDeployCmd())
 	return root.Execute()
 }
 
