@@ -195,6 +195,62 @@ func TestDiscoverTapped(t *testing.T) {
 	}
 }
 
+func TestServiceAccountName_Deployment(t *testing.T) {
+	d := &appsv1.Deployment{
+		Spec: appsv1.DeploymentSpec{
+			Template: corev1.PodTemplateSpec{
+				Spec: corev1.PodSpec{ServiceAccountName: "my-sa"},
+			},
+		},
+	}
+	w := workloadFromDeployment(d)
+	if sa := ServiceAccountName(w); sa != "my-sa" {
+		t.Errorf("got %q, want %q", sa, "my-sa")
+	}
+}
+
+func TestServiceAccountName_Default(t *testing.T) {
+	d := &appsv1.Deployment{
+		Spec: appsv1.DeploymentSpec{
+			Template: corev1.PodTemplateSpec{
+				Spec: corev1.PodSpec{}, // no SA set
+			},
+		},
+	}
+	w := workloadFromDeployment(d)
+	if sa := ServiceAccountName(w); sa != "default" {
+		t.Errorf("got %q, want %q", sa, "default")
+	}
+}
+
+func TestServiceAccountName_StatefulSet(t *testing.T) {
+	s := &appsv1.StatefulSet{
+		Spec: appsv1.StatefulSetSpec{
+			Template: corev1.PodTemplateSpec{
+				Spec: corev1.PodSpec{ServiceAccountName: "sts-sa"},
+			},
+		},
+	}
+	w := workloadFromStatefulSet(s)
+	if sa := ServiceAccountName(w); sa != "sts-sa" {
+		t.Errorf("got %q, want %q", sa, "sts-sa")
+	}
+}
+
+func TestServiceAccountName_DaemonSet(t *testing.T) {
+	d := &appsv1.DaemonSet{
+		Spec: appsv1.DaemonSetSpec{
+			Template: corev1.PodTemplateSpec{
+				Spec: corev1.PodSpec{ServiceAccountName: "ds-sa"},
+			},
+		},
+	}
+	w := workloadFromDaemonSet(d)
+	if sa := ServiceAccountName(w); sa != "ds-sa" {
+		t.Errorf("got %q, want %q", sa, "ds-sa")
+	}
+}
+
 func TestDiscoverTapped_None(t *testing.T) {
 	deploy := &appsv1.Deployment{
 		ObjectMeta: metav1.ObjectMeta{Name: "worker", Namespace: "default"},
