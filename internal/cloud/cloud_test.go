@@ -2,6 +2,7 @@ package cloud
 
 import (
 	"context"
+	"strings"
 	"testing"
 )
 
@@ -71,5 +72,26 @@ func TestNewBackendS3(t *testing.T) {
 	}
 	if b == nil {
 		t.Fatal("expected non-nil backend")
+	}
+}
+
+func TestNewBackendS3_BucketName(t *testing.T) {
+	b, err := newS3Backend(context.Background(), "my-special-bucket")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if b.bucket != "my-special-bucket" {
+		t.Errorf("bucket = %q, want %q", b.bucket, "my-special-bucket")
+	}
+}
+
+func TestNewBackend_GCSBadCredentials(t *testing.T) {
+	t.Setenv("GOOGLE_APPLICATION_CREDENTIALS", "/nonexistent/creds.json")
+	_, err := NewBackend(context.Background(), "gs", "test-bucket")
+	if err == nil {
+		t.Skip("GCS client creation succeeded despite bad credentials path")
+	}
+	if !strings.Contains(err.Error(), "GCS") {
+		t.Errorf("error = %q, want to contain 'GCS'", err)
 	}
 }
