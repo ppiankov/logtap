@@ -292,6 +292,19 @@ func TestS3List_PrefixWithTrailingSlash(t *testing.T) {
 	}
 }
 
+func TestNewS3Backend_CancelledCtx(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	_, err := newS3Backend(ctx, "test-bucket")
+	// S3 LoadDefaultConfig may or may not fail with cancelled context.
+	if err == nil {
+		return // S3 config loading is lenient
+	}
+	if !strings.Contains(err.Error(), "AWS") {
+		t.Errorf("error = %q, want to contain 'AWS'", err)
+	}
+}
+
 func TestS3List_EmptyResult(t *testing.T) {
 	pag := &mockPaginator{
 		pages: []*s3.ListObjectsV2Output{

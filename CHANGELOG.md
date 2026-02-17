@@ -4,6 +4,35 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [1.0.4] - 2026-02-17
+
+### Fixed
+
+- Wire `logtap_redactions_total` Prometheus counter via onRedact callback
+- Fix troubleshooting docs referencing non-existent `--redact-show-patterns` flag
+- Add PII redaction examples to README Key flags section
+
+## [1.0.3] - 2026-02-17
+
+### Fixed
+
+- Build static binaries with `CGO_ENABLED=0` for GLIBC compatibility on older Linux
+
+## [1.0.2] - 2026-02-17
+
+### Added
+
+- Auto-detect Linkerd/Istio service mesh and add bypass annotations during `logtap tap`
+- `logtap deploy` subcommand for in-cluster receiver (Pod+Service)
+- Mesh annotation cleanup on last `logtap untap`
+
+## [1.0.1] - 2026-02-17
+
+### Fixed
+
+- Auto-create RBAC (Role+RoleBinding) for forwarder sidecar service account on tap
+- Update Homebrew formula to v1.0.1 with correct SHA256 checksums
+
 ## [1.0.0] - 2026-02-17
 
 ### Added

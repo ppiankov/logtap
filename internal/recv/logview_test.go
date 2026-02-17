@@ -130,6 +130,57 @@ func TestLogRingConcurrent(t *testing.T) {
 	}
 }
 
+func TestLogRingSnapshotFiltered(t *testing.T) {
+	r := NewLogRing(10)
+	r.Push(LogEntry{Labels: map[string]string{"app": "api"}, Message: "a"})
+	r.Push(LogEntry{Labels: map[string]string{"app": "web"}, Message: "b"})
+	r.Push(LogEntry{Labels: map[string]string{"app": "api"}, Message: "c"})
+	r.Push(LogEntry{Labels: map[string]string{"app": "worker"}, Message: "d"})
+
+	snap := r.SnapshotFiltered(func(e LogEntry) bool {
+		return e.Labels["app"] == "api"
+	})
+	if len(snap) != 2 {
+		t.Fatalf("len = %d, want 2", len(snap))
+	}
+	if snap[0].Message != "a" || snap[1].Message != "c" {
+		t.Errorf("got %v, want [a c]", msgs(snap))
+	}
+}
+
+func TestLogRingSnapshotFilteredEmpty(t *testing.T) {
+	r := NewLogRing(5)
+	r.Push(LogEntry{Labels: map[string]string{"app": "api"}, Message: "a"})
+
+	snap := r.SnapshotFiltered(func(e LogEntry) bool {
+		return e.Labels["app"] == "none"
+	})
+	if len(snap) != 0 {
+		t.Errorf("len = %d, want 0", len(snap))
+	}
+}
+
+func TestLogRingSnapshotFilteredAll(t *testing.T) {
+	r := NewLogRing(5)
+	r.Push(LogEntry{Labels: map[string]string{"app": "api"}, Message: "a"})
+	r.Push(LogEntry{Labels: map[string]string{"app": "api"}, Message: "b"})
+
+	snap := r.SnapshotFiltered(func(e LogEntry) bool {
+		return true
+	})
+	if len(snap) != 2 {
+		t.Fatalf("len = %d, want 2", len(snap))
+	}
+}
+
+func TestLogRingSnapshotFilteredEmptyRing(t *testing.T) {
+	r := NewLogRing(5)
+	snap := r.SnapshotFiltered(func(e LogEntry) bool { return true })
+	if snap != nil {
+		t.Errorf("expected nil, got %v", snap)
+	}
+}
+
 func msgs(entries []LogEntry) []string {
 	out := make([]string, len(entries))
 	for i, e := range entries {

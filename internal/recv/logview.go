@@ -58,6 +58,27 @@ func (r *LogRing) Snapshot() []LogEntry {
 	return out
 }
 
+// SnapshotFiltered returns a chronological copy of entries matching the predicate.
+func (r *LogRing) SnapshotFiltered(fn func(LogEntry) bool) []LogEntry {
+	r.mu.Lock()
+	n := r.count
+	if n == 0 {
+		r.mu.Unlock()
+		return nil
+	}
+
+	var out []LogEntry
+	start := (r.head - n + r.cap) % r.cap
+	for i := 0; i < n; i++ {
+		entry := r.buf[(start+i)%r.cap]
+		if fn(entry) {
+			out = append(out, entry)
+		}
+	}
+	r.mu.Unlock()
+	return out
+}
+
 // Version returns a monotonic counter that increments on every Push.
 func (r *LogRing) Version() int {
 	r.mu.Lock()
