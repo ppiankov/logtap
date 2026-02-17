@@ -50,8 +50,11 @@ func Remove(ctx context.Context, c *k8s.Client, w *k8s.Workload, sessionID strin
 	}
 
 	if newTapped == "" {
-		// Last session — delete all logtap annotations
-		rs.DeleteAnnotations = []string{AnnotationTapped, AnnotationTarget, AnnotationForwarder}
+		// Last session — delete all logtap annotations + mesh bypass annotations
+		rs.DeleteAnnotations = append(
+			[]string{AnnotationTapped, AnnotationTarget, AnnotationForwarder},
+			MeshBypassAnnotationKeys()...,
+		)
 	} else {
 		// Other sessions remain — update tapped annotation
 		rs.SetAnnotations = map[string]string{AnnotationTapped: newTapped}
@@ -86,8 +89,11 @@ func RemoveAll(ctx context.Context, c *k8s.Client, w *k8s.Workload, dryRun bool)
 	}
 
 	rs := k8s.RemovePatchSpec{
-		ContainerNames:    containerNames,
-		DeleteAnnotations: []string{AnnotationTapped, AnnotationTarget, AnnotationForwarder},
+		ContainerNames: containerNames,
+		DeleteAnnotations: append(
+			[]string{AnnotationTapped, AnnotationTarget, AnnotationForwarder},
+			MeshBypassAnnotationKeys()...,
+		),
 	}
 
 	if isFluentBit {
