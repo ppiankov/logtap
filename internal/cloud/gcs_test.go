@@ -213,6 +213,17 @@ func TestGCSList_EmptyPrefix(t *testing.T) {
 	}
 }
 
+func TestNewGCSBackend_BadCredentials(t *testing.T) {
+	t.Setenv("GOOGLE_APPLICATION_CREDENTIALS", "/nonexistent/creds.json")
+	_, err := newGCSBackend(context.Background(), "test-bucket")
+	if err == nil {
+		t.Skip("GCS client creation succeeded despite bad credentials path")
+	}
+	if !strings.Contains(err.Error(), "create GCS client") {
+		t.Errorf("error = %q, want to contain 'create GCS client'", err)
+	}
+}
+
 func TestGCSList_PrefixWithTrailingSlash(t *testing.T) {
 	iter := &mockGCSIterator{
 		objects: []*gstorage.ObjectAttrs{

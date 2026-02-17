@@ -368,6 +368,136 @@ func TestFormatBytes(t *testing.T) {
 	}
 }
 
+func TestTUILabelFilterMode(t *testing.T) {
+	m := newTestModel()
+
+	m = sendKey(m, "l")
+	if !m.filtering {
+		t.Error("expected filtering after 'l'")
+	}
+
+	// type filter
+	for _, c := range "app=api" {
+		m = sendKey(m, string(c))
+	}
+	if m.filterInput != "app=api" {
+		t.Errorf("filterInput = %q, want %q", m.filterInput, "app=api")
+	}
+
+	// enter applies
+	m = sendSpecialKey(m, tea.KeyEnter)
+	if m.filtering {
+		t.Error("expected not filtering after enter")
+	}
+	if !m.filterActive {
+		t.Error("expected filterActive after enter")
+	}
+	if m.filterKey != "app" || m.filterVal != "api" {
+		t.Errorf("filter = %s=%s, want app=api", m.filterKey, m.filterVal)
+	}
+}
+
+func TestTUILabelFilterEscape(t *testing.T) {
+	m := newTestModel()
+	m = sendKey(m, "l")
+	m = sendKey(m, "a")
+
+	m = sendSpecialKey(m, tea.KeyEscape)
+	if m.filtering {
+		t.Error("expected not filtering after Esc")
+	}
+	if m.filterActive {
+		t.Error("expected filter cleared after Esc")
+	}
+}
+
+func TestTUILabelFilterClearOnEmpty(t *testing.T) {
+	m := newTestModel()
+
+	// set a filter first
+	m = sendKey(m, "l")
+	for _, c := range "app=api" {
+		m = sendKey(m, string(c))
+	}
+	m = sendSpecialKey(m, tea.KeyEnter)
+	if !m.filterActive {
+		t.Fatal("expected filter active")
+	}
+
+	// now enter empty filter to clear
+	m = sendKey(m, "l")
+	m = sendSpecialKey(m, tea.KeyEnter)
+	if m.filterActive {
+		t.Error("expected filter cleared on empty input")
+	}
+}
+
+func TestTUILabelFilterFiltersLines(t *testing.T) {
+	m := newTestModel()
+
+	// push mixed entries
+	m.ring.Push(LogEntry{
+		Timestamp: time.Date(2024, 1, 15, 10, 0, 0, 0, time.UTC),
+		Labels:    map[string]string{"app": "api"},
+		Message:   "api line",
+	})
+	m.ring.Push(LogEntry{
+		Timestamp: time.Date(2024, 1, 15, 10, 0, 1, 0, time.UTC),
+		Labels:    map[string]string{"app": "web"},
+		Message:   "web line",
+	})
+	m.ring.Push(LogEntry{
+		Timestamp: time.Date(2024, 1, 15, 10, 0, 2, 0, time.UTC),
+		Labels:    map[string]string{"app": "api"},
+		Message:   "api line 2",
+	})
+	m = applyTick(m)
+	if len(m.lines) != 3 {
+		t.Fatalf("unfiltered lines = %d, want 3", len(m.lines))
+	}
+
+	// apply filter
+	m = sendKey(m, "l")
+	for _, c := range "app=api" {
+		m = sendKey(m, string(c))
+	}
+	m = sendSpecialKey(m, tea.KeyEnter)
+	m = applyTick(m) // force re-read
+
+	if len(m.lines) != 2 {
+		t.Errorf("filtered lines = %d, want 2", len(m.lines))
+	}
+}
+
+func TestTUILabelFilterBadge(t *testing.T) {
+	m := newTestModel()
+	feedLines(&m, 5)
+
+	// set filter
+	m = sendKey(m, "l")
+	for _, c := range "app=api" {
+		m = sendKey(m, string(c))
+	}
+	m = sendSpecialKey(m, tea.KeyEnter)
+	m = applyTick(m)
+
+	view := m.View()
+	if !containsStr(view, "FILTER: app=api") {
+		t.Error("expected filter badge in view")
+	}
+}
+
+func TestTUILabelFilterBackspace(t *testing.T) {
+	m := newTestModel()
+	m = sendKey(m, "l")
+	m = sendKey(m, "a")
+	m = sendKey(m, "p")
+	m = sendSpecialKey(m, tea.KeyBackspace)
+	if m.filterInput != "a" {
+		t.Errorf("filterInput = %q after backspace, want %q", m.filterInput, "a")
+	}
+}
+
 func containsStr(s, sub string) bool {
 	return len(s) >= len(sub) && searchStr(s, sub)
 }

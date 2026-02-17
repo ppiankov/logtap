@@ -107,9 +107,10 @@ logtap recv --tls-cert cert.pem --tls-key key.pem
 logtap recv --in-cluster --image ghcr.io/ppiankov/logtap-forwarder:latest
 
 # Sidecar injection
-logtap tap --deployment api-gateway
-logtap tap --namespace payments --allow-prod
-logtap tap --selector app=worker
+logtap tap --deployment api-gateway --target host:3100
+logtap tap --namespace payments --allow-prod --target host:3100
+logtap tap --selector app=worker --target host:3100             # tap by label
+logtap tap --namespace payments --all --force --target host:3100 # tap all workloads
 logtap untap --deployment api-gateway
 
 # Replay with filters
