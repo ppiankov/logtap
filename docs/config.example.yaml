@@ -1,0 +1,55 @@
+# logtap configuration
+#
+# Place this file at:
+#   ~/.logtap/config.yaml     (user defaults)
+#   .logtap.yaml              (project override, CWD)
+#
+# CWD config overrides home config. Environment variables (LOGTAP_*)
+# override both. See below for env var names.
+
+# Receiver settings (logtap recv)
+recv:
+  # Listen address (env: LOGTAP_RECV_ADDR)
+  addr: ":9000"
+
+  # Capture output directory (env: LOGTAP_RECV_DIR)
+  dir: "./capture"
+
+  # Maximum total disk usage (env: LOGTAP_RECV_DISK_CAP)
+  disk_cap: "50GB"
+
+  # PII redaction: "true", "false", or path to custom patterns file
+  # (env: LOGTAP_RECV_REDACT)
+  redact: "false"
+
+  # Path to custom redaction patterns YAML file
+  # (env: LOGTAP_RECV_REDACT_PATTERNS)
+  # redact_patterns: "/path/to/patterns.yaml"
+
+  # Webhook URLs for lifecycle notifications (env: LOGTAP_RECV_WEBHOOKS, comma-separated)
+  # webhooks:
+  #   - "https://hooks.slack.com/services/T.../B.../..."
+  #   - "https://example.com/webhook"
+
+  # Webhook event filter (env: LOGTAP_RECV_WEBHOOK_EVENTS)
+  # Comma-separated: start, stop, rotation, error, disk-warning
+  # webhook_events: "start,stop,error"
+
+# Tap settings (logtap tap)
+tap:
+  # Default namespace (env: LOGTAP_TAP_NAMESPACE)
+  namespace: "default"
+
+  # Sidecar CPU request (env: LOGTAP_TAP_CPU)
+  cpu: "25m"
+
+  # Sidecar memory request (env: LOGTAP_TAP_MEMORY)
+  memory: "16Mi"
+
+# Global defaults
+defaults:
+  # Kubernetes operation timeout (env: LOGTAP_TIMEOUT)
+  timeout: "30s"
+
+  # Verbose output (env: LOGTAP_VERBOSE)
+  verbose: false
