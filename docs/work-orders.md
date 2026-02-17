@@ -2125,3 +2125,248 @@ logtap deploy --namespace my-team --cleanup
 - `logtap deploy --dry-run` shows resources without creating
 - Forwarder sidecar can reach in-cluster receiver (no network issues)
 - Tests pass with -race, lint clean
+
+---
+
+## Phase 8: Security Hardening
+
+### WO-61: Add HTTP server timeouts to prevent Slowloris
+
+**Severity:** HIGH
+
+**Goal:** Prevent resource exhaustion from slow or malicious connections by adding read, write, and idle timeouts to all HTTP servers.
+
+**Problem:** Both the receiver (`internal/recv/server.go:64`) and forwarder health server (`cmd/logtap-forwarder/main.go:175`) create `http.Server` with no timeouts. A connection that never completes its request holds a goroutine indefinitely. While `MaxBytesReader` limits body size on push endpoints, `/metrics` and `/healthz` have no body limits.
+
+**Files:**
+- `internal/recv/server.go` — add `ReadTimeout: 30s`, `WriteTimeout: 30s`, `IdleTimeout: 120s` to `http.Server`
+- `cmd/logtap-forwarder/main.go` — same timeouts on health server
+
+**Tests:**
+- Verify existing tests still pass (timeouts should not affect normal operation)
+- Add test that server rejects slow clients (optional, hard to test deterministically)
+
+**Acceptance:**
+- Both HTTP servers have explicit timeouts
+- `make test` passes, `make lint` clean
+
+---
+
+### WO-62: Path traversal guard in cloud download
+
+**Severity:** HIGH
+
+**Goal:** Prevent path traversal when downloading objects from S3/GCS where server-controlled object keys could escape the output directory.
+
+**Problem:** `cmd/logtap/download.go:92-93` derives `localPath` from cloud object keys without checking for `..` components or absolute paths. A compromised bucket could return keys like `../../.ssh/authorized_keys`. The `archive/snapshot.go` unpack code already has this guard, but `download.go` does not.
+
+**Files:**
+- `cmd/logtap/download.go` — add path traversal check after `stripPrefix`:
+  ```go
+  clean := filepath.Clean(filepath.FromSlash(relPath))
+  if strings.HasPrefix(clean, "..") || filepath.IsAbs(clean) {
+      return fmt.Errorf("unsafe object key: %s", obj.Key)
+  }
+  ```
+
+**Tests:**
+- `cmd/logtap/download_test.go` — add `TestDownload_PathTraversal` with keys containing `../`
+
+**Acceptance:**
+- Downloads with `..` in object keys are rejected with error
+- Normal downloads unaffected
+- Tests pass with -race, lint clean
+
+---
+
+### WO-63: Validate --target flag to prevent Fluent Bit config injection
+
+**Severity:** MEDIUM
+
+**Goal:** Prevent injection of arbitrary Fluent Bit configuration stanzas via the `--target` flag.
+
+**Problem:** `internal/sidecar/fluentbit.go:30-53` uses `fmt.Sprintf` to interpolate `target` into a Fluent Bit config. A target containing newlines (e.g., `host\n[OUTPUT]\n    Name null`) would inject arbitrary config into the ConfigMap deployed to the cluster.
+
+**Files:**
+- `internal/sidecar/fluentbit.go` — add target validation:
+  ```go
+  var validTarget = regexp.MustCompile(`^[a-zA-Z0-9.\-]+(:[0-9]+)?$`)
+  ```
+- `cmd/logtap/tap.go` — validate `--target` before passing to sidecar
+
+**Tests:**
+- `internal/sidecar/fluentbit_test.go` — add `TestFluentBitConfig_InvalidTarget` with newline injection
+- `cmd/logtap/tap_test.go` — add test for rejected target values
+
+**Acceptance:**
+- Targets with newlines, spaces, or special chars are rejected
+- Valid hostname:port targets work as before
+- Tests pass with -race, lint clean
+
+---
+
+### WO-64: Add audit logging to /logtap/raw endpoint
+
+**Severity:** MEDIUM
+
+**Goal:** Ensure the `/logtap/raw` push endpoint has the same audit trail as `/loki/api/v1/push`.
+
+**Problem:** `internal/recv/server.go:175-228` — `handleRawPush` handles the same data path as `handleLokiPush` but performs no audit logging. Writes through `/logtap/raw` are invisible in `audit.jsonl`.
+
+**Files:**
+- `internal/recv/server.go` — add `s.audit.Log(AuditEntry{...})` at the end of `handleRawPush`, matching `handleLokiPush` pattern
+
+**Tests:**
+- `internal/recv/server_test.go` — add test that verifies audit entry is written after raw push
+
+**Acceptance:**
+- `/logtap/raw` writes produce audit entries with remote IP, line count, byte count
+- Tests pass with -race, lint clean
+
+---
+
+### WO-65: Add TLS support to forwarder push path
+
+**Severity:** MEDIUM
+
+**Goal:** Allow the forwarder sidecar to push logs over HTTPS instead of always using plain HTTP.
+
+**Problem:** `internal/forward/push.go:100` hardcodes `http://` for the push URL. Log data traverses the cluster network unencrypted. Similarly, `cmd/logtap/tap.go:314` and `cmd/logtap/check.go` use `http://` for health checks.
+
+**Files:**
+- `internal/forward/push.go` — detect `https://` in target, use appropriate scheme
+- `cmd/logtap-forwarder/main.go` — add `--tls-skip-verify` flag for self-signed certs
+- `cmd/logtap/tap.go` — use scheme from target URL for connectivity check
+- `cmd/logtap/check.go` — same
+
+**Tests:**
+- `internal/forward/push_test.go` — test HTTPS target URL construction
+- Verify existing HTTP targets still work
+
+**Acceptance:**
+- Targets prefixed with `https://` use TLS
+- Plain targets default to HTTP (backward compatible)
+- Tests pass with -race, lint clean
+
+---
+
+### WO-66: Cap --buffer flag to prevent memory exhaustion
+
+**Severity:** LOW
+
+**Goal:** Prevent accidental or malicious memory exhaustion from an excessively large `--buffer` value.
+
+**Problem:** `cmd/logtap/recv.go:91` — `--buffer` is passed directly to `make(chan LogEntry, bufSize)` with no upper bound. A value like `--buffer 2000000000` allocates billions of `LogEntry` structs, crashing the process.
+
+**Files:**
+- `cmd/logtap/recv.go` — add validation in `runRecv`:
+  ```go
+  const maxBufSize = 1 << 20
+  if bufSize > maxBufSize {
+      return fmt.Errorf("--buffer %d exceeds maximum of %d", bufSize, maxBufSize)
+  }
+  ```
+
+**Tests:**
+- `cmd/logtap/cmd_test.go` — add `TestRunRecv_InvalidBufferSize`
+
+**Acceptance:**
+- Buffer sizes above 1M are rejected with clear error
+- Default (65536) and reasonable values work as before
+- Tests pass with -race, lint clean
+
+---
+
+### WO-67: Increase session ID entropy from 16 to 64 bits
+
+**Severity:** LOW
+
+**Goal:** Reduce collision probability for concurrent sessions in shared clusters.
+
+**Problem:** `internal/sidecar/session.go:10-16` uses only 2 random bytes (65,536 possible values). With many concurrent sessions, collision probability is ~1% after ~256 sessions (birthday bound). Collisions cause configmap overwrites or injection failures.
+
+**Files:**
+- `internal/sidecar/session.go` — change to 8 bytes:
+  ```go
+  b := make([]byte, 8)
+  ```
+  Format: `lt-<16 hex chars>`
+
+**Tests:**
+- `internal/sidecar/session_test.go` — update length assertion, verify uniqueness across 1000 generations
+
+**Acceptance:**
+- Session IDs are 20 chars (`lt-` + 16 hex)
+- No collisions in 1000 generations
+- Existing sessions with old format still work (format is forward-compatible)
+- Tests pass with -race, lint clean
+
+---
+
+### WO-68: Use restrictive file permissions for capture data
+
+**Severity:** LOW
+
+**Goal:** Prevent other local users from reading capture data, audit logs, and metadata.
+
+**Problem:** `audit.go:30`, `metadata.go:35`, and `rotator.go:285` all use `0644` permissions. In multi-user environments, capture data (which may contain PII even with opt-in redaction) and audit logs (containing client IPs) are world-readable.
+
+**Files:**
+- `internal/recv/audit.go` — change `0o644` to `0o600`
+- `internal/recv/metadata.go` — change `0o644` to `0o600`
+- `internal/rotate/rotator.go` — change `0o644` to `0o640`
+
+**Tests:**
+- `internal/recv/audit_test.go` — verify file permissions after write
+- `internal/rotate/rotator_test.go` — verify file permissions after rotation
+
+**Acceptance:**
+- Audit and metadata files are owner-only (0600)
+- Rotated data files are owner+group (0640)
+- Tests pass with -race, lint clean
+
+---
+
+### WO-69: Add safety comment to template.HTML bypass in triage SVG
+
+**Severity:** LOW
+
+**Goal:** Document the security invariant that the triage SVG must never include user-controlled strings.
+
+**Problem:** `internal/archive/triage_html.go:99` uses `template.HTML()` to inject SVG, disabling Go's auto-escaping. Currently safe (only numeric data), but if label values from `LogEntry.Labels` are ever added to the SVG, it becomes an XSS vector.
+
+**Files:**
+- `internal/archive/triage_html.go` — add safety comment above `template.HTML` cast
+- `internal/archive/triage_html.go` — add `buildTimelineSVG` audit: verify only `%d`, `%f`, `%.1f` format verbs are used (no `%s` with label data)
+
+**Tests:**
+- No new tests needed — this is a documentation/audit WO
+
+**Acceptance:**
+- Comment documents the invariant
+- Code audit confirms no user strings in SVG
+- Lint clean
+
+---
+
+### WO-70: Default --listen to localhost-only binding
+
+**Severity:** INFO
+
+**Goal:** Reduce accidental network exposure when running the receiver locally.
+
+**Problem:** `cmd/logtap/recv.go:84` defaults `--listen` to `:3100`, which binds to all interfaces including external ones. On developer workstations, this exposes the unauthenticated receiver to the local network.
+
+**Files:**
+- `cmd/logtap/recv.go` — change default from `:3100` to `127.0.0.1:3100`
+- `docs/troubleshooting.md` — add note about using `--listen :3100` for network-accessible mode
+- `README.md` — update examples if they assume `:3100` binding
+
+**Tests:**
+- `cmd/logtap/cmd_test.go` — update flag default assertion
+
+**Acceptance:**
+- Local-only binding by default
+- `--listen :3100` or `--listen 0.0.0.0:3100` for explicit all-interfaces binding
+- In-cluster/headless mode unaffected (uses `--listen :3100` explicitly)
+- Tests pass with -race, lint clean
