@@ -2058,7 +2058,7 @@ If the receiver is temporarily unreachable, the forwarder drops all logs immedia
 
 ---
 
-### WO-50: v1.0 Release Preparation
+### WO-50: v1.0 Release Preparation [DONE]
 
 **Goal:** Final polish for v1.0 release.
 
