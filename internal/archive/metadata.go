@@ -2,6 +2,7 @@ package archive
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"time"
@@ -29,11 +30,11 @@ func ReadMetadata(dir string) (*Metadata, error) {
 	path := filepath.Join(dir, "metadata.json")
 	data, err := os.ReadFile(path)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("read metadata: %w", err)
 	}
 	var meta Metadata
 	if err := json.Unmarshal(data, &meta); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("unmarshal metadata: %w", err)
 	}
 	return &meta, nil
 }
@@ -43,7 +44,7 @@ func WriteMetadata(dir string, meta *Metadata) error {
 	path := filepath.Join(dir, "metadata.json")
 	data, err := json.MarshalIndent(meta, "", "  ")
 	if err != nil {
-		return err
+		return fmt.Errorf("marshal metadata: %w", err)
 	}
 	return os.WriteFile(path, data, 0644)
 }
