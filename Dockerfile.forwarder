@@ -6,6 +6,5 @@ COPY . .
 RUN CGO_ENABLED=0 go build -ldflags="-s -w" -o /logtap-forwarder ./cmd/logtap-forwarder
 
 FROM scratch
-COPY --from=build /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/
 COPY --from=build /logtap-forwarder /logtap-forwarder
 ENTRYPOINT ["/logtap-forwarder"]
