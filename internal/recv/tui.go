@@ -308,6 +308,13 @@ func (m *TUIModel) updateSearchMatches() {
 	for i, entry := range m.lines {
 		if m.searchRegex.MatchString(entry.Message) {
 			m.matches = append(m.matches, i)
+			continue
+		}
+		for _, v := range entry.Labels {
+			if m.searchRegex.MatchString(v) {
+				m.matches = append(m.matches, i)
+				break
+			}
 		}
 	}
 }
