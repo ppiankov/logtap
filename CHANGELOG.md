@@ -8,7 +8,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
-- TUI status bar badge colors (FOLLOW, SEARCH, FILTER) now render reliably via explicit ANSI256 profile
+- Replay TUI (`open`) search now matches label values, not just message content
+- Replay TUI status bar badge colors render reliably via explicit ANSI256 profile
+- `open` shows correct total line count for captures with orphan files (no index)
 - `grep` detects reversed arguments and suggests correct usage
 
 ## [1.0.6] - 2026-02-18

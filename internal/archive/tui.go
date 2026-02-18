@@ -8,6 +8,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/muesli/termenv"
 
 	"github.com/ppiankov/logtap/internal/recv"
 )
@@ -56,6 +57,8 @@ type ReplayModel struct {
 
 // NewReplayModel creates a replay TUI model.
 func NewReplayModel(feeder *Feeder, ring *recv.LogRing, meta *recv.Metadata, dir string, totalLines int64) ReplayModel {
+	lipgloss.SetColorProfile(termenv.ANSI256)
+
 	return ReplayModel{
 		feeder:     feeder,
 		ring:       ring,
@@ -249,6 +252,13 @@ func (m *ReplayModel) updateSearchMatches() {
 	for i, entry := range m.lines {
 		if m.searchRegex.MatchString(entry.Message) {
 			m.matches = append(m.matches, i)
+			continue
+		}
+		for _, v := range entry.Labels {
+			if m.searchRegex.MatchString(v) {
+				m.matches = append(m.matches, i)
+				break
+			}
 		}
 	}
 }
