@@ -319,6 +319,38 @@ func TestMatchEntryCombined(t *testing.T) {
 	}
 }
 
+func TestMatchEntryGrepLabels(t *testing.T) {
+	entry := recv.LogEntry{
+		Timestamp: time.Now(),
+		Labels:    map[string]string{"container": "gui-api", "namespace": "payments", "pod": "gui-api-7f8b9d"},
+		Message:   "request processed successfully",
+	}
+
+	tests := []struct {
+		name    string
+		pattern string
+		want    bool
+	}{
+		{"match label value", "gui-api", true},
+		{"match namespace", "payments", true},
+		{"match pod prefix", "gui-api-7f8b9", true},
+		{"match message", "processed", true},
+		{"no match anywhere", "nonexistent", false},
+		{"partial label match", "gui", true},
+		{"regex across label", `gui-api-\w+`, true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			f := &Filter{Grep: regexp.MustCompile(tt.pattern)}
+			got := f.MatchEntry(entry)
+			if got != tt.want {
+				t.Errorf("MatchEntry() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
 func TestMatchEntryNilFilter(t *testing.T) {
 	var f *Filter
 	entry := recv.LogEntry{Message: "anything"}
