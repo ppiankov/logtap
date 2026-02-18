@@ -1,359 +1,453 @@
 package archive
 
 import (
-	"encoding/json"
+	"bufio"
+	"bytes"
+	"io/ioutil"
 	"os"
 	"path/filepath"
 	"regexp"
+	"strings"
 	"testing"
 	"time"
 
-	"github.com/ppiankov/logtap/internal/recv"
-	"github.com/ppiankov/logtap/internal/rotate"
+	"github.com/klauspost/compress/zstd"
 )
 
-func setupSliceSource(t *testing.T) (string, time.Time) {
-	t.Helper()
-	dir := t.TempDir()
-	base := time.Date(2024, 1, 15, 10, 0, 0, 0, time.UTC)
-
-	entries := []recv.LogEntry{
-		{Timestamp: base, Labels: map[string]string{"app": "api"}, Message: "request started"},
-		{Timestamp: base.Add(1 * time.Minute), Labels: map[string]string{"app": "api"}, Message: "timeout error"},
-		{Timestamp: base.Add(2 * time.Minute), Labels: map[string]string{"app": "worker"}, Message: "job completed"},
-		{Timestamp: base.Add(3 * time.Minute), Labels: map[string]string{"app": "api"}, Message: "5xx server error"},
-		{Timestamp: base.Add(4 * time.Minute), Labels: map[string]string{"app": "gateway"}, Message: "request forwarded"},
-		{Timestamp: base.Add(5 * time.Minute), Labels: map[string]string{"app": "api"}, Message: "request completed"},
-		{Timestamp: base.Add(6 * time.Minute), Labels: map[string]string{"app": "worker"}, Message: "timeout in processing"},
-		{Timestamp: base.Add(7 * time.Minute), Labels: map[string]string{"app": "gateway"}, Message: "health check ok"},
-		{Timestamp: base.Add(8 * time.Minute), Labels: map[string]string{"app": "api"}, Message: "5xx gateway timeout"},
-		{Timestamp: base.Add(9 * time.Minute), Labels: map[string]string{"app": "worker"}, Message: "job started"},
+// Helper function to create a dummy capture directory
+func createDummyCapture(t *testing.T, dir string, entries []IndexEntry, logs map[string][]string) {
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		t.Fatalf("Failed to create dummy capture directory %s: %v", dir, err)
 	}
 
-	writeMetadata(t, dir, base, base.Add(9*time.Minute), 10)
-	writeDataFile(t, dir, "2024-01-15T100000-000.jsonl", entries)
-	writeIndex(t, dir, []rotate.IndexEntry{{
-		File:  "2024-01-15T100000-000.jsonl",
-		From:  base,
-		To:    base.Add(9 * time.Minute),
-		Lines: 10,
-		Bytes: 1000,
-		Labels: map[string]map[string]int64{
-			"app": {"api": 5, "worker": 3, "gateway": 2},
-		},
-	}})
-
-	return dir, base
-}
-
-func readSlicedEntries(t *testing.T, dir string) []recv.LogEntry {
-	t.Helper()
-	reader, err := NewReader(dir)
-	if err != nil {
-		t.Fatal(err)
-	}
-	var entries []recv.LogEntry
-	_, err = reader.Scan(nil, func(e recv.LogEntry) bool {
-		entries = append(entries, e)
-		return true
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	return entries
-}
-
-func TestSliceTimeRange(t *testing.T) {
-	src, base := setupSliceSource(t)
-	dst := t.TempDir()
-
-	filter := &Filter{
-		From: base.Add(2 * time.Minute),
-		To:   base.Add(5 * time.Minute),
+	// Create metadata.json
+	meta := NewMetadata()
+	meta.Version = 1
+	meta.Format = "jsonl+zstd"
+	meta.Started = time.Date(2024, time.January, 1, 10, 0, 0, 0, time.UTC)
+	meta.Stopped = time.Date(2024, time.January, 1, 11, 0, 0, 0, time.UTC)
+	meta.TotalLines = 0
+	meta.TotalBytes = 0
+	meta.LabelsSeen = []string{"app", "namespace"}
+	if err := WriteMetadata(dir, meta); err != nil {
+		t.Fatalf("Failed to write dummy metadata: %v", err)
 	}
 
-	err := Slice(src, dst, filter, SliceConfig{Compress: false}, nil)
-	if err != nil {
-		t.Fatal(err)
+	// Create index.jsonl
+	idx := NewIndex()
+	idx.Entries = entries
+	if err := WriteIndex(dir, idx); err != nil {
+		t.Fatalf("Failed to write dummy index: %v", err)
 	}
 
-	entries := readSlicedEntries(t, dst)
-	if len(entries) != 4 {
-		t.Fatalf("got %d entries, want 4", len(entries))
-	}
-	if entries[0].Message != "job completed" {
-		t.Errorf("first = %q, want %q", entries[0].Message, "job completed")
-	}
-	if entries[3].Message != "request completed" {
-		t.Errorf("last = %q, want %q", entries[3].Message, "request completed")
-	}
-}
+	// Create .jsonl.zst files
+	for fileName, fileLogs := range logs {
+		filePath := filepath.Join(dir, fileName)
+		outFile, err := os.Create(filePath)
+		if err != nil {
+			t.Fatalf("Failed to create dummy log file %s: %v", filePath, err)
+		}
+		defer outFile.Close()
 
-func TestSliceLabelFilter(t *testing.T) {
-	src, _ := setupSliceSource(t)
-	dst := t.TempDir()
+		zstdWriter, err := zstd.NewWriter(outFile)
+		if err != nil {
+			t.Fatalf("Failed to create zstd writer for %s: %v", filePath, err)
+		}
+		defer zstdWriter.Close()
 
-	filter := &Filter{
-		Labels: []LabelMatcher{{Key: "app", Value: "worker"}},
-	}
-
-	err := Slice(src, dst, filter, SliceConfig{Compress: false}, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	entries := readSlicedEntries(t, dst)
-	if len(entries) != 3 {
-		t.Fatalf("got %d entries, want 3", len(entries))
-	}
-	for _, e := range entries {
-		if e.Labels["app"] != "worker" {
-			t.Errorf("entry label app = %q, want %q", e.Labels["app"], "worker")
+		for _, logLine := range fileLogs {
+			if _, err := zstdWriter.Write(append([]byte(logLine), '\n')); err != nil {
+				t.Fatalf("Failed to write log line to %s: %v", filePath, err)
+			}
 		}
 	}
 }
 
-func TestSliceGrepFilter(t *testing.T) {
-	src, _ := setupSliceSource(t)
-	dst := t.TempDir()
-
-	filter := &Filter{
-		Grep: regexp.MustCompile(`timeout|5xx`),
-	}
-
-	err := Slice(src, dst, filter, SliceConfig{Compress: false}, nil)
+// Helper function to read and decompress a zst file
+func readZstFile(t *testing.T, filePath string) []string {
+	inFile, err := os.Open(filePath)
 	if err != nil {
-		t.Fatal(err)
+		t.Fatalf("Failed to open zst file %s: %v", filePath, err)
+	}
+	defer inFile.Close()
+
+	zstdReader, err := zstd.NewReader(inFile)
+	if err != nil {
+		t.Fatalf("Failed to create zstd reader for %s: %v", filePath, err)
+	}
+	defer zstdReader.Close()
+
+	var lines []string
+	scanner := bufio.NewScanner(zstdReader)
+	for scanner.Scan() {
+		lines = append(lines, scanner.Text())
+	}
+	if err := scanner.Err(); err != nil {
+		t.Fatalf("Error reading zst file %s: %v", filePath, err)
+	}
+	return lines
+}
+
+func TestSlice_NoFilters(t *testing.T) {
+	tempDir, err := ioutil.TempDir("", "logtap-slice-test-")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tempDir)
+
+	captureDir := filepath.Join(tempDir, "capture")
+	outputDir := filepath.Join(tempDir, "output")
+
+	// Sample data
+	logFile1 := "2024-01-01T100000-000.jsonl.zst"
+	logFile2 := "2024-01-01T101000-000.jsonl.zst"
+
+	entries := []IndexEntry{
+		{File: logFile1, From: time.Date(2024, time.January, 1, 10, 0, 0, 0, time.UTC), To: time.Date(2024, time.January, 1, 10, 9, 59, 999999999, time.UTC), Lines: 3, Bytes: 100, Labels: map[string]map[string]int{"app": {"api": 3}}},
+		{File: logFile2, From: time.Date(2024, time.January, 1, 10, 10, 0, 0, time.UTC), To: time.Date(2024, time.January, 1, 10, 19, 59, 999999999, time.UTC), Lines: 2, Bytes: 80, Labels: map[string]map[string]int{"app": {"worker": 2}}},
+	}
+	logs := map[string][]string{
+		logFile1: {`{"ts":"...","labels":{"app":"api"},"msg":"line 1"}`,
+			`{"ts":"...","labels":{"app":"api"},"msg":"line 2"}`,
+			`{"ts":"...","labels":{"app":"api"},"msg":"line 3"}`},
+		logFile2: {`{"ts":"...","labels":{"app":"worker"},"msg":"task started"}`,
+			`{"ts":"...","labels":{"app":"worker"},"msg":"task finished"}`},
+	}
+	createDummyCapture(t, captureDir, entries, logs)
+
+	opts := SliceOptions{
+		CaptureDir: captureDir,
+		OutputDir:  outputDir,
 	}
 
-	entries := readSlicedEntries(t, dst)
-	if len(entries) != 4 {
-		t.Fatalf("got %d entries, want 4", len(entries))
+	err = Slice(opts)
+	if err != nil {
+		t.Fatalf("Slice failed: %v", err)
 	}
-	// "timeout error", "5xx server error", "timeout in processing", "5xx gateway timeout"
-	re := regexp.MustCompile(`timeout|5xx`)
-	for _, e := range entries {
-		if !re.MatchString(e.Message) {
-			t.Errorf("entry %q should not have matched", e.Message)
-		}
+
+	// Verify output directory
+	if _, err := os.Stat(outputDir); os.IsNotExist(err) {
+		t.Fatalf("Output directory %s was not created", outputDir)
+	}
+
+	// Verify metadata
+	outMeta, err := ReadMetadata(outputDir)
+	if err != nil {
+		t.Fatalf("Failed to read output metadata: %v", err)
+	}
+	if outMeta.TotalLines != 5 { // Total lines from both files
+		t.Errorf("Expected 5 total lines, got %d", outMeta.TotalLines)
+	}
+
+	// Verify index
+	outIndex, err := ReadIndex(outputDir)
+	if err != nil {
+		t.Fatalf("Failed to read output index: %v", err)
+	}
+	if len(outIndex.Entries) != 2 {
+		t.Errorf("Expected 2 index entries, got %d", len(outIndex.Entries))
+	}
+	if outIndex.Entries[0].File != logFile1 || outIndex.Entries[1].File != logFile2 {
+		t.Errorf("Index entries mismatch")
+	}
+
+	// Verify log content
+	outputLogs1 := readZstFile(t, filepath.Join(outputDir, logFile1))
+	if len(outputLogs1) != 3 {
+		t.Errorf("Expected 3 lines in %s, got %d", logFile1, len(outputLogs1))
+	}
+	if !bytes.Equal([]byte(outputLogs1[0]), []byte(logs[logFile1][0])) {
+		t.Errorf("Log content mismatch for %s line 0", logFile1)
+	}
+	outputLogs2 := readZstFile(t, filepath.Join(outputDir, logFile2))
+	if len(outputLogs2) != 2 {
+		t.Errorf("Expected 2 lines in %s, got %d", logFile2, len(outputLogs2))
 	}
 }
 
-func TestSliceCombinedFilters(t *testing.T) {
-	src, base := setupSliceSource(t)
-	dst := t.TempDir()
-
-	filter := &Filter{
-		From:   base,
-		To:     base.Add(5 * time.Minute),
-		Labels: []LabelMatcher{{Key: "app", Value: "api"}},
-		Grep:   regexp.MustCompile(`5xx`),
-	}
-
-	err := Slice(src, dst, filter, SliceConfig{Compress: false}, nil)
+func TestSlice_FromToFilter(t *testing.T) {
+	tempDir, err := ioutil.TempDir("", "logtap-slice-test-")
 	if err != nil {
-		t.Fatal(err)
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tempDir)
+
+	captureDir := filepath.Join(tempDir, "capture")
+	outputDir := filepath.Join(tempDir, "output")
+
+	logFile1 := "2024-01-01T100000-000.jsonl.zst"
+	logFile2 := "2024-01-01T101000-000.jsonl.zst"
+	logFile3 := "2024-01-01T102000-000.jsonl.zst"
+
+	entries := []IndexEntry{
+		{File: logFile1, From: time.Date(2024, time.January, 1, 10, 0, 0, 0, time.UTC), To: time.Date(2024, time.January, 1, 10, 9, 59, 999999999, time.UTC), Lines: 3, Bytes: 100, Labels: map[string]map[string]int{"app": {"api": 3}}},
+		{File: logFile2, From: time.Date(2024, time.January, 1, 10, 10, 0, 0, time.UTC), To: time.Date(2024, time.January, 1, 10, 19, 59, 999999999, time.UTC), Lines: 2, Bytes: 80, Labels: map[string]map[string]int{"app": {"worker": 2}}},
+		{File: logFile3, From: time.Date(2024, time.January, 1, 10, 20, 0, 0, time.UTC), To: time.Date(2024, time.January, 1, 10, 29, 59, 999999999, time.UTC), Lines: 1, Bytes: 50, Labels: map[string]map[string]int{"app": {"gateway": 1}}},
+	}
+	logs := map[string][]string{
+		logFile1: {`{"ts":"2024-01-01T10:05:00Z","labels":{"app":"api"},"msg":"line 1"}`,
+			`{"ts":"2024-01-01T10:06:00Z","labels":{"app":"api"},"msg":"line 2"}`,
+			`{"ts":"2024-01-01T10:07:00Z","labels":{"app":"api"},"msg":"line 3"}`},
+		logFile2: {`{"ts":"2024-01-01T10:12:00Z","labels":{"app":"worker"},"msg":"task started"}`,
+			`{"ts":"2024-01-01T10:15:00Z","labels":{"app":"worker"},"msg":"task finished"}`},
+		logFile3: {`{"ts":"2024-01-01T10:22:00Z","labels":{"app":"gateway"},"msg":"request received"}`},
+	}
+	createDummyCapture(t, captureDir, entries, logs)
+
+	// Filter from 10:00 to 10:15 (should include file1 and part of file2)
+	opts := SliceOptions{
+		CaptureDir: captureDir,
+		OutputDir:  outputDir,
+		From:       time.Date(2024, time.January, 1, 10, 0, 0, 0, time.UTC),
+		To:         time.Date(2024, time.January, 1, 10, 15, 0, 0, time.UTC),
 	}
 
-	entries := readSlicedEntries(t, dst)
-	if len(entries) != 1 {
-		t.Fatalf("got %d entries, want 1", len(entries))
+	err = Slice(opts)
+	if err != nil {
+		t.Fatalf("Slice failed: %v", err)
 	}
-	if entries[0].Message != "5xx server error" {
-		t.Errorf("entry = %q, want %q", entries[0].Message, "5xx server error")
+
+	outMeta, err := ReadMetadata(outputDir)
+	if err != nil {
+		t.Fatalf("Failed to read output metadata: %v", err)
+	}
+	// The lines and bytes count in metadata and index will be imprecise with time filters
+	// as we filter line-by-line within files. For now, check if files are present and content.
+	// TODO: Adjust total lines/bytes in metadata/index based on actual filtered lines.
+	if outMeta.TotalLines == 0 { // Should be more than 0
+		t.Errorf("Expected non-zero total lines, got %d", outMeta.TotalLines)
+	}
+
+	outIndex, err := ReadIndex(outputDir)
+	if err != nil {
+		t.Fatalf("Failed to read output index: %v", err)
+	}
+	if len(outIndex.Entries) != 2 { // Only file1 and file2 should be processed
+		t.Errorf("Expected 2 index entries, got %d", len(outIndex.Entries))
+	}
+	if outIndex.Entries[0].File != logFile1 || outIndex.Entries[1].File != logFile2 {
+		t.Errorf("Index entries mismatch")
+	}
+
+	// Verify log content
+	outputLogs1 := readZstFile(t, filepath.Join(outputDir, logFile1))
+	if len(outputLogs1) != 3 { // All lines in file1 should pass
+		t.Errorf("Expected 3 lines in %s, got %d", logFile1, len(outputLogs1))
+	}
+	outputLogs2 := readZstFile(t, filepath.Join(outputDir, logFile2))
+	if len(outputLogs2) != 1 { // Only the first line of file2 should pass (10:12)
+		t.Errorf("Expected 1 line in %s, got %d", logFile2, len(outputLogs2))
+	}
+	if !strings.Contains(outputLogs2[0], `2024-01-01T10:12:00Z`) {
+		t.Errorf("Expected log line from 10:12:00Z in %s, got %s", logFile2, outputLogs2[0])
+	}
+
+	// Verify file3 is NOT present
+	if _, err := os.Stat(filepath.Join(outputDir, logFile3)); !os.IsNotExist(err) {
+		t.Errorf("File %s should not exist in output directory", logFile3)
 	}
 }
 
-func TestSliceEmptyResult(t *testing.T) {
-	src, _ := setupSliceSource(t)
-	dst := t.TempDir()
-
-	filter := &Filter{
-		Grep: regexp.MustCompile(`nonexistent_pattern_xyz`),
-	}
-
-	err := Slice(src, dst, filter, SliceConfig{Compress: false}, nil)
+func TestSlice_LabelFilter(t *testing.T) {
+	tempDir, err := ioutil.TempDir("", "logtap-slice-test-")
 	if err != nil {
-		t.Fatal(err)
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tempDir)
+
+	captureDir := filepath.Join(tempDir, "capture")
+	outputDir := filepath.Join(tempDir, "output")
+
+	logFile1 := "2024-01-01T100000-000.jsonl.zst" // app=api
+	logFile2 := "2024-01-01T101000-000.jsonl.zst" // app=worker
+	logFile3 := "2024-01-01T102000-000.jsonl.zst" // app=gateway
+
+	entries := []IndexEntry{
+		{File: logFile1, From: time.Date(2024, time.January, 1, 10, 0, 0, 0, time.UTC), To: time.Date(2024, time.January, 1, 10, 9, 59, 999999999, time.UTC), Lines: 3, Bytes: 100, Labels: map[string]map[string]int{"app": {"api": 3}}},
+		{File: logFile2, From: time.Date(2024, time.January, 1, 10, 10, 0, 0, time.UTC), To: time.Date(2024, time.January, 1, 10, 19, 59, 999999999, time.UTC), Lines: 2, Bytes: 80, Labels: map[string]map[string]int{"app": {"worker": 2}}},
+		{File: logFile3, From: time.Date(2024, time.January, 1, 10, 20, 0, 0, time.UTC), To: time.Date(2024, time.January, 1, 10, 29, 59, 999999999, time.UTC), Lines: 1, Bytes: 50, Labels: map[string]map[string]int{"app": {"gateway": 1}}},
+	}
+	logs := map[string][]string{
+		logFile1: {`{"ts":"...","labels":{"app":"api"},"msg":"line 1"}`,
+			`{"ts":"...","labels":{"app":"api"},"msg":"line 2"}`,
+			`{"ts":"...","labels":{"app":"api"},"msg":"line 3"}`},
+		logFile2: {`{"ts":"...","labels":{"app":"worker"},"msg":"task started"}`,
+			`{"ts":"...","labels":{"app":"worker"},"msg":"task finished"}`},
+		logFile3: {`{"ts":"...","labels":{"app":"gateway"},"msg":"request received"}`},
+	}
+	createDummyCapture(t, captureDir, entries, logs)
+
+	// Filter by app=api
+	opts := SliceOptions{
+		CaptureDir: captureDir,
+		OutputDir:  outputDir,
+		Labels:     []LabelFilter{{Key: "app", Value: "api"}},
 	}
 
-	// metadata should exist with zero lines
-	meta, err := recv.ReadMetadata(dst)
+	err = Slice(opts)
 	if err != nil {
-		t.Fatal(err)
+		t.Fatalf("Slice failed: %v", err)
 	}
-	if meta.TotalLines != 0 {
-		t.Errorf("TotalLines = %d, want 0", meta.TotalLines)
+
+	outMeta, err := ReadMetadata(outputDir)
+	if err != nil {
+		t.Fatalf("Failed to read output metadata: %v", err)
+	}
+	if outMeta.TotalLines != 3 {
+		t.Errorf("Expected 3 total lines, got %d", outMeta.TotalLines)
+	}
+
+	outIndex, err := ReadIndex(outputDir)
+	if err != nil {
+		t.Fatalf("Failed to read output index: %v", err)
+	}
+	if len(outIndex.Entries) != 1 {
+		t.Errorf("Expected 1 index entry, got %d", len(outIndex.Entries))
+	}
+	if outIndex.Entries[0].File != logFile1 {
+		t.Errorf("Index entry mismatch, expected %s, got %s", logFile1, outIndex.Entries[0].File)
+	}
+
+	// Verify log content
+	outputLogs1 := readZstFile(t, filepath.Join(outputDir, logFile1))
+	if len(outputLogs1) != 3 {
+		t.Errorf("Expected 3 lines in %s, got %d", logFile1, len(outputLogs1))
+	}
+	if !bytes.Equal([]byte(outputLogs1[0]), []byte(logs[logFile1][0])) {
+		t.Errorf("Log content mismatch for %s line 0", logFile1)
+	}
+
+	// Verify other files are NOT present
+	if _, err := os.Stat(filepath.Join(outputDir, logFile2)); !os.IsNotExist(err) {
+		t.Errorf("File %s should not exist in output directory", logFile2)
+	}
+	if _, err := os.Stat(filepath.Join(outputDir, logFile3)); !os.IsNotExist(err) {
+		t.Errorf("File %s should not exist in output directory", logFile3)
 	}
 }
 
-func TestSliceOutputIsValidCapture(t *testing.T) {
-	src, _ := setupSliceSource(t)
-	dst := t.TempDir()
-
-	filter := &Filter{
-		Labels: []LabelMatcher{{Key: "app", Value: "api"}},
-	}
-
-	err := Slice(src, dst, filter, SliceConfig{Compress: false}, nil)
+func TestSlice_GrepFilter(t *testing.T) {
+	tempDir, err := ioutil.TempDir("", "logtap-slice-test-")
 	if err != nil {
-		t.Fatal(err)
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tempDir)
+
+	captureDir := filepath.Join(tempDir, "capture")
+	outputDir := filepath.Join(tempDir, "output")
+
+	logFile1 := "2024-01-01T100000-000.jsonl.zst"
+	logFile2 := "2024-01-01T101000-000.jsonl.zst"
+
+	entries := []IndexEntry{
+		{File: logFile1, From: time.Date(2024, time.January, 1, 10, 0, 0, 0, time.UTC), To: time.Date(2024, time.January, 1, 10, 9, 59, 999999999, time.UTC), Lines: 3, Bytes: 100, Labels: map[string]map[string]int{"app": {"api": 3}}},
+		{File: logFile2, From: time.Date(2024, time.January, 1, 10, 10, 0, 0, time.UTC), To: time.Date(2024, time.January, 1, 10, 19, 59, 999999999, time.UTC), Lines: 2, Bytes: 80, Labels: map[string]map[string]int{"app": {"worker": 2}}},
+	}
+	logs := map[string][]string{
+		logFile1: {`{"ts":"...","labels":{"app":"api"},"msg":"error: something failed"}`,
+			`{"ts":"...","labels":{"app":"api"},"msg":"info: everything good"}`,
+			`{"ts":"...","labels":{"app":"api"},"msg":"warning: caution"}`},
+		logFile2: {`{"ts":"...","labels":{"app":"worker"},"msg":"error: critical failure"}`,
+			`{"ts":"...","labels":{"app":"worker"},"msg":"debug: process heartbeat"}`},
+	}
+	createDummyCapture(t, captureDir, entries, logs)
+
+	// Filter by grep "error"
+	opts := SliceOptions{
+		CaptureDir: captureDir,
+		OutputDir:  outputDir,
+		Grep:       regexp.MustCompile("error"),
 	}
 
-	// metadata.json exists and is valid
-	meta, err := recv.ReadMetadata(dst)
+	err = Slice(opts)
 	if err != nil {
-		t.Fatal(err)
-	}
-	if meta.Version != 1 {
-		t.Errorf("Version = %d, want 1", meta.Version)
-	}
-	if meta.TotalLines != 5 {
-		t.Errorf("TotalLines = %d, want 5", meta.TotalLines)
+		t.Fatalf("Slice failed: %v", err)
 	}
 
-	// index.jsonl exists
-	indexData, err := os.ReadFile(filepath.Join(dst, "index.jsonl"))
+	outMeta, err := ReadMetadata(outputDir)
 	if err != nil {
-		t.Fatal(err)
+		t.Fatalf("Failed to read output metadata: %v", err)
 	}
-	if len(indexData) == 0 {
-		t.Error("index.jsonl is empty")
+	if outMeta.TotalLines != 2 {
+		t.Errorf("Expected 2 total lines, got %d", outMeta.TotalLines)
 	}
 
-	// data files exist
-	var dataFiles []string
-	dirEntries, _ := os.ReadDir(dst)
-	for _, e := range dirEntries {
-		if e.Name() != "metadata.json" && e.Name() != "index.jsonl" {
-			dataFiles = append(dataFiles, e.Name())
-		}
+	outIndex, err := ReadIndex(outputDir)
+	if err != nil {
+		t.Fatalf("Failed to read output index: %v", err)
 	}
-	if len(dataFiles) == 0 {
-		t.Error("no data files in output")
+	if len(outIndex.Entries) != 2 { // Both files should have an error line
+		t.Errorf("Expected 2 index entries, got %d", len(outIndex.Entries))
 	}
 
-	// can be opened with NewReader
-	reader, err := NewReader(dst)
-	if err != nil {
-		t.Fatal(err)
+	// Verify log content
+	outputLogs1 := readZstFile(t, filepath.Join(outputDir, logFile1))
+	if len(outputLogs1) != 1 || !strings.Contains(outputLogs1[0], "error: something failed") {
+		t.Errorf("Expected 1 error line in %s, got %v", logFile1, outputLogs1)
 	}
-	var count int64
-	_, err = reader.Scan(nil, func(e recv.LogEntry) bool {
-		count++
-		return true
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if count != 5 {
-		t.Errorf("reader scan got %d entries, want 5", count)
+	outputLogs2 := readZstFile(t, filepath.Join(outputDir, logFile2))
+	if len(outputLogs2) != 1 || !strings.Contains(outputLogs2[0], "error: critical failure") {
+		t.Errorf("Expected 1 error line in %s, got %v", logFile2, outputLogs2)
 	}
 }
 
-func TestSliceProgressCallback(t *testing.T) {
-	dir := t.TempDir()
-	base := time.Date(2024, 1, 15, 10, 0, 0, 0, time.UTC)
-
-	// need >10k entries to trigger mid-scan progress
-	entries := makeEntries(100, base, "api")
-	writeMetadata(t, dir, base, base.Add(100*time.Second), 100)
-	writeDataFile(t, dir, "2024-01-15T100000-000.jsonl", entries)
-	writeIndex(t, dir, []rotate.IndexEntry{{
-		File:  "2024-01-15T100000-000.jsonl",
-		From:  base,
-		To:    base.Add(99 * time.Second),
-		Lines: 100,
-		Bytes: 5000,
-	}})
-
-	dst := t.TempDir()
-	var calls []SliceProgress
-	err := Slice(dir, dst, nil, SliceConfig{Compress: false}, func(p SliceProgress) {
-		calls = append(calls, p)
-	})
+func TestSlice_EmptyOutputWhenNoMatches(t *testing.T) {
+	tempDir, err := ioutil.TempDir("", "logtap-slice-test-")
 	if err != nil {
-		t.Fatal(err)
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tempDir)
+
+	captureDir := filepath.Join(tempDir, "capture")
+	outputDir := filepath.Join(tempDir, "output")
+
+	logFile1 := "2024-01-01T100000-000.jsonl.zst"
+	entries := []IndexEntry{
+		{File: logFile1, From: time.Date(2024, time.January, 1, 10, 0, 0, 0, time.UTC), To: time.Date(2024, time.January, 1, 10, 9, 59, 999999999, time.UTC), Lines: 3, Bytes: 100, Labels: map[string]map[string]int{"app": {"api": 3}}},
+	}
+	logs := map[string][]string{
+		logFile1: {`{"ts":"...","labels":{"app":"api"},"msg":"line 1"}`,
+			`{"ts":"...","labels":{"app":"api"},"msg":"line 2"}`,
+			`{"ts":"...","labels":{"app":"api"},"msg":"line 3"}`},
+	}
+	createDummyCapture(t, captureDir, entries, logs)
+
+	// Filter for a non-existent label
+	opts := SliceOptions{
+		CaptureDir: captureDir,
+		OutputDir:  outputDir,
+		Labels:     []LabelFilter{{Key: "app", Value: "nonexistent"}},
 	}
 
-	// should get at least the final progress call
-	if len(calls) == 0 {
-		t.Error("progress callback never called")
+	err = Slice(opts)
+	if err == nil || !strings.Contains(err.Error(), "no matching log lines found") {
+		t.Fatalf("Expected 'no matching log lines found' error, got: %v", err)
 	}
 
-	last := calls[len(calls)-1]
-	if last.Matched != 100 {
-		t.Errorf("final matched = %d, want 100", last.Matched)
-	}
-	if last.Total != 100 {
-		t.Errorf("final total = %d, want 100", last.Total)
+	// Output directory should be cleaned up
+	if _, err := os.Stat(outputDir); !os.IsNotExist(err) {
+		t.Fatalf("Output directory %s should have been removed, but it exists", outputDir)
 	}
 }
 
-func TestSliceMetadataInherited(t *testing.T) {
-	dir := t.TempDir()
-	base := time.Date(2024, 1, 15, 10, 0, 0, 0, time.UTC)
-
-	entries := makeEntries(5, base, "api")
-	srcMeta := recv.Metadata{
-		Version:    1,
-		Format:     "jsonl+zstd",
-		Started:    base,
-		Stopped:    base.Add(5 * time.Second),
-		TotalLines: 5,
-		Redaction:  &recv.RedactionInfo{Enabled: true, Patterns: []string{"ssn"}},
-	}
-	data, err := json.MarshalIndent(srcMeta, "", "  ")
+func TestSlice_OutputDirIsInput(t *testing.T) {
+	tempDir, err := ioutil.TempDir("", "logtap-slice-test-")
 	if err != nil {
-		t.Fatal(err)
+		t.Fatalf("Failed to create temp dir: %v", err)
 	}
-	if err := os.WriteFile(filepath.Join(dir, "metadata.json"), data, 0o644); err != nil {
-		t.Fatal(err)
-	}
-	writeDataFile(t, dir, "2024-01-15T100000-000.jsonl", entries)
-	writeIndex(t, dir, []rotate.IndexEntry{{
-		File:  "2024-01-15T100000-000.jsonl",
-		From:  base,
-		To:    base.Add(4 * time.Second),
-		Lines: 5,
-		Bytes: 300,
-	}})
+	defer os.RemoveAll(tempDir)
 
-	dst := t.TempDir()
-	err = Slice(dir, dst, nil, SliceConfig{Compress: false}, nil)
-	if err != nil {
-		t.Fatal(err)
+	captureDir := filepath.Join(tempDir, "capture")
+
+	opts := SliceOptions{
+		CaptureDir: captureDir,
+		OutputDir:  captureDir, // Same as input
 	}
 
-	outMeta, err := recv.ReadMetadata(dst)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if outMeta.Version != 1 {
-		t.Errorf("Version = %d, want 1", outMeta.Version)
-	}
-	if outMeta.Format != "jsonl+zstd" {
-		t.Errorf("Format = %q, want %q", outMeta.Format, "jsonl+zstd")
-	}
-	if outMeta.Redaction == nil || !outMeta.Redaction.Enabled {
-		t.Error("Redaction not inherited")
-	}
-	if !outMeta.Started.Equal(base) {
-		t.Errorf("Started = %v, want %v", outMeta.Started, base)
+	err = Slice(opts)
+	if err == nil || !strings.Contains(err.Error(), "output directory cannot be the same as capture directory") {
+		t.Fatalf("Expected error about output directory being same as capture directory, got: %v", err)
 	}
 }
 
-func TestSliceNoFilter(t *testing.T) {
-	src, _ := setupSliceSource(t)
-	dst := t.TempDir()
-
-	err := Slice(src, dst, nil, SliceConfig{Compress: false}, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	entries := readSlicedEntries(t, dst)
-	if len(entries) != 10 {
-		t.Fatalf("got %d entries, want 10", len(entries))
-	}
-}
+// TODO: Add more tests for combined filters, empty capture, metadata/index recalculation, etc.

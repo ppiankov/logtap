@@ -3,80 +3,123 @@ package main
 import (
 	"fmt"
 	"os"
+	"regexp"
+	"strings"
+	"time"
 
 	"github.com/spf13/cobra"
 
 	"github.com/ppiankov/logtap/internal/archive"
 )
 
-func newSliceCmd() *cobra.Command {
-	var (
-		fromStr string
-		toStr   string
-		labels  []string
-		grepStr string
-		outDir  string
-	)
+var (
+	sliceFrom  string
+	sliceTo    string
+	sliceLabel []string
+	sliceGrep  string
+	sliceOut   string
+)
 
+func newSliceCmd() *cobra.Command {
 	cmd := &cobra.Command{
-		Use:   "slice <capture-dir>",
-		Short: "Extract a filtered subset of a capture",
-		Long:  "Slice a capture directory by time range, labels, or grep into a new, smaller capture directory.",
+		Use:   "slice <capture-directory>",
+		Short: "Extract a time range and/or label filter into a new smaller capture directory",
 		Args:  cobra.ExactArgs(1),
-		RunE: func(cmd *cobra.Command, args []string) error {
-			return runSlice(args[0], fromStr, toStr, labels, grepStr, outDir)
+		Run: func(cmd *cobra.Command, args []string) {
+			captureDir := args[0]
+
+			if sliceOut == "" {
+				fmt.Fprintf(os.Stderr, "Error: --out flag is required\n")
+				os.Exit(1)
+			}
+
+			var fromTime, toTime time.Time
+			var err error
+
+			if sliceFrom != "" {
+				fromTime, err = parseTime(sliceFrom)
+				if err != nil {
+					fmt.Fprintf(os.Stderr, "Error parsing --from: %v\n", err)
+					os.Exit(1)
+				}
+			}
+			if sliceTo != "" {
+				toTime, err = parseTime(sliceTo)
+				if err != nil {
+					fmt.Fprintf(os.Stderr, "Error parsing --to: %v\n", err)
+					os.Exit(1)
+				}
+			}
+
+			var labelFilters []archive.LabelFilter
+			for _, l := range sliceLabel {
+				parts := strings.SplitN(l, "=", 2)
+				if len(parts) != 2 || parts[0] == "" || parts[1] == "" {
+					fmt.Fprintf(os.Stderr, "Error: invalid --label format '%s'. Expected key=value\n", l)
+					os.Exit(1)
+				}
+				labelFilters = append(labelFilters, archive.LabelFilter{Key: parts[0], Value: parts[1]})
+			}
+
+			var grepRegex *regexp.Regexp
+			if sliceGrep != "" {
+				grepRegex, err = regexp.Compile(sliceGrep)
+				if err != nil {
+					fmt.Fprintf(os.Stderr, "Error compiling --grep regex: %v\n", err)
+					os.Exit(1)
+				}
+			}
+
+			opts := archive.SliceOptions{
+				CaptureDir: captureDir,
+				OutputDir:  sliceOut,
+				From:       fromTime,
+				To:         toTime,
+				Labels:     labelFilters,
+				Grep:       grepRegex,
+			}
+
+			if err := archive.Slice(opts); err != nil {
+				fmt.Fprintf(os.Stderr, "Error slicing capture: %v\n", err)
+				os.Exit(1)
+			}
+			fmt.Println("Slicing complete.")
 		},
 	}
 
-	cmd.Flags().StringVar(&fromStr, "from", "", "start time filter (RFC3339, HH:MM, or -30m)")
-	cmd.Flags().StringVar(&toStr, "to", "", "end time filter (RFC3339, HH:MM, or -30m)")
-	cmd.Flags().StringSliceVar(&labels, "label", nil, "label filter (key=value, repeatable)")
-	cmd.Flags().StringVar(&grepStr, "grep", "", "regex filter on log message")
-	cmd.Flags().StringVar(&outDir, "out", "", "output directory (required)")
-	_ = cmd.MarkFlagRequired("out")
+	cmd.Flags().StringVar(&sliceFrom, "from", "", "Start time (absolute or relative: 10:32, 2024-01-15T10:32:00Z, -30m)")
+	cmd.Flags().StringVar(&sliceTo, "to", "", "End time (same formats as --from)")
+	cmd.Flags().StringArrayVar(&sliceLabel, "label", []string{}, "Label filter (key=value), repeatable")
+	cmd.Flags().StringVar(&sliceGrep, "grep", "", "Regex filter on message content")
+	cmd.Flags().StringVarP(&sliceOut, "out", "o", "", "Output directory for the new capture (required)")
+	cmd.MarkFlagRequired("out")
 
 	return cmd
 }
 
-func runSlice(src, fromStr, toStr string, labels []string, grepStr, outDir string) error {
-	reader, err := archive.NewReader(src)
-	if err != nil {
-		return fmt.Errorf("open capture: %w", err)
+// parseTime attempts to parse a string into a time.Time, supporting RFC3339, 15:04 (HH:MM), or duration relative to now.
+func parseTime(s string) (time.Time, error) {
+	// Try RFC3339
+	if t, err := time.Parse(time.RFC3339, s); err == nil {
+		return t, nil
 	}
-	meta := reader.Metadata()
-
-	filter, err := buildFilter(fromStr, toStr, labels, grepStr, meta)
-	if err != nil {
-		return err
+	if t, err := time.Parse(time.RFC3339Nano, s); err == nil {
+		return t, nil
 	}
 
-	cfg := archive.SliceConfig{
-		Compress: true,
+	// Try HH:MM format (today's date)
+	if t, err := time.Parse("15:04", s); err == nil {
+		now := time.Now()
+		return time.Date(now.Year(), now.Month(), now.Day(), t.Hour(), t.Minute(), t.Second(), t.Nanosecond(), now.Location()), nil
 	}
 
-	progress := func(p archive.SliceProgress) {
-		if p.Total > 0 {
-			pct := float64(p.Matched) / float64(p.Total) * 100
-			fmt.Fprintf(os.Stderr, "\rSlicing: %s / %s lines (%.1f%%)",
-				archive.FormatCount(p.Matched), archive.FormatCount(p.Total), pct)
-		} else {
-			fmt.Fprintf(os.Stderr, "\rSlicing: %s lines", archive.FormatCount(p.Matched))
+	// Try duration (e.g., -30m, 1h)
+	if strings.HasPrefix(s, "-") || strings.HasSuffix(s, "m") || strings.HasSuffix(s, "h") { // simplified check for duration
+		d, err := time.ParseDuration(strings.TrimPrefix(s, "-"))
+		if err == nil {
+			return time.Now().Add(-d), nil // relative to now, e.g., "30m" -> 30 mins ago
 		}
 	}
 
-	if err := archive.Slice(src, outDir, filter, cfg, progress); err != nil {
-		fmt.Fprintln(os.Stderr) // newline after progress
-		return err
-	}
-
-	// read output metadata for summary
-	outMeta, err := archive.Inspect(outDir)
-	if err == nil {
-		fmt.Fprintf(os.Stderr, "\rSliced: %s lines -> %s (%s)\n",
-			archive.FormatCount(outMeta.TotalLines), outDir, archive.FormatBytes(outMeta.DiskSize))
-	} else {
-		fmt.Fprintln(os.Stderr)
-	}
-
-	return nil
+	return time.Time{}, fmt.Errorf("unsupported time format: %s", s)
 }
