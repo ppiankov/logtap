@@ -543,6 +543,10 @@ high-throughput workloads (>10k logs/sec per pod) consider `--sidecar-memory 64M
 - Clean removal -- just remove the sidecar container from spec
 - No agent-specific config syntax to maintain
 
+**Reusable code**:
+- `trustwatch/internal/tunnel/relay.go` -- ephemeral pod lifecycle management
+- `kubenow/internal/util/portforward.go` -- port-forward state machine
+
 **Files**:
 - `internal/sidecar/inject.go` -- sidecar container spec, patch generation
 - `internal/sidecar/image.go` -- forwarder image reference + version
@@ -633,6 +637,10 @@ logtap recv --listen :9000
 logtap tap --deployment api-gateway --target 10.0.0.5:9000
 ```
 - Only works if cluster pods can reach dev IP (VPN, same network)
+
+**Reusable code**:
+- `trustwatch/internal/tunnel/relay.go` -- ephemeral pod deployment + lifecycle
+- `kubenow/internal/util/portforward.go` -- port-forward manager with reconnection
 
 **Files**:
 - `internal/k8s/tunnel.go` -- port-forward management
