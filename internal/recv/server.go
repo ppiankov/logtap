@@ -62,8 +62,11 @@ func NewServer(addr string, writer *Writer, redactor *Redactor, metrics *Metrics
 	mux.Handle("GET /metrics", promhttp.Handler())
 
 	s.httpSrv = &http.Server{
-		Addr:    addr,
-		Handler: mux,
+		Addr:         addr,
+		Handler:      mux,
+		ReadTimeout:  30 * time.Second,
+		WriteTimeout: 30 * time.Second,
+		IdleTimeout:  120 * time.Second,
 	}
 	return s
 }
@@ -163,10 +166,11 @@ func (s *Server) handleLokiPush(w http.ResponseWriter, r *http.Request) {
 	}
 
 	s.audit.Log(AuditEntry{
-		Event:    "push_received",
+		Event:    "loki_push_received",
 		RemoteIP: stripPort(r.RemoteAddr),
 		Lines:    lineCount,
 		Bytes:    byteCount,
+		Duration: time.Since(start),
 	})
 
 	w.WriteHeader(http.StatusNoContent)
@@ -198,10 +202,15 @@ func (s *Server) handleRawPush(w http.ResponseWriter, r *http.Request) {
 		lines = append(lines, entry)
 	}
 
+	var lineCount int
+	var byteCount int
 	for _, entry := range lines {
 		if entry.Timestamp.IsZero() {
 			entry.Timestamp = time.Now()
 		}
+
+		lineCount++
+		byteCount += len(entry.Message)
 
 		if s.ring != nil {
 			s.ring.Push(entry)
@@ -224,6 +233,14 @@ func (s *Server) handleRawPush(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
+
+	s.audit.Log(AuditEntry{
+		Event:    "raw_push_received",
+		RemoteIP: stripPort(r.RemoteAddr),
+		Lines:    lineCount,
+		Bytes:    byteCount,
+		Duration: time.Since(start),
+	})
 
 	w.WriteHeader(http.StatusNoContent)
 }

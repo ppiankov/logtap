@@ -518,7 +518,7 @@ func (m TUIModel) renderStats() string {
 	if m.redactInfo != "" {
 		b.WriteString(m.redactInfo)
 	} else {
-		b.WriteString(warnStyle.Render("OFF"))
+		b.WriteString(warnStyle.Render("OFF — captured logs may contain sensitive data (use --redact)"))
 	}
 	return b.String()
 }
