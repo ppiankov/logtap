@@ -124,9 +124,9 @@ func TestReader_CorruptIndex(t *testing.T) {
 		t.Fatalf("NewReader should tolerate corrupt index, got: %v", err)
 	}
 
-	// No valid index entries parsed, so TotalLines from index should be 0
-	if r.TotalLines() != 0 {
-		t.Errorf("TotalLines = %d, want 0 (corrupt index entries skipped)", r.TotalLines())
+	// No valid index entries, but orphan file has 5 lines
+	if r.TotalLines() != 5 {
+		t.Errorf("TotalLines = %d, want 5 (orphan lines counted)", r.TotalLines())
 	}
 
 	// The data file should still be discovered as an orphan
@@ -253,9 +253,9 @@ func TestReaderOrphanDiscovery(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// TotalLines only counts indexed
-	if r.TotalLines() != 5 {
-		t.Errorf("TotalLines = %d, want 5", r.TotalLines())
+	// TotalLines counts indexed (5) + orphan (3)
+	if r.TotalLines() != 8 {
+		t.Errorf("TotalLines = %d, want 8", r.TotalLines())
 	}
 
 	var got []recv.LogEntry
@@ -388,8 +388,9 @@ func TestReaderNoIndex(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if r.TotalLines() != 0 {
-		t.Errorf("TotalLines = %d, want 0 (no index)", r.TotalLines())
+	// No index, but orphan file has 3 lines
+	if r.TotalLines() != 3 {
+		t.Errorf("TotalLines = %d, want 3 (orphan lines counted)", r.TotalLines())
 	}
 
 	var got []recv.LogEntry
