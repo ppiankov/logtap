@@ -38,11 +38,12 @@ type ReplayModel struct {
 	ringVersion int
 
 	// search
-	searching   bool
-	searchInput string
-	searchRegex *regexp.Regexp
-	searchIdx   int
-	matches     []int
+	searching    bool
+	searchInput  string
+	searchRegex  *regexp.Regexp
+	searchNegate bool
+	searchIdx    int
+	matches      []int
 
 	// gg detection
 	lastGPress time.Time
@@ -213,7 +214,12 @@ func (m ReplayModel) updateSearch(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
 	case "enter":
 		m.searching = false
-		re, err := regexp.Compile(m.searchInput)
+		input := m.searchInput
+		m.searchNegate = strings.HasPrefix(input, "!")
+		if m.searchNegate {
+			input = input[1:]
+		}
+		re, err := regexp.Compile(input)
 		if err == nil {
 			m.searchRegex = re
 			m.updateSearchMatches()
@@ -228,6 +234,7 @@ func (m ReplayModel) updateSearch(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.searching = false
 		m.searchInput = ""
 		m.searchRegex = nil
+		m.searchNegate = false
 		m.matches = nil
 
 	case "backspace":
@@ -250,15 +257,17 @@ func (m *ReplayModel) updateSearchMatches() {
 		return
 	}
 	for i, entry := range m.lines {
-		if m.searchRegex.MatchString(entry.Message) {
-			m.matches = append(m.matches, i)
-			continue
-		}
-		for _, v := range entry.Labels {
-			if m.searchRegex.MatchString(v) {
-				m.matches = append(m.matches, i)
-				break
+		hit := m.searchRegex.MatchString(entry.Message)
+		if !hit {
+			for _, v := range entry.Labels {
+				if m.searchRegex.MatchString(v) {
+					hit = true
+					break
+				}
 			}
+		}
+		if hit != m.searchNegate {
+			m.matches = append(m.matches, i)
 		}
 	}
 }
