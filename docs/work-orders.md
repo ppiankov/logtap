@@ -2,7 +2,7 @@
 
 ## Phase 1: Receiver (Week 1)
 
-### WO-01: HTTP receiver with Loki push API
+### WO-01: HTTP receiver with Loki push API [DONE]
 
 **Goal**: Accept log streams via `POST /loki/api/v1/push` and write to disk.
 
@@ -69,7 +69,7 @@ go test -run TestBackpressure -race ./internal/recv/
 
 ---
 
-### WO-02: Live TUI with data fill
+### WO-02: Live TUI with data fill [DONE]
 
 **Goal**: TUI that shows live stats AND fills with arriving log data.
 
@@ -122,7 +122,7 @@ logtap v0.1.0 | :9000 | ./capture
 
 ---
 
-### WO-02a: Capture directory and replay
+### WO-02a: Capture directory and replay [DONE]
 
 **Goal**: Capture directory IS the portable artifact. Second user opens it with same TUI.
 
@@ -228,7 +228,7 @@ tar cf - /tmp/capture | ssh colleague@host 'tar xf -'
 
 ---
 
-### WO-02b: Inspect capture
+### WO-02b: Inspect capture [DONE]
 
 **Goal**: `logtap inspect` shows what's inside a capture directory without replaying it.
 
@@ -289,7 +289,7 @@ logtap inspect ./capture --json | jq '.labels.app'
 
 ---
 
-### WO-02c: Slice (extract subset)
+### WO-02c: Slice (extract subset) [DONE]
 
 **Goal**: Extract a time range and/or label filter into a new smaller capture directory.
 
@@ -324,7 +324,7 @@ logtap open /tmp/incident
 
 ---
 
-### WO-02d: Export to external formats
+### WO-02d: Export to external formats [DONE]
 
 **Goal**: Convert capture data to parquet/CSV for ingestion into analytics systems.
 
@@ -371,7 +371,7 @@ duckdb -c "SELECT labels['app'], count(*) FROM '/tmp/capture.parquet' GROUP BY 1
 
 ---
 
-### WO-02e: Triage (background pre-scan)
+### WO-02e: Triage (background pre-scan) [DONE]
 
 **Goal**: `logtap triage` scans a capture directory for anomalies and produces a summary report before manual investigation.
 
@@ -467,7 +467,7 @@ logtap slice ./capture --from $(jq -r '.peak_error.from' /tmp/triage/windows.jso
 
 ## Phase 2: Cluster Integration (Week 2)
 
-### WO-03: Sidecar injection
+### WO-03: Sidecar injection [DONE]
 
 **Goal**: `logtap tap` injects a log-forwarding sidecar into target workloads.
 
@@ -543,10 +543,6 @@ high-throughput workloads (>10k logs/sec per pod) consider `--sidecar-memory 64M
 - Clean removal -- just remove the sidecar container from spec
 - No agent-specific config syntax to maintain
 
-**Reusable code**:
-- `trustwatch/internal/tunnel/relay.go` -- ephemeral pod lifecycle management
-- `kubenow/internal/util/portforward.go` -- port-forward state machine
-
 **Files**:
 - `internal/sidecar/inject.go` -- sidecar container spec, patch generation
 - `internal/sidecar/image.go` -- forwarder image reference + version
@@ -569,7 +565,7 @@ kubectl get deploy api-gateway -o jsonpath='{.spec.template.spec.containers[*].n
 
 ---
 
-### WO-04: Untap (clean removal)
+### WO-04: Untap (clean removal) [DONE]
 
 **Goal**: `logtap untap` removes sidecar from target workloads.
 
@@ -606,7 +602,7 @@ kubectl get deploy api-gateway -o jsonpath='{.spec.template.spec.containers[*].n
 
 ---
 
-### WO-05: Network connectivity
+### WO-05: Network connectivity [DONE]
 
 **Goal**: Make logtap recv reachable from inside the cluster.
 
@@ -638,10 +634,6 @@ logtap tap --deployment api-gateway --target 10.0.0.5:9000
 ```
 - Only works if cluster pods can reach dev IP (VPN, same network)
 
-**Reusable code**:
-- `trustwatch/internal/tunnel/relay.go` -- ephemeral pod deployment + lifecycle
-- `kubenow/internal/util/portforward.go` -- port-forward manager with reconnection
-
 **Files**:
 - `internal/k8s/tunnel.go` -- port-forward management
 - `internal/k8s/deploy.go` -- temporary pod/service deployment
@@ -649,7 +641,7 @@ logtap tap --deployment api-gateway --target 10.0.0.5:9000
 
 ---
 
-### WO-05a: Forwarder container image
+### WO-05a: Forwarder container image [DONE]
 
 **Goal**: Build and publish the `logtap-forwarder` sidecar image to GHCR.
 
@@ -692,7 +684,7 @@ docker images logtap-forwarder:test --format '{{.Size}}'
 
 ---
 
-### WO-06: Check command
+### WO-06: Check command [DONE]
 
 **Goal**: `logtap check` validates cluster readiness AND detects leftovers from previous sessions.
 
@@ -707,7 +699,7 @@ logtap check
 ```
 logtap check
 
-Cluster:       aks-dev-westeurope (v1.29.2)
+Cluster:       my-cluster (v1.29.2)
 Namespace:     default
 RBAC:          ok (can patch deployments, create pods)
 Quota:         ok (memory 1.2Gi / 4.0Gi available)
@@ -727,7 +719,7 @@ Ready to tap. Run: logtap tap --deployment api-gateway --target logtap.logtap:90
 ```
 logtap check
 
-Cluster:       aks-dev-westeurope (v1.29.2)
+Cluster:       my-cluster (v1.29.2)
 Namespace:     default
 RBAC:          ok (can patch deployments, create pods)
 
@@ -784,7 +776,7 @@ logtap check
 
 ---
 
-### WO-07: Status command
+### WO-07: Status command [DONE]
 
 **Goal**: Show what's currently tapped.
 
@@ -828,7 +820,7 @@ logtap status
 
 ## Phase 3: Hardening (Week 3)
 
-### WO-08: Backpressure and stress testing
+### WO-08: Backpressure and stress testing [DONE]
 
 **Goal**: Verify receiver handles 100+ MB/s without blocking senders.
 
@@ -846,7 +838,7 @@ logtap status
 
 ---
 
-### WO-09: Security guardrails and PII redaction
+### WO-09: Security guardrails and PII redaction [DONE]
 
 **Goal**: Prevent PII/PCI leaks structurally — redact on write, not after the fact.
 
@@ -974,7 +966,7 @@ will detect these as orphans.
 
 ---
 
-### WO-11: First Release (v0.1.0)
+### WO-11: First Release (v0.1.0) [DONE]
 
 **Goal:** Cut the first tagged release. The release workflow (`.github/workflows/release.yml`) and Dockerfile already exist. This WO is about preparing the content and cutting the tag.
 
@@ -2084,7 +2076,7 @@ If the receiver is temporarily unreachable, the forwarder drops all logs immedia
 
 ## Phase 7: Cluster-Native Receiver
 
-### WO-51: In-Cluster Receiver Deployment
+### WO-51: In-Cluster Receiver Deployment [DONE]
 
 **Goal:** Provide a `logtap deploy` subcommand that deploys the receiver as a Pod+Service inside the cluster, eliminating the need for external network access from pods to the user's machine.
 
@@ -2130,7 +2122,7 @@ logtap deploy --namespace my-team --cleanup
 
 ## Phase 8: Security Hardening
 
-### WO-61: Add HTTP server timeouts to prevent Slowloris
+### WO-61: Add HTTP server timeouts to prevent Slowloris [DONE]
 
 **Severity:** HIGH
 
@@ -2152,7 +2144,7 @@ logtap deploy --namespace my-team --cleanup
 
 ---
 
-### WO-62: Path traversal guard in cloud download
+### WO-62: Path traversal guard in cloud download [DONE]
 
 **Severity:** HIGH
 
@@ -2179,7 +2171,7 @@ logtap deploy --namespace my-team --cleanup
 
 ---
 
-### WO-63: Validate --target flag to prevent Fluent Bit config injection
+### WO-63: Validate --target flag to prevent Fluent Bit config injection [DONE]
 
 **Severity:** MEDIUM
 
@@ -2205,7 +2197,7 @@ logtap deploy --namespace my-team --cleanup
 
 ---
 
-### WO-64: Add audit logging to /logtap/raw endpoint
+### WO-64: Add audit logging to /logtap/raw endpoint [DONE]
 
 **Severity:** MEDIUM
 
@@ -2250,7 +2242,7 @@ logtap deploy --namespace my-team --cleanup
 
 ---
 
-### WO-66: Cap --buffer flag to prevent memory exhaustion
+### WO-66: Cap --buffer flag to prevent memory exhaustion [DONE]
 
 **Severity:** LOW
 
@@ -2277,7 +2269,7 @@ logtap deploy --namespace my-team --cleanup
 
 ---
 
-### WO-67: Increase session ID entropy from 16 to 64 bits
+### WO-67: Increase session ID entropy from 16 to 64 bits [DONE]
 
 **Severity:** LOW
 
@@ -2303,7 +2295,7 @@ logtap deploy --namespace my-team --cleanup
 
 ---
 
-### WO-68: Use restrictive file permissions for capture data
+### WO-68: Use restrictive file permissions for capture data [DONE]
 
 **Severity:** LOW
 
@@ -2327,7 +2319,7 @@ logtap deploy --namespace my-team --cleanup
 
 ---
 
-### WO-69: Add safety comment to template.HTML bypass in triage SVG
+### WO-69: Add safety comment to template.HTML bypass in triage SVG [DONE]
 
 **Severity:** LOW
 
@@ -2349,7 +2341,7 @@ logtap deploy --namespace my-team --cleanup
 
 ---
 
-### WO-70: Default --listen to localhost-only binding
+### WO-70: Default --listen to localhost-only binding [DONE]
 
 **Severity:** INFO
 
