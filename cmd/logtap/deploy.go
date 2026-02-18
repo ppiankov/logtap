@@ -129,6 +129,7 @@ func runDeploy(opts deployOpts) error {
 	fmt.Fprintf(os.Stderr, "Target: %s\n", target)
 	fmt.Fprintf(os.Stderr, "\nUsage:\n")
 	fmt.Fprintf(os.Stderr, "  logtap tap --target %s --deployment <name> -n %s\n", target, c.NS)
+	fmt.Fprintf(os.Stderr, "  kubectl port-forward svc/%s -n %s %d:%d\n", k8s.ReceiverName, c.NS, opts.port, opts.port)
 	fmt.Fprintf(os.Stderr, "\nRetrieve captures:\n")
 	fmt.Fprintf(os.Stderr, "  kubectl cp %s/%s:/data ./capture\n", c.NS, k8s.ReceiverName)
 	fmt.Fprintf(os.Stderr, "\nCleanup:\n")
