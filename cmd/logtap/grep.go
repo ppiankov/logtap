@@ -24,7 +24,17 @@ func newGrepCmd() *cobra.Command {
 		Long:  "Cross-file regex search across all compressed JSONL files in a capture directory.",
 		Args:  cobra.ExactArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runGrep(args[0], args[1], fromStr, toStr, labels, count)
+			pattern, captureDir := args[0], args[1]
+
+			// Detect reversed arguments: if the first arg looks like a directory
+			// and the second doesn't exist as a directory, suggest swapping.
+			if info, err := os.Stat(pattern); err == nil && info.IsDir() {
+				if _, err2 := os.Stat(captureDir); err2 != nil {
+					return fmt.Errorf("'%s' is a directory — did you mean: logtap grep %q %s", pattern, captureDir, pattern)
+				}
+			}
+
+			return runGrep(pattern, captureDir, fromStr, toStr, labels, count)
 		},
 	}
 
