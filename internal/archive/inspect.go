@@ -1,6 +1,7 @@
 package archive
 
 import (
+	"bufio"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -9,6 +10,8 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/klauspost/compress/zstd"
 
 	"github.com/ppiankov/logtap/internal/recv"
 	"github.com/ppiankov/logtap/internal/rotate"
@@ -64,8 +67,10 @@ func Inspect(dir string) (*Summary, error) {
 	// aggregate from index entries
 	labelAcc := make(map[string]map[string]*LabelVal) // key -> value -> accumulator
 	var minTime, maxTime time.Time
+	indexedFiles := make(map[string]bool, len(index))
 
 	for _, entry := range index {
+		indexedFiles[entry.File] = true
 		s.TotalLines += entry.Lines
 		s.TotalBytes += entry.Bytes
 
@@ -91,6 +96,16 @@ func Inspect(dir string) (*Summary, error) {
 					labelAcc[key][val].Bytes += entry.Bytes * count / entry.Lines
 				}
 			}
+		}
+	}
+
+	// count lines from orphan files not yet in index
+	orphans, oErr := discoverOrphans(dir, indexedFiles)
+	if oErr == nil {
+		for _, orph := range orphans {
+			lines, bytes := countFileLines(orph.Path)
+			s.TotalLines += lines
+			s.TotalBytes += bytes
 		}
 	}
 
@@ -200,6 +215,38 @@ func diskStats(dir string) (totalSize int64, fileCount int) {
 		fileCount++
 	}
 	return totalSize, fileCount
+}
+
+// countFileLines counts non-empty lines and total bytes in a data file.
+// Handles both plain .jsonl and compressed .jsonl.zst files.
+func countFileLines(path string) (lines, bytes int64) {
+	f, err := os.Open(path)
+	if err != nil {
+		return 0, 0
+	}
+	defer func() { _ = f.Close() }()
+
+	var r io.Reader = f
+	if strings.HasSuffix(path, ".zst") {
+		dec, err := zstd.NewReader(f)
+		if err != nil {
+			return 0, 0
+		}
+		defer dec.Close()
+		r = dec
+	}
+
+	scanner := bufio.NewScanner(r)
+	scanner.Buffer(make([]byte, 256*1024), 1024*1024)
+	for scanner.Scan() {
+		line := scanner.Bytes()
+		if len(line) == 0 {
+			continue
+		}
+		lines++
+		bytes += int64(len(line))
+	}
+	return lines, bytes
 }
 
 // textWriter wraps an io.Writer and captures the first error.

@@ -72,12 +72,25 @@ func (f *Filter) MatchEntry(e recv.LogEntry) bool {
 		}
 	}
 
-	// grep
-	if f.Grep != nil && !f.Grep.MatchString(e.Message) {
+	// grep: match message or any label value
+	if f.Grep != nil && !grepMatchEntry(f.Grep, e) {
 		return false
 	}
 
 	return true
+}
+
+// grepMatchEntry returns true if the regex matches the entry's message or any label value.
+func grepMatchEntry(re *regexp.Regexp, e recv.LogEntry) bool {
+	if re.MatchString(e.Message) {
+		return true
+	}
+	for _, v := range e.Labels {
+		if re.MatchString(v) {
+			return true
+		}
+	}
+	return false
 }
 
 // ParseTimeFlag parses a time string in one of three formats:
