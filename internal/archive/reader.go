@@ -81,12 +81,15 @@ func (r *Reader) Files() []FileInfo {
 	return r.files
 }
 
-// TotalLines returns the sum of lines from all indexed files.
+// TotalLines returns the sum of lines from all files, including orphans.
 func (r *Reader) TotalLines() int64 {
 	var total int64
 	for _, f := range r.files {
 		if f.Index != nil {
 			total += f.Index.Lines
+		} else if f.Orphan {
+			lines, _ := countFileLines(f.Path)
+			total += lines
 		}
 	}
 	return total
