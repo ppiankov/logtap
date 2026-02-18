@@ -81,7 +81,7 @@ func newRecvCmd() *cobra.Command {
 		},
 	}
 
-	cmd.Flags().StringVar(&listen, "listen", ":3100", "address to listen on")
+	cmd.Flags().StringVar(&listen, "listen", "127.0.0.1:3100", "address to listen on")
 	cmd.Flags().StringVar(&dir, "dir", "", "output directory (required)")
 	cmd.Flags().StringVar(&maxFileStr, "max-file", "256MB", "max file size before rotation")
 	cmd.Flags().StringVar(&maxDiskStr, "max-disk", "50GB", "max total disk usage")
@@ -103,7 +103,20 @@ func newRecvCmd() *cobra.Command {
 	return cmd
 }
 
+const maxBufSize = 1 << 20 // 1,048,576
+
 func runRecv(listen, dir, maxFileStr, maxDiskStr string, compress bool, redactFlag, redactPatterns string, bufSize int, headless bool, tlsCert, tlsKey string, webhookURLs []string, webhookEvents string, alertRulesPath string) error {
+	// Check for insecure direct IP mode without TLS
+	if !inCluster && tlsCert == "" && tlsKey == "" {
+		host, _, err := net.SplitHostPort(listen)
+		if err != nil {
+			host = listen // Assume listen is just a host if split fails
+		}
+		if host != "127.0.0.1" && host != "localhost" && host != "[::1]" {
+			fmt.Fprintf(os.Stderr, "WARNING: Running in direct IP mode (%s) without TLS. Logs will be sent over unencrypted HTTP. Use --tls-cert and --tls-key for HTTPS.\n", listen)
+		}
+	}
+
 	maxFile, err := parseByteSize(maxFileStr)
 	if err != nil {
 		return fmt.Errorf("invalid --max-file: %w", err)

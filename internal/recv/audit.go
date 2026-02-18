@@ -14,7 +14,7 @@ type AuditEntry struct {
 	Event     string    `json:"event"`
 	RemoteIP  string    `json:"remote_ip,omitempty"`
 	Lines     int       `json:"lines,omitempty"`
-	Bytes     int       `json:"bytes,omitempty"`
+	Duration  time.Duration `json:"duration_ms,omitempty"`
 }
 
 // AuditLogger writes append-only JSONL audit records.
@@ -27,7 +27,7 @@ type AuditLogger struct {
 // NewAuditLogger creates an audit logger writing to <dir>/audit.jsonl.
 func NewAuditLogger(dir string) (*AuditLogger, error) {
 	path := filepath.Join(dir, "audit.jsonl")
-	f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
 	if err != nil {
 		return nil, err
 	}
