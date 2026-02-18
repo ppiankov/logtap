@@ -216,6 +216,65 @@ func TestInspectTimelineSingleMinute(t *testing.T) {
 	}
 }
 
+func TestInspectOrphanFiles(t *testing.T) {
+	dir := t.TempDir()
+	base := time.Date(2024, 1, 15, 10, 0, 0, 0, time.UTC)
+
+	writeMetadata(t, dir, base, time.Time{}, 0)
+	// No index.jsonl — active file not yet rotated
+	writeDataFile(t, dir, "2024-01-15T100000-000.jsonl", makeEntries(48, base, "api"))
+
+	s, err := Inspect(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if s.TotalLines != 48 {
+		t.Errorf("TotalLines = %d, want 48 (orphan lines should be counted)", s.TotalLines)
+	}
+	if s.TotalBytes == 0 {
+		t.Error("TotalBytes = 0, want >0 (orphan bytes should be counted)")
+	}
+	if s.Files != 1 {
+		t.Errorf("Files = %d, want 1", s.Files)
+	}
+}
+
+func TestInspectMixedIndexAndOrphan(t *testing.T) {
+	dir := t.TempDir()
+	base := time.Date(2024, 1, 15, 10, 0, 0, 0, time.UTC)
+
+	writeMetadata(t, dir, base, time.Time{}, 0)
+
+	// Indexed file
+	writeIndex(t, dir, []rotate.IndexEntry{{
+		File:  "2024-01-15T100000-000.jsonl.zst",
+		From:  base,
+		To:    base.Add(5 * time.Minute),
+		Lines: 100,
+		Bytes: 5000,
+		Labels: map[string]map[string]int64{
+			"app": {"api": 100},
+		},
+	}})
+	writeFile(t, filepath.Join(dir, "2024-01-15T100000-000.jsonl.zst"), 2000)
+
+	// Orphan file (active, not yet indexed)
+	writeDataFile(t, dir, "2024-01-15T100500-000.jsonl", makeEntries(25, base.Add(5*time.Minute), "api"))
+
+	s, err := Inspect(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if s.TotalLines != 125 {
+		t.Errorf("TotalLines = %d, want 125 (100 indexed + 25 orphan)", s.TotalLines)
+	}
+	if s.Files != 2 {
+		t.Errorf("Files = %d, want 2", s.Files)
+	}
+}
+
 func TestInspectMissingMetadata(t *testing.T) {
 	dir := t.TempDir()
 	_, err := Inspect(dir)
