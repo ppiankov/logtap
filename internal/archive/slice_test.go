@@ -3,7 +3,6 @@ package archive
 import (
 	"bufio"
 	"bytes"
-	"io/ioutil"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -47,13 +46,13 @@ func createDummyCapture(t *testing.T, dir string, entries []IndexEntry, logs map
 		if err != nil {
 			t.Fatalf("Failed to create dummy log file %s: %v", filePath, err)
 		}
-		defer outFile.Close()
+		defer func() { _ = outFile.Close() }()
 
 		zstdWriter, err := zstd.NewWriter(outFile)
 		if err != nil {
 			t.Fatalf("Failed to create zstd writer for %s: %v", filePath, err)
 		}
-		defer zstdWriter.Close()
+		defer func() { _ = zstdWriter.Close() }()
 
 		for _, logLine := range fileLogs {
 			if _, err := zstdWriter.Write(append([]byte(logLine), '\n')); err != nil {
@@ -69,7 +68,7 @@ func readZstFile(t *testing.T, filePath string) []string {
 	if err != nil {
 		t.Fatalf("Failed to open zst file %s: %v", filePath, err)
 	}
-	defer inFile.Close()
+	defer func() { _ = inFile.Close() }()
 
 	zstdReader, err := zstd.NewReader(inFile)
 	if err != nil {
@@ -89,11 +88,7 @@ func readZstFile(t *testing.T, filePath string) []string {
 }
 
 func TestSlice_NoFilters(t *testing.T) {
-	tempDir, err := ioutil.TempDir("", "logtap-slice-test-")
-	if err != nil {
-		t.Fatalf("Failed to create temp dir: %v", err)
-	}
-	defer os.RemoveAll(tempDir)
+	tempDir := t.TempDir()
 
 	captureDir := filepath.Join(tempDir, "capture")
 	outputDir := filepath.Join(tempDir, "output")
@@ -120,7 +115,7 @@ func TestSlice_NoFilters(t *testing.T) {
 		OutputDir:  outputDir,
 	}
 
-	err = Slice(opts)
+	err := Slice(opts)
 	if err != nil {
 		t.Fatalf("Slice failed: %v", err)
 	}
@@ -166,11 +161,7 @@ func TestSlice_NoFilters(t *testing.T) {
 }
 
 func TestSlice_FromToFilter(t *testing.T) {
-	tempDir, err := ioutil.TempDir("", "logtap-slice-test-")
-	if err != nil {
-		t.Fatalf("Failed to create temp dir: %v", err)
-	}
-	defer os.RemoveAll(tempDir)
+	tempDir := t.TempDir()
 
 	captureDir := filepath.Join(tempDir, "capture")
 	outputDir := filepath.Join(tempDir, "output")
@@ -202,7 +193,7 @@ func TestSlice_FromToFilter(t *testing.T) {
 		To:         time.Date(2024, time.January, 1, 10, 15, 0, 0, time.UTC),
 	}
 
-	err = Slice(opts)
+	err := Slice(opts)
 	if err != nil {
 		t.Fatalf("Slice failed: %v", err)
 	}
@@ -249,11 +240,7 @@ func TestSlice_FromToFilter(t *testing.T) {
 }
 
 func TestSlice_LabelFilter(t *testing.T) {
-	tempDir, err := ioutil.TempDir("", "logtap-slice-test-")
-	if err != nil {
-		t.Fatalf("Failed to create temp dir: %v", err)
-	}
-	defer os.RemoveAll(tempDir)
+	tempDir := t.TempDir()
 
 	captureDir := filepath.Join(tempDir, "capture")
 	outputDir := filepath.Join(tempDir, "output")
@@ -284,7 +271,7 @@ func TestSlice_LabelFilter(t *testing.T) {
 		Labels:     []LabelFilter{{Key: "app", Value: "api"}},
 	}
 
-	err = Slice(opts)
+	err := Slice(opts)
 	if err != nil {
 		t.Fatalf("Slice failed: %v", err)
 	}
@@ -327,11 +314,7 @@ func TestSlice_LabelFilter(t *testing.T) {
 }
 
 func TestSlice_GrepFilter(t *testing.T) {
-	tempDir, err := ioutil.TempDir("", "logtap-slice-test-")
-	if err != nil {
-		t.Fatalf("Failed to create temp dir: %v", err)
-	}
-	defer os.RemoveAll(tempDir)
+	tempDir := t.TempDir()
 
 	captureDir := filepath.Join(tempDir, "capture")
 	outputDir := filepath.Join(tempDir, "output")
@@ -359,7 +342,7 @@ func TestSlice_GrepFilter(t *testing.T) {
 		Grep:       regexp.MustCompile("error"),
 	}
 
-	err = Slice(opts)
+	err := Slice(opts)
 	if err != nil {
 		t.Fatalf("Slice failed: %v", err)
 	}
@@ -392,11 +375,7 @@ func TestSlice_GrepFilter(t *testing.T) {
 }
 
 func TestSlice_EmptyOutputWhenNoMatches(t *testing.T) {
-	tempDir, err := ioutil.TempDir("", "logtap-slice-test-")
-	if err != nil {
-		t.Fatalf("Failed to create temp dir: %v", err)
-	}
-	defer os.RemoveAll(tempDir)
+	tempDir := t.TempDir()
 
 	captureDir := filepath.Join(tempDir, "capture")
 	outputDir := filepath.Join(tempDir, "output")
@@ -419,7 +398,7 @@ func TestSlice_EmptyOutputWhenNoMatches(t *testing.T) {
 		Labels:     []LabelFilter{{Key: "app", Value: "nonexistent"}},
 	}
 
-	err = Slice(opts)
+	err := Slice(opts)
 	if err == nil || !strings.Contains(err.Error(), "no matching log lines found") {
 		t.Fatalf("Expected 'no matching log lines found' error, got: %v", err)
 	}
@@ -431,11 +410,7 @@ func TestSlice_EmptyOutputWhenNoMatches(t *testing.T) {
 }
 
 func TestSlice_OutputDirIsInput(t *testing.T) {
-	tempDir, err := ioutil.TempDir("", "logtap-slice-test-")
-	if err != nil {
-		t.Fatalf("Failed to create temp dir: %v", err)
-	}
-	defer os.RemoveAll(tempDir)
+	tempDir := t.TempDir()
 
 	captureDir := filepath.Join(tempDir, "capture")
 
@@ -444,7 +419,7 @@ func TestSlice_OutputDirIsInput(t *testing.T) {
 		OutputDir:  captureDir, // Same as input
 	}
 
-	err = Slice(opts)
+	err := Slice(opts)
 	if err == nil || !strings.Contains(err.Error(), "output directory cannot be the same as capture directory") {
 		t.Fatalf("Expected error about output directory being same as capture directory, got: %v", err)
 	}

@@ -24,6 +24,7 @@ func newSliceCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "slice <capture-directory>",
 		Short: "Extract a time range and/or label filter into a new smaller capture directory",
+		Long:  "Slice reads a capture directory, applies time range and/or label filters, and writes matching entries to a new capture directory with its own metadata and index.",
 		Args:  cobra.ExactArgs(1),
 		Run: func(cmd *cobra.Command, args []string) {
 			captureDir := args[0]
@@ -87,14 +88,60 @@ func newSliceCmd() *cobra.Command {
 		},
 	}
 
-	cmd.Flags().StringVar(&sliceFrom, "from", "", "Start time (absolute or relative: 10:32, 2024-01-15T10:32:00Z, -30m)")
-	cmd.Flags().StringVar(&sliceTo, "to", "", "End time (same formats as --from)")
-	cmd.Flags().StringArrayVar(&sliceLabel, "label", []string{}, "Label filter (key=value), repeatable")
-	cmd.Flags().StringVar(&sliceGrep, "grep", "", "Regex filter on message content")
-	cmd.Flags().StringVarP(&sliceOut, "out", "o", "", "Output directory for the new capture (required)")
-	cmd.MarkFlagRequired("out")
+	cmd.Flags().StringVar(&sliceFrom, "from", "", "start time (absolute or relative: 10:32, 2024-01-15T10:32:00Z, -30m)")
+	cmd.Flags().StringVar(&sliceTo, "to", "", "end time (same formats as --from)")
+	cmd.Flags().StringArrayVar(&sliceLabel, "label", []string{}, "label filter (key=value), repeatable")
+	cmd.Flags().StringVar(&sliceGrep, "grep", "", "regex filter on message content")
+	cmd.Flags().StringVarP(&sliceOut, "out", "o", "", "output directory for the new capture (required)")
+	_ = cmd.MarkFlagRequired("out")
 
 	return cmd
+}
+
+// runSlice is the testable entry point for the slice command.
+func runSlice(src, fromStr, toStr string, labels []string, grepStr, outDir string) error {
+	now := time.Now()
+	var fromTime, toTime time.Time
+	var err error
+
+	if fromStr != "" {
+		fromTime, err = archive.ParseTimeFlag(fromStr, now, now)
+		if err != nil {
+			return fmt.Errorf("invalid --from: %w", err)
+		}
+	}
+	if toStr != "" {
+		toTime, err = archive.ParseTimeFlag(toStr, now, now)
+		if err != nil {
+			return fmt.Errorf("invalid --to: %w", err)
+		}
+	}
+
+	var labelFilters []archive.LabelFilter
+	for _, l := range labels {
+		parts := strings.SplitN(l, "=", 2)
+		if len(parts) != 2 || parts[0] == "" {
+			return fmt.Errorf("invalid label %q: expected key=value", l)
+		}
+		labelFilters = append(labelFilters, archive.LabelFilter{Key: parts[0], Value: parts[1]})
+	}
+
+	var grepRegex *regexp.Regexp
+	if grepStr != "" {
+		grepRegex, err = regexp.Compile(grepStr)
+		if err != nil {
+			return fmt.Errorf("invalid grep: %w", err)
+		}
+	}
+
+	return archive.Slice(archive.SliceOptions{
+		CaptureDir: src,
+		OutputDir:  outDir,
+		From:       fromTime,
+		To:         toTime,
+		Labels:     labelFilters,
+		Grep:       grepRegex,
+	})
 }
 
 // parseTime attempts to parse a string into a time.Time, supporting RFC3339, 15:04 (HH:MM), or duration relative to now.
