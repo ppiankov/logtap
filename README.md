@@ -1,5 +1,9 @@
 <p align="center">
-  <img src="assets/logo.svg" alt="logtap" width="128">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="assets/logo-dark.svg">
+    <source media="(prefers-color-scheme: light)" srcset="assets/logo-light.svg">
+    <img src="assets/logo-light.svg" alt="logtap" width="128">
+  </picture>
 </p>
 
 # logtap
@@ -58,7 +62,7 @@ cd logtap && make build
 ./bin/logtap version
 
 # Start receiver
-logtap recv --listen :3100 --dir ./capture --max-disk 1GB --redact
+logtap recv --dir ./capture --max-disk 1GB --redact
 
 # Send test data
 curl -X POST http://localhost:3100/loki/api/v1/push \
@@ -101,7 +105,8 @@ logtap triage ./capture --out ./triage           # scan for anomalies
 
 ```bash
 # Receiver
-logtap recv --listen :3100 --dir ./capture --max-disk 50GB --redact
+logtap recv --dir ./capture --max-disk 50GB --redact              # localhost:3100 (default)
+logtap recv --listen :3100 --dir ./capture                       # all interfaces
 logtap recv --headless                           # no TUI, log to stderr
 logtap recv --tls-cert cert.pem --tls-key key.pem
 logtap recv --in-cluster --image ghcr.io/ppiankov/logtap-forwarder:latest
