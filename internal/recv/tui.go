@@ -8,6 +8,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/muesli/termenv"
 )
 
 // DiskReporter provides disk usage for the TUI.
@@ -76,6 +77,10 @@ func tickCmd() tea.Cmd {
 
 // NewTUIModel creates a TUI model wired to the pipeline data sources.
 func NewTUIModel(stats *Stats, ring *LogRing, disk DiskReporter, diskCap int64, writer *Writer, listen, dir, redactInfo string) TUIModel {
+	// Force ANSI256 color profile so badge colors render reliably
+	// regardless of terminal auto-detection.
+	lipgloss.SetColorProfile(termenv.ANSI256)
+
 	return TUIModel{
 		stats:      stats,
 		ring:       ring,
