@@ -4,6 +4,33 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [1.0.6] - 2026-02-18
+
+### Fixed
+
+- `grep` and TUI search (`/`) now match against label values, not just message content
+- `inspect` counts lines from orphan files (active capture not yet indexed)
+- Slice command test compatibility (`runSlice` wrapper)
+- Lint fixes in `slice_test.go` (deprecated `ioutil`, unchecked error returns)
+
+## [1.0.5] - 2026-02-18
+
+### Added
+
+- `--json` flag on `watch` command for machine-readable output
+
+### Fixed
+
+- Consistent error wrapping in `archive` package (`ReadMetadata`, `ReadIndex`, `WriteIndex`)
+- `slice` command handles both compressed and uncompressed capture files
+- Help text consistency: lowercase flag descriptions, added Long description to `slice`
+- Lint errors in `slice.go` and `index.go`
+
+### Testing
+
+- New tests for `buffers`, `contextutil`, and `logtypes` packages (100% coverage)
+- All internal packages >= 85% coverage
+
 ## [1.0.4] - 2026-02-17
 
 ### Fixed
