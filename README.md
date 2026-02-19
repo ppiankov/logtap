@@ -126,6 +126,14 @@ logtap open ./capture --from 10:32 --to 10:45 --label app=gateway
 logtap export ./capture --format parquet --out capture.parquet
 logtap export ./capture --format csv --grep "error|timeout" --out errors.csv
 
+# Grep
+logtap grep "error|timeout" ./capture                             # search all files
+logtap grep "tracking-id-abc123" ./capture --sort                 # chronological order
+logtap grep "OOMKilled" ./capture --label app=worker --count      # count per file
+
+# Manual sort (when not using --sort)
+logtap grep "tracking-id" ./capture | jq -s 'sort_by(.ts)[]' -c
+
 # Triage
 logtap triage ./capture --out ./triage --jobs 8
 
@@ -145,7 +153,7 @@ logtap recv --redact --redact-patterns ./patterns.yaml --dir ./capture
 | `d` / `u` | Half-page down / up |
 | `G` / `gg` | Jump to bottom / top |
 | `f` | Toggle follow mode |
-| `/` | Search (regex) |
+| `/` | Search (regex); prefix with `!` to negate |
 | `n` / `N` | Next / previous match |
 | `q` | Quit |
 
