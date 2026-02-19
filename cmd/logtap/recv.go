@@ -118,6 +118,10 @@ func runRecv(listen, dir, maxFileStr, maxDiskStr string, compress bool, redactFl
 		}
 	}
 
+	if bufSize > maxBufSize {
+		return fmt.Errorf("--buffer %d exceeds maximum of %d", bufSize, maxBufSize)
+	}
+
 	maxFile, err := parseByteSize(maxFileStr)
 	if err != nil {
 		return fmt.Errorf("invalid --max-file: %w", err)
