@@ -206,20 +206,26 @@ func TestRunGrep_Success(t *testing.T) {
 	defer restore()
 
 	t.Run("matches", func(t *testing.T) {
-		if err := runGrep("error", dir, "", "", nil, false, false); err != nil {
+		if err := runGrep("error", dir, "", "", nil, false, false, "json"); err != nil {
 			t.Fatalf("runGrep: %v", err)
 		}
 	})
 
 	t.Run("count", func(t *testing.T) {
-		if err := runGrep("error", dir, "", "", nil, true, false); err != nil {
+		if err := runGrep("error", dir, "", "", nil, true, false, "json"); err != nil {
 			t.Fatalf("runGrep count: %v", err)
 		}
 	})
 
 	t.Run("sort", func(t *testing.T) {
-		if err := runGrep("error", dir, "", "", nil, false, true); err != nil {
+		if err := runGrep("error", dir, "", "", nil, false, true, "json"); err != nil {
 			t.Fatalf("runGrep sort: %v", err)
+		}
+	})
+
+	t.Run("text", func(t *testing.T) {
+		if err := runGrep("error", dir, "", "", nil, false, false, "text"); err != nil {
+			t.Fatalf("runGrep text: %v", err)
 		}
 	})
 }
@@ -333,7 +339,7 @@ func TestRunGrep_NoMatches(t *testing.T) {
 	restore := redirectOutput(t)
 	defer restore()
 
-	if err := runGrep("zzz_no_match_zzz", dir, "", "", nil, false, false); err != nil {
+	if err := runGrep("zzz_no_match_zzz", dir, "", "", nil, false, false, "json"); err != nil {
 		t.Fatalf("runGrep no match: %v", err)
 	}
 }
@@ -343,7 +349,7 @@ func TestRunGrep_WithLabelFilter(t *testing.T) {
 	restore := redirectOutput(t)
 	defer restore()
 
-	if err := runGrep("hello", dir, "", "", []string{"app=web"}, false, false); err != nil {
+	if err := runGrep("hello", dir, "", "", []string{"app=web"}, false, false, "json"); err != nil {
 		t.Fatalf("runGrep label: %v", err)
 	}
 }

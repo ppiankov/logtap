@@ -8,7 +8,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
-- `grep --sort` flag for chronological output across multiple files
+- `grep --format text` for human-readable timeline output (sorted chronologically)
+- `grep --sort` flag for chronological JSONL output across multiple files
 - Negate search in TUI (`/!pattern` excludes matching lines)
 
 ## [1.0.7] - 2026-02-18
