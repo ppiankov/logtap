@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/signal"
 	"strconv"
+	"strings"
 	"syscall"
 	"time"
 
@@ -19,12 +20,13 @@ import (
 )
 
 const (
-	envTarget     = "LOGTAP_TARGET"
-	envSession    = "LOGTAP_SESSION"
-	envPodName    = "LOGTAP_POD_NAME"
-	envNamespace  = "LOGTAP_NAMESPACE"
-	envBufferSize = "LOGTAP_BUFFER_SIZE"
-	envRetryMax   = "LOGTAP_RETRY_MAX"
+	envTarget        = "LOGTAP_TARGET"
+	envSession       = "LOGTAP_SESSION"
+	envPodName       = "LOGTAP_POD_NAME"
+	envNamespace     = "LOGTAP_NAMESPACE"
+	envBufferSize    = "LOGTAP_BUFFER_SIZE"
+	envRetryMax      = "LOGTAP_RETRY_MAX"
+	envTLSSkipVerify = "LOGTAP_TLS_SKIP_VERIFY"
 
 	defaultHealthAddr    = ":9091"
 	defaultBatchSize     = 100
@@ -34,13 +36,14 @@ const (
 )
 
 type Config struct {
-	Target     string
-	Session    string
-	PodName    string
-	Namespace  string
-	HealthAddr string
-	BufferSize int
-	MaxRetries int
+	Target        string
+	Session       string
+	PodName       string
+	Namespace     string
+	HealthAddr    string
+	BufferSize    int
+	MaxRetries    int
+	TLSSkipVerify bool
 }
 
 type logReader interface {
@@ -111,6 +114,9 @@ func loadConfigFromEnv(getenv func(string) string) (Config, error) {
 			return Config{}, fmt.Errorf("invalid %s: %w", envRetryMax, err)
 		}
 		cfg.MaxRetries = n
+	}
+	if v := getenv(envTLSSkipVerify); v == "1" || v == "true" {
+		cfg.TLSSkipVerify = true
 	}
 	if err := validateConfig(cfg); err != nil {
 		return Config{}, err
@@ -199,6 +205,9 @@ func run(ctx context.Context, cfg Config, deps Dependencies) error {
 	}
 	if deps.NewPusher == nil {
 		deps.NewPusher = func(target string) logPusher {
+			if cfg.TLSSkipVerify || strings.HasPrefix(target, "https://") {
+				return forward.NewTLSPusher(target, cfg.TLSSkipVerify)
+			}
 			return forward.NewPusher(target)
 		}
 	}
