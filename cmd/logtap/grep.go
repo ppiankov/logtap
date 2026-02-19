@@ -4,18 +4,21 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"sort"
 
 	"github.com/spf13/cobra"
 
 	"github.com/ppiankov/logtap/internal/archive"
+	"github.com/ppiankov/logtap/internal/recv"
 )
 
 func newGrepCmd() *cobra.Command {
 	var (
-		fromStr string
-		toStr   string
-		labels  []string
-		count   bool
+		fromStr  string
+		toStr    string
+		labels   []string
+		count    bool
+		sortFlag bool
 	)
 
 	cmd := &cobra.Command{
@@ -34,7 +37,7 @@ func newGrepCmd() *cobra.Command {
 				}
 			}
 
-			return runGrep(pattern, captureDir, fromStr, toStr, labels, count)
+			return runGrep(pattern, captureDir, fromStr, toStr, labels, count, sortFlag)
 		},
 	}
 
@@ -42,11 +45,12 @@ func newGrepCmd() *cobra.Command {
 	cmd.Flags().StringVar(&toStr, "to", "", "end time filter (RFC3339, HH:MM, or -30m)")
 	cmd.Flags().StringSliceVar(&labels, "label", nil, "label filter (key=value, repeatable)")
 	cmd.Flags().BoolVar(&count, "count", false, "show match counts per file instead of lines")
+	cmd.Flags().BoolVar(&sortFlag, "sort", false, "sort results by timestamp (chronological order)")
 
 	return cmd
 }
 
-func runGrep(pattern, src, fromStr, toStr string, labels []string, countMode bool) error {
+func runGrep(pattern, src, fromStr, toStr string, labels []string, countMode, sortByTime bool) error {
 	reader, err := archive.NewReader(src)
 	if err != nil {
 		return fmt.Errorf("open capture: %w", err)
@@ -67,9 +71,14 @@ func runGrep(pattern, src, fromStr, toStr string, labels []string, countMode boo
 
 	enc := json.NewEncoder(os.Stdout)
 
+	var collected []recv.LogEntry
 	var totalMatches int64
 	onMatch := func(m archive.GrepMatch) {
-		_ = enc.Encode(m.Entry)
+		if sortByTime {
+			collected = append(collected, m.Entry)
+		} else {
+			_ = enc.Encode(m.Entry)
+		}
 	}
 
 	progress := func(p archive.GrepProgress) {
@@ -87,6 +96,15 @@ func runGrep(pattern, src, fromStr, toStr string, labels []string, countMode boo
 	if err != nil {
 		fmt.Fprintln(os.Stderr)
 		return err
+	}
+
+	if sortByTime && len(collected) > 0 {
+		sort.Slice(collected, func(i, j int) bool {
+			return collected[i].Timestamp.Before(collected[j].Timestamp)
+		})
+		for _, e := range collected {
+			_ = enc.Encode(e)
+		}
 	}
 
 	if countMode {
