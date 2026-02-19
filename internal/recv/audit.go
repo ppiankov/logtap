@@ -10,10 +10,11 @@ import (
 
 // AuditEntry records a single auditable event.
 type AuditEntry struct {
-	Timestamp time.Time `json:"timestamp"`
-	Event     string    `json:"event"`
-	RemoteIP  string    `json:"remote_ip,omitempty"`
-	Lines     int       `json:"lines,omitempty"`
+	Timestamp time.Time     `json:"timestamp"`
+	Event     string        `json:"event"`
+	RemoteIP  string        `json:"remote_ip,omitempty"`
+	Lines     int           `json:"lines,omitempty"`
+	Bytes     int           `json:"bytes,omitempty"`
 	Duration  time.Duration `json:"duration_ms,omitempty"`
 }
 
