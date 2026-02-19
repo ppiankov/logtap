@@ -3,10 +3,12 @@ package forward
 import (
 	"bytes"
 	"context"
+	"crypto/tls"
 	"encoding/json"
 	"fmt"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 )
 
@@ -43,8 +45,23 @@ type Pusher struct {
 }
 
 // NewPusher creates a Pusher targeting the given receiver address.
+// Targets prefixed with https:// use TLS; plain host:port defaults to http://.
 func NewPusher(target string) *Pusher {
 	return NewPusherWithClient(target, &http.Client{Timeout: 10 * time.Second})
+}
+
+// NewTLSPusher creates a Pusher with TLS support.
+// Set skipVerify to true for self-signed certificates.
+func NewTLSPusher(target string, skipVerify bool) *Pusher {
+	client := &http.Client{
+		Timeout: 10 * time.Second,
+		Transport: &http.Transport{
+			TLSClientConfig: &tls.Config{
+				InsecureSkipVerify: skipVerify, //nolint:gosec // user-controlled flag for self-signed certs
+			},
+		},
+	}
+	return NewPusherWithClient(target, client)
 }
 
 // NewPusherWithClient creates a Pusher with a custom HTTP client (useful for tests).
@@ -97,7 +114,7 @@ func (p *Pusher) Push(ctx context.Context, labels map[string]string, lines []Tim
 		return ErrBufferExceeded
 	}
 
-	url := "http://" + p.target + pushPath
+	url := buildPushURL(p.target)
 
 	var lastErr error
 	for attempt := range p.maxRetries {
@@ -147,6 +164,24 @@ func (p *Pusher) Push(ctx context.Context, labels map[string]string, lines []Tim
 
 // ErrBufferExceeded is returned when the serialized payload exceeds the buffer limit.
 var ErrBufferExceeded = fmt.Errorf("payload exceeds %d byte buffer limit", maxBufferBytes)
+
+// buildPushURL constructs the push endpoint URL from a target address.
+// Targets with an explicit scheme (http:// or https://) are used as-is.
+// Plain host:port targets default to http://.
+func buildPushURL(target string) string {
+	if strings.HasPrefix(target, "https://") || strings.HasPrefix(target, "http://") {
+		return strings.TrimRight(target, "/") + pushPath
+	}
+	return "http://" + target + pushPath
+}
+
+// TargetURL constructs a URL for the given target and path, respecting scheme prefixes.
+func TargetURL(target, path string) string {
+	if strings.HasPrefix(target, "https://") || strings.HasPrefix(target, "http://") {
+		return strings.TrimRight(target, "/") + path
+	}
+	return "http://" + target + path
+}
 
 func backoff(ctx context.Context, attempt int, maxBackoff time.Duration) {
 	d := time.Duration(1<<uint(attempt)) * time.Second

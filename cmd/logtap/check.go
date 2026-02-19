@@ -10,6 +10,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/ppiankov/logtap/internal/forward"
 	"github.com/ppiankov/logtap/internal/k8s"
 	"github.com/ppiankov/logtap/internal/sidecar"
 )
@@ -138,7 +139,7 @@ func runCheck(namespace string, jsonOutput bool) error {
 	// Orphan detection
 	checker := func(target string) bool {
 		client := &http.Client{Timeout: 3 * time.Second}
-		resp, err := client.Get("http://" + target + "/metrics")
+		resp, err := client.Get(forward.TargetURL(target, "/metrics"))
 		if err != nil {
 			return false
 		}
