@@ -4,6 +4,13 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [1.0.8] - 2026-02-19
+
+### Added
+
+- `grep --sort` flag for chronological output across multiple files
+- Negate search in TUI (`/!pattern` excludes matching lines)
+
 ## [1.0.7] - 2026-02-18
 
 ### Fixed
