@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"net"
 	"os"
 	"os/signal"
 	"regexp"
@@ -107,7 +108,7 @@ const maxBufSize = 1 << 20 // 1,048,576
 
 func runRecv(listen, dir, maxFileStr, maxDiskStr string, compress bool, redactFlag, redactPatterns string, bufSize int, headless bool, tlsCert, tlsKey string, webhookURLs []string, webhookEvents string, alertRulesPath string) error {
 	// Check for insecure direct IP mode without TLS
-	if !inCluster && tlsCert == "" && tlsKey == "" {
+	if tlsCert == "" && tlsKey == "" {
 		host, _, err := net.SplitHostPort(listen)
 		if err != nil {
 			host = listen // Assume listen is just a host if split fails
