@@ -253,3 +253,72 @@ func TestPush_OnRetryCallback(t *testing.T) {
 		t.Errorf("retryCount = %d, want 3", retryCount)
 	}
 }
+
+func TestBuildPushURL(t *testing.T) {
+	tests := []struct {
+		target string
+		want   string
+	}{
+		{"receiver:3100", "http://receiver:3100/loki/api/v1/push"},
+		{"http://receiver:3100", "http://receiver:3100/loki/api/v1/push"},
+		{"https://receiver:3100", "https://receiver:3100/loki/api/v1/push"},
+		{"https://receiver:3100/", "https://receiver:3100/loki/api/v1/push"},
+	}
+	for _, tt := range tests {
+		got := buildPushURL(tt.target)
+		if got != tt.want {
+			t.Errorf("buildPushURL(%q) = %q, want %q", tt.target, got, tt.want)
+		}
+	}
+}
+
+func TestTargetURL(t *testing.T) {
+	tests := []struct {
+		target, path, want string
+	}{
+		{"receiver:3100", "/metrics", "http://receiver:3100/metrics"},
+		{"https://receiver:3100", "/metrics", "https://receiver:3100/metrics"},
+		{"http://receiver:3100", "/healthz", "http://receiver:3100/healthz"},
+	}
+	for _, tt := range tests {
+		got := TargetURL(tt.target, tt.path)
+		if got != tt.want {
+			t.Errorf("TargetURL(%q, %q) = %q, want %q", tt.target, tt.path, got, tt.want)
+		}
+	}
+}
+
+func TestPush_HTTPSTarget(t *testing.T) {
+	var gotScheme string
+	client := &http.Client{
+		Transport: roundTripperFunc(func(r *http.Request) (*http.Response, error) {
+			gotScheme = r.URL.Scheme
+			return &http.Response{
+				StatusCode: http.StatusNoContent,
+				Body:       io.NopCloser(bytes.NewReader(nil)),
+				Header:     make(http.Header),
+			}, nil
+		}),
+	}
+
+	p := NewPusherWithClient("https://receiver:3100", client)
+	err := p.Push(context.Background(), map[string]string{"pod": "test"}, []TimestampedLine{
+		{Timestamp: time.Now(), Line: "test"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if gotScheme != "https" {
+		t.Errorf("scheme = %q, want %q", gotScheme, "https")
+	}
+}
+
+func TestNewTLSPusher(t *testing.T) {
+	p := NewTLSPusher("https://receiver:3100", true)
+	if p == nil {
+		t.Fatal("expected non-nil pusher")
+	}
+	if p.target != "https://receiver:3100" {
+		t.Errorf("target = %q, want %q", p.target, "https://receiver:3100")
+	}
+}
