@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"sort"
+	"strings"
 
 	"github.com/spf13/cobra"
 
@@ -14,11 +15,12 @@ import (
 
 func newGrepCmd() *cobra.Command {
 	var (
-		fromStr  string
-		toStr    string
-		labels   []string
-		count    bool
-		sortFlag bool
+		fromStr    string
+		toStr      string
+		labels     []string
+		count      bool
+		sortFlag   bool
+		formatFlag string
 	)
 
 	cmd := &cobra.Command{
@@ -37,7 +39,7 @@ func newGrepCmd() *cobra.Command {
 				}
 			}
 
-			return runGrep(pattern, captureDir, fromStr, toStr, labels, count, sortFlag)
+			return runGrep(pattern, captureDir, fromStr, toStr, labels, count, sortFlag, formatFlag)
 		},
 	}
 
@@ -46,11 +48,17 @@ func newGrepCmd() *cobra.Command {
 	cmd.Flags().StringSliceVar(&labels, "label", nil, "label filter (key=value, repeatable)")
 	cmd.Flags().BoolVar(&count, "count", false, "show match counts per file instead of lines")
 	cmd.Flags().BoolVar(&sortFlag, "sort", false, "sort results by timestamp (chronological order)")
+	cmd.Flags().StringVar(&formatFlag, "format", "json", "output format: json or text (text implies --sort)")
 
 	return cmd
 }
 
-func runGrep(pattern, src, fromStr, toStr string, labels []string, countMode, sortByTime bool) error {
+func runGrep(pattern, src, fromStr, toStr string, labels []string, countMode, sortByTime bool, format string) error {
+	textMode := format == "text"
+	if textMode {
+		sortByTime = true // text timeline requires chronological order
+	}
+
 	reader, err := archive.NewReader(src)
 	if err != nil {
 		return fmt.Errorf("open capture: %w", err)
@@ -102,8 +110,22 @@ func runGrep(pattern, src, fromStr, toStr string, labels []string, countMode, so
 		sort.Slice(collected, func(i, j int) bool {
 			return collected[i].Timestamp.Before(collected[j].Timestamp)
 		})
-		for _, e := range collected {
-			_ = enc.Encode(e)
+		if textMode {
+			// Find the longest label value for column alignment
+			maxLabel := 0
+			for _, e := range collected {
+				l := len(entryLabel(e))
+				if l > maxLabel {
+					maxLabel = l
+				}
+			}
+			for _, e := range collected {
+				printTextLine(e, maxLabel)
+			}
+		} else {
+			for _, e := range collected {
+				_ = enc.Encode(e)
+			}
 		}
 	}
 
@@ -121,4 +143,25 @@ func runGrep(pattern, src, fromStr, toStr string, labels []string, countMode, so
 		archive.FormatCount(totalMatches), len(counts))
 
 	return nil
+}
+
+func entryLabel(e recv.LogEntry) string {
+	if app := e.Labels["app"]; app != "" {
+		return app
+	}
+	// fall back to first label value
+	for _, v := range e.Labels {
+		return v
+	}
+	return "-"
+}
+
+func printTextLine(e recv.LogEntry, maxLabel int) {
+	ts := e.Timestamp.Format("15:04:05.000")
+	label := entryLabel(e)
+	pad := ""
+	if len(label) < maxLabel {
+		pad = strings.Repeat(" ", maxLabel-len(label))
+	}
+	fmt.Printf("%s [%s]%s %s\n", ts, label, pad, e.Message)
 }

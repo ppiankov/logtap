@@ -339,7 +339,7 @@ func TestRunExport_InvalidDir(t *testing.T) {
 }
 
 func TestRunGrep_InvalidDir(t *testing.T) {
-	err := runGrep("pattern", "/nonexistent/dir", "", "", nil, false, false)
+	err := runGrep("pattern", "/nonexistent/dir", "", "", nil, false, false, "json")
 	if err == nil {
 		t.Error("expected error for nonexistent dir")
 	}

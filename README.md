@@ -128,7 +128,8 @@ logtap export ./capture --format csv --grep "error|timeout" --out errors.csv
 
 # Grep
 logtap grep "error|timeout" ./capture                             # search all files
-logtap grep "tracking-id-abc123" ./capture --sort                 # chronological order
+logtap grep "ORD-12345" ./capture --format text                   # human-readable timeline
+logtap grep "tracking-id-abc123" ./capture --sort                 # chronological JSONL
 logtap grep "OOMKilled" ./capture --label app=worker --count      # count per file
 
 # Manual sort (when not using --sort)
