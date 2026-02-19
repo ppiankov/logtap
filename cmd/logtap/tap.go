@@ -9,6 +9,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/ppiankov/logtap/internal/forward"
 	"github.com/ppiankov/logtap/internal/k8s"
 	"github.com/ppiankov/logtap/internal/sidecar"
 )
@@ -38,6 +39,9 @@ func newTapCmd() *cobra.Command {
 		Long:  "Tap patches Kubernetes workloads to add a logtap log-forwarding sidecar container. The sidecar sends logs to the logtap receiver via the Loki push API.",
 		PreRunE: func(cmd *cobra.Command, args []string) error {
 			applyConfigDefaults(cmd)
+			if err := sidecar.ValidateTarget(target); err != nil {
+				return err
+			}
 			if err := validateQuantity("--sidecar-memory", sidecarMemory); err != nil {
 				return err
 			}
@@ -311,7 +315,7 @@ func rollbackTap(ctx context.Context, c *k8s.Client, tapped []*k8s.Workload, ses
 
 func checkReceiver(target string) error {
 	client := &http.Client{Timeout: 5 * time.Second}
-	resp, err := client.Get("http://" + target + "/metrics")
+	resp, err := client.Get(forward.TargetURL(target, "/metrics"))
 	if err != nil {
 		return err
 	}

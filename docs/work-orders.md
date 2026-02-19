@@ -2225,7 +2225,7 @@ logtap deploy --namespace my-team --cleanup
 
 ---
 
-### WO-65: Add TLS support to forwarder push path
+### WO-65: Add TLS support to forwarder push path [DONE]
 
 **Severity:** MEDIUM
 

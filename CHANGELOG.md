@@ -4,6 +4,14 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [1.0.9] - 2026-02-20
+
+### Added
+
+- TLS support for forwarder push path (`https://` target auto-detection)
+- `LOGTAP_TLS_SKIP_VERIFY` env var for self-signed certificates
+- Scheme-aware URL construction in `tap` and `check` commands
+
 ## [1.0.8] - 2026-02-19
 
 ### Added
