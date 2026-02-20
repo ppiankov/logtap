@@ -81,10 +81,12 @@ func runReport(src, outDir string, jsonOutput, htmlOutput bool, jobs, top int) e
 		return fmt.Errorf("create report.json: %w", err)
 	}
 	if err := result.WriteJSON(f); err != nil {
-		f.Close()
+		_ = f.Close()
 		return fmt.Errorf("write report.json: %w", err)
 	}
-	f.Close()
+	if err := f.Close(); err != nil {
+		return fmt.Errorf("close report.json: %w", err)
+	}
 
 	// Write report.html
 	if htmlOutput {
@@ -98,10 +100,12 @@ func runReport(src, outDir string, jsonOutput, htmlOutput bool, jobs, top int) e
 		triageResult, _ := archive.Triage(src, triageCfg, nil)
 		meta, _ := recv.ReadMetadata(src)
 		if err := result.WriteHTML(hf, triageResult, meta); err != nil {
-			hf.Close()
+			_ = hf.Close()
 			return fmt.Errorf("write report.html: %w", err)
 		}
-		hf.Close()
+		if err := hf.Close(); err != nil {
+			return fmt.Errorf("close report.html: %w", err)
+		}
 	}
 
 	fmt.Fprintf(os.Stderr, "Report: %s\n", filepath.Join(outDir, "report.json"))
