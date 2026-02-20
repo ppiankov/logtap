@@ -3,6 +3,7 @@ package sidecar
 import (
 	"context"
 	"fmt"
+	"regexp"
 
 	"github.com/ppiankov/logtap/internal/k8s"
 
@@ -25,6 +26,18 @@ const (
 	fluentBitLogsVolumeName   = "logtap-fb-varlog"
 	fluentBitLogsPath         = "/var/log/pods"
 )
+
+// validTarget matches hostname or IP with optional port: "host:3100", "10.0.0.1:9090", "my-svc.ns.svc.cluster.local".
+var validTarget = regexp.MustCompile(`^[a-zA-Z0-9.\-]+(:[0-9]+)?$`)
+
+// ValidateTarget checks that a target string is a safe hostname:port value
+// and cannot inject arbitrary Fluent Bit configuration stanzas.
+func ValidateTarget(target string) error {
+	if !validTarget.MatchString(target) {
+		return fmt.Errorf("invalid --target %q: must be hostname or hostname:port (alphanumeric, dots, hyphens only)", target)
+	}
+	return nil
+}
 
 // FluentBitConfig generates the Fluent Bit configuration for a session.
 func FluentBitConfig(target, sessionID, namespace string) string {
