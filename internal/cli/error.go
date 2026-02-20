@@ -88,9 +88,9 @@ func FormatError(w io.Writer, err error, jsonMode bool) {
 			}
 		}
 		data, _ := json.Marshal(ce)
-		fmt.Fprintln(w, string(data))
+		_, _ = fmt.Fprintln(w, string(data))
 		return
 	}
 
-	fmt.Fprintf(w, "error: %v\n", err)
+	_, _ = fmt.Fprintf(w, "error: %v\n", err)
 }

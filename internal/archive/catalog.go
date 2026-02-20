@@ -105,22 +105,22 @@ func WriteCatalogJSON(w io.Writer, entries []CatalogEntry) error {
 // WriteCatalogText writes catalog entries as a formatted table.
 func WriteCatalogText(w io.Writer, entries []CatalogEntry) {
 	if len(entries) == 0 {
-		fmt.Fprintln(w, "No captures found.")
+		_, _ = fmt.Fprintln(w, "No captures found.")
 		return
 	}
 
 	tw := tabwriter.NewWriter(w, 0, 4, 2, ' ', 0)
-	fmt.Fprintln(tw, "CAPTURE\tSTARTED\tSTOPPED\tFILES\tENTRIES\tSIZE")
+	_, _ = fmt.Fprintln(tw, "CAPTURE\tSTARTED\tSTOPPED\tFILES\tENTRIES\tSIZE")
 	for _, e := range entries {
 		started := e.Started.Format("2006-01-02 15:04")
 		stopped := "(active)"
 		if !e.Active {
 			stopped = e.Stopped.Format("2006-01-02 15:04")
 		}
-		fmt.Fprintf(tw, "%s\t%s\t%s\t%d\t%s\t%s\n",
+		_, _ = fmt.Fprintf(tw, "%s\t%s\t%s\t%d\t%s\t%s\n",
 			e.Dir, started, stopped, e.Files, FormatCount(e.Entries), formatBytes(e.Bytes))
 	}
-	tw.Flush()
+	_ = tw.Flush()
 }
 
 func formatBytes(b int64) string {
