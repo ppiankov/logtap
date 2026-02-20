@@ -77,9 +77,19 @@ logtap open ./capture
 
 logtap is designed to be used by autonomous agents without plugins or SDKs. Single binary, deterministic output, structured JSON, bounded jobs.
 
+```bash
+# Agent install (no brew needed)
+curl -LO https://github.com/ppiankov/logtap/releases/latest/download/logtap_linux_amd64.tar.gz
+tar -xzf logtap_linux_amd64.tar.gz && sudo mv logtap /usr/local/bin/
+```
+
 Agents: read [`SKILL.md`](SKILL.md) for commands, flags, JSON output structure, and incident workflow.
 
-Key pattern for agents: `logtap triage <capture-dir> --json` for anomaly scan results, `logtap inspect <dir> --json` for capture summary.
+Key patterns for agents:
+- `logtap inspect <dir> --json` — capture summary (files, entries, labels, timeline)
+- `logtap triage <dir> --json` — anomaly scan results with severity
+- `logtap grep <pattern> <dir> --format text` — human-readable cross-service timeline
+- `logtap check --json` — cluster readiness and orphan detection
 
 ### Kubernetes workflow
 
