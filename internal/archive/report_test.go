@@ -36,9 +36,9 @@ func createTestCapture(t *testing.T) string {
 	ts := time.Date(2026, 2, 20, 10, 0, 0, 0, time.UTC)
 	for i := 0; i < 100; i++ {
 		line := `{"ts":"` + ts.Add(time.Duration(i)*time.Second).Format(time.RFC3339Nano) + `","labels":{"app":"test"},"msg":"line ` + string(rune('0'+i%10)) + `"}`
-		f.WriteString(line + "\n")
+		_, _ = f.WriteString(line + "\n")
 	}
-	f.Close()
+	_ = f.Close()
 
 	return dir
 }
