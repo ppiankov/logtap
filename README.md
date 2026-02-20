@@ -73,6 +73,14 @@ curl -X POST http://localhost:3100/loki/api/v1/push \
 logtap open ./capture
 ```
 
+### Agent Integration
+
+logtap is designed to be used by autonomous agents without plugins or SDKs. Single binary, deterministic output, structured JSON, bounded jobs.
+
+Agents: read [`SKILL.md`](SKILL.md) for commands, flags, JSON output structure, and incident workflow.
+
+Key pattern for agents: `logtap triage <capture-dir> --json` for anomaly scan results, `logtap inspect <dir> --json` for capture summary.
+
 ### Kubernetes workflow
 
 ```bash
