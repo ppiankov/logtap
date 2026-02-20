@@ -175,86 +175,88 @@ func (r *ReportResult) WriteJSON(w io.Writer) error {
 // WriteHTML writes a self-contained HTML report.
 // It delegates to the triage HTML writer with an extended header.
 func (r *ReportResult) WriteHTML(w io.Writer, triageResult *TriageResult, meta *recv.Metadata) error {
-	// Write enhanced HTML wrapping the triage report
-	fmt.Fprintln(w, "<!DOCTYPE html>")
-	fmt.Fprintln(w, `<html lang="en"><head><meta charset="utf-8">`)
-	fmt.Fprintln(w, `<title>logtap incident report</title>`)
-	fmt.Fprintln(w, `<style>`)
-	fmt.Fprintln(w, `body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif; max-width: 960px; margin: 2em auto; padding: 0 1em; color: #1a1a2e; background: #fafafa; }`)
-	fmt.Fprintln(w, `h1 { border-bottom: 2px solid #e0e0e0; padding-bottom: 0.5em; }`)
-	fmt.Fprintln(w, `h2 { color: #16213e; margin-top: 2em; }`)
-	fmt.Fprintln(w, `.meta-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 1em; margin: 1em 0; }`)
-	fmt.Fprintln(w, `.meta-card { background: white; border: 1px solid #e0e0e0; border-radius: 8px; padding: 1em; }`)
-	fmt.Fprintln(w, `.meta-card .label { font-size: 0.85em; color: #666; text-transform: uppercase; }`)
-	fmt.Fprintln(w, `.meta-card .value { font-size: 1.4em; font-weight: 600; margin-top: 0.3em; }`)
-	fmt.Fprintln(w, `.severity-high { color: #d32f2f; } .severity-medium { color: #f57c00; } .severity-low { color: #388e3c; }`)
-	fmt.Fprintln(w, `table { border-collapse: collapse; width: 100%; margin: 1em 0; }`)
-	fmt.Fprintln(w, `th, td { border: 1px solid #e0e0e0; padding: 0.5em 0.8em; text-align: left; }`)
-	fmt.Fprintln(w, `th { background: #f5f5f5; }`)
-	fmt.Fprintln(w, `pre { background: #263238; color: #eeffff; padding: 1em; border-radius: 6px; overflow-x: auto; }`)
-	fmt.Fprintln(w, `code { font-family: "SF Mono", "Fira Code", monospace; font-size: 0.9em; }`)
-	fmt.Fprintln(w, `</style></head><body>`)
+	p := func(s string) { _, _ = fmt.Fprintln(w, s) }
+	pf := func(format string, args ...any) { _, _ = fmt.Fprintf(w, format, args...) }
 
-	fmt.Fprintln(w, `<h1>logtap incident report</h1>`)
+	p("<!DOCTYPE html>")
+	p(`<html lang="en"><head><meta charset="utf-8">`)
+	p(`<title>logtap incident report</title>`)
+	p(`<style>`)
+	p(`body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif; max-width: 960px; margin: 2em auto; padding: 0 1em; color: #1a1a2e; background: #fafafa; }`)
+	p(`h1 { border-bottom: 2px solid #e0e0e0; padding-bottom: 0.5em; }`)
+	p(`h2 { color: #16213e; margin-top: 2em; }`)
+	p(`.meta-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 1em; margin: 1em 0; }`)
+	p(`.meta-card { background: white; border: 1px solid #e0e0e0; border-radius: 8px; padding: 1em; }`)
+	p(`.meta-card .label { font-size: 0.85em; color: #666; text-transform: uppercase; }`)
+	p(`.meta-card .value { font-size: 1.4em; font-weight: 600; margin-top: 0.3em; }`)
+	p(`.severity-high { color: #d32f2f; } .severity-medium { color: #f57c00; } .severity-low { color: #388e3c; }`)
+	p(`table { border-collapse: collapse; width: 100%; margin: 1em 0; }`)
+	p(`th, td { border: 1px solid #e0e0e0; padding: 0.5em 0.8em; text-align: left; }`)
+	p(`th { background: #f5f5f5; }`)
+	p(`pre { background: #263238; color: #eeffff; padding: 1em; border-radius: 6px; overflow-x: auto; }`)
+	p(`code { font-family: "SF Mono", "Fira Code", monospace; font-size: 0.9em; }`)
+	p(`</style></head><body>`)
+
+	p(`<h1>logtap incident report</h1>`)
 
 	// Summary cards
-	fmt.Fprintln(w, `<div class="meta-grid">`)
-	fmt.Fprintf(w, `<div class="meta-card"><div class="label">Severity</div><div class="value severity-%s">%s</div></div>`+"\n",
+	p(`<div class="meta-grid">`)
+	pf(`<div class="meta-card"><div class="label">Severity</div><div class="value severity-%s">%s</div></div>`+"\n",
 		r.Severity, r.Severity)
-	fmt.Fprintf(w, `<div class="meta-card"><div class="label">Entries</div><div class="value">%s</div></div>`+"\n",
+	pf(`<div class="meta-card"><div class="label">Entries</div><div class="value">%s</div></div>`+"\n",
 		FormatCount(r.Capture.Entries))
-	fmt.Fprintf(w, `<div class="meta-card"><div class="label">Error Rate</div><div class="value">%.1f%%</div></div>`+"\n",
+	pf(`<div class="meta-card"><div class="label">Error Rate</div><div class="value">%.1f%%</div></div>`+"\n",
 		r.Triage.ErrorRatePct)
-	fmt.Fprintf(w, `<div class="meta-card"><div class="label">Files</div><div class="value">%d</div></div>`+"\n",
+	pf(`<div class="meta-card"><div class="label">Files</div><div class="value">%d</div></div>`+"\n",
 		r.Capture.Files)
 	if r.Capture.DurationSeconds > 0 {
 		dur := time.Duration(r.Capture.DurationSeconds * float64(time.Second))
-		fmt.Fprintf(w, `<div class="meta-card"><div class="label">Duration</div><div class="value">%s</div></div>`+"\n",
+		pf(`<div class="meta-card"><div class="label">Duration</div><div class="value">%s</div></div>`+"\n",
 			dur.Truncate(time.Second))
 	}
-	fmt.Fprintln(w, `</div>`)
+	p(`</div>`)
 
 	// Capture info
-	fmt.Fprintln(w, `<h2>Capture</h2>`)
-	fmt.Fprintf(w, "<p>Directory: <code>%s</code></p>\n", r.Capture.Dir)
+	p(`<h2>Capture</h2>`)
+	pf("<p>Directory: <code>%s</code></p>\n", r.Capture.Dir)
 	if !r.Capture.Started.IsZero() {
-		fmt.Fprintf(w, "<p>Started: %s</p>\n", r.Capture.Started.Format(time.RFC3339))
+		pf("<p>Started: %s</p>\n", r.Capture.Started.Format(time.RFC3339))
 	}
 	if !r.Capture.Stopped.IsZero() {
-		fmt.Fprintf(w, "<p>Stopped: %s</p>\n", r.Capture.Stopped.Format(time.RFC3339))
+		pf("<p>Stopped: %s</p>\n", r.Capture.Stopped.Format(time.RFC3339))
 	}
 
 	// Top errors table
 	if len(r.Triage.TopErrors) > 0 {
-		fmt.Fprintln(w, `<h2>Top Errors</h2>`)
-		fmt.Fprintln(w, `<table><thead><tr><th>Signature</th><th>Count</th><th>First Seen</th></tr></thead><tbody>`)
+		p(`<h2>Top Errors</h2>`)
+		p(`<table><thead><tr><th>Signature</th><th>Count</th><th>First Seen</th></tr></thead><tbody>`)
 		limit := len(r.Triage.TopErrors)
 		if limit > 20 {
 			limit = 20
 		}
 		for _, e := range r.Triage.TopErrors[:limit] {
-			fmt.Fprintf(w, "<tr><td><code>%s</code></td><td>%d</td><td>%s</td></tr>\n",
+			pf("<tr><td><code>%s</code></td><td>%d</td><td>%s</td></tr>\n",
 				e.Signature, e.Count, e.FirstSeen.Format("15:04:05"))
 		}
-		fmt.Fprintln(w, `</tbody></table>`)
+		p(`</tbody></table>`)
 	}
 
 	// Suggested commands
 	if len(r.Suggested) > 0 {
-		fmt.Fprintln(w, `<h2>Suggested Commands</h2>`)
-		fmt.Fprintln(w, `<pre><code>`)
+		p(`<h2>Suggested Commands</h2>`)
+		p(`<pre><code>`)
 		for _, cmd := range r.Suggested {
-			fmt.Fprintln(w, cmd)
+			p(cmd)
 		}
-		fmt.Fprintln(w, `</code></pre>`)
+		p(`</code></pre>`)
 	}
 
 	// Embed triage timeline if available
 	if triageResult != nil {
-		fmt.Fprintln(w, `<h2>Timeline</h2>`)
+		p(`<h2>Timeline</h2>`)
 		_ = triageResult.WriteHTML(w)
 	}
 
-	fmt.Fprintln(w, `</body></html>`)
+	p(`</body></html>`)
 	return nil
 }
