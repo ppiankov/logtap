@@ -114,6 +114,8 @@ logtap triage ./capture --out ./triage           # scan for anomalies
 | `logtap slice <dir>` | Extract time/label subset to a new capture directory |
 | `logtap export <dir>` | Convert capture to parquet, CSV, or JSONL |
 | `logtap triage <dir>` | Scan for anomalies and produce a triage report |
+| `logtap report <dir>` | Generate incident report (inspect + triage in one artifact) |
+| `logtap catalog [dir]` | Discover and list capture directories |
 | `logtap tap` | Inject log-forwarding sidecar into workloads |
 | `logtap untap` | Remove sidecar from workloads |
 | `logtap check` | Validate cluster readiness and detect leftovers |

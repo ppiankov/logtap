@@ -9,6 +9,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/ppiankov/logtap/internal/cli"
 	"github.com/ppiankov/logtap/internal/config"
 )
 
@@ -31,9 +32,20 @@ type buildInfo struct {
 
 func main() {
 	if err := execute(); err != nil {
-		fmt.Fprintf(os.Stderr, "error: %v\n", err)
-		os.Exit(1)
+		jsonMode := hasJSONFlag(os.Args)
+		cli.FormatError(os.Stderr, err, jsonMode)
+		os.Exit(cli.ExitCode(err))
 	}
+}
+
+// hasJSONFlag checks if --json appears in the command-line arguments.
+func hasJSONFlag(args []string) bool {
+	for _, a := range args {
+		if a == "--json" {
+			return true
+		}
+	}
+	return false
 }
 
 func execute() error {
@@ -65,6 +77,8 @@ func execute() error {
 	root.AddCommand(newStatusCmd())
 	root.AddCommand(newDeployCmd())
 	root.AddCommand(newWatchCmd())
+	root.AddCommand(newCatalogCmd())
+	root.AddCommand(newReportCmd())
 	return root.Execute()
 }
 
