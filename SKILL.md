@@ -42,6 +42,9 @@ sudo mv logtap /usr/local/bin/
 | `logtap slice <dir> --out <dir>` | Extract time/label subset |
 | `logtap merge <dirs...>` | Merge captures |
 | `logtap diff <dir1> <dir2>` | Diff captures |
+| `logtap report <dir> --json` | Single-command incident report (inspect + triage) |
+| `logtap report <dir> --out <dir>` | Report with JSON + HTML artifacts |
+| `logtap catalog [dir] --json` | Discover and list capture directories |
 | `logtap watch <dir>` | Tail a live or completed capture |
 | `logtap upload <dir>` | Upload capture to S3/GCS |
 | `logtap download <url> --out <dir>` | Download capture from S3/GCS |
@@ -84,8 +87,15 @@ logtap recv --dir ./capture --max-disk 1GB --redact --headless &
 logtap tap --deployment api-gateway --target localhost:3100
 # ... wait for logs ...
 logtap untap --deployment api-gateway
-logtap inspect ./capture --json                # what did we get?
-logtap triage ./capture --json                 # anomaly scan
+logtap report ./capture --json                 # one-command incident report
+```
+
+### Discover and analyze captures
+
+```bash
+logtap catalog --json                          # list all captures in current dir
+logtap catalog /data/captures --recursive --json
+logtap report ./capture --out ./incident       # JSON + HTML report artifacts
 ```
 
 ### Cross-service tracing

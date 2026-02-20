@@ -2370,3 +2370,481 @@ logtap deploy --namespace my-team --cleanup
 - `--listen :3100` or `--listen 0.0.0.0:3100` for explicit all-interfaces binding
 - In-cluster/headless mode unaffected (uses `--listen :3100` explicitly)
 - Tests pass with -race, lint clean
+
+---
+
+## Phase 8: Agent Workflow & Usability
+
+### WO-71: `logtap report` — single-command incident deliverable
+
+**Goal:** One command produces a self-contained artifact an agent delivers to a human operator. Combines inspect + triage into a single output.
+
+**CLI interface:**
+```
+logtap report <capture-dir> --out ./incident-report
+logtap report <capture-dir> --json
+```
+
+**Flags:**
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--out` | | Output directory for report artifacts |
+| `--json` | false | Output report.json to stdout |
+| `--html` | true | Include self-contained HTML report |
+| `--include-evidence` | false | Include sliced log files for top error patterns |
+| `--jobs` | NumCPU | Parallel scan workers |
+| `--top` | 20 | Top error signatures to include |
+
+**Output:**
+- `report.json` — machine-readable: capture metadata + triage results + top errors + timeline + recommended actions
+- `report.html` — self-contained HTML with timeline chart, error table, talker breakdown (extends existing triage HTML)
+- `evidence/` (optional) — sliced JSONL for each top error pattern window
+
+**JSON structure:**
+```json
+{
+  "capture": {
+    "dir": "./capture",
+    "files": 12,
+    "entries": 48230,
+    "bytes": 15728640,
+    "started": "2026-02-20T10:00:00Z",
+    "stopped": "2026-02-20T10:45:00Z",
+    "duration_seconds": 2700
+  },
+  "labels": {
+    "app": ["gateway", "cart-svc", "payment-svc"],
+    "namespace": ["default"]
+  },
+  "triage": {
+    "total_lines": 48230,
+    "error_lines": 1891,
+    "error_rate_pct": 3.92,
+    "top_errors": [
+      {"signature": "OOMKilled", "count": 1247, "first_seen": "2026-02-20T10:32:12Z", "example": "..."}
+    ],
+    "windows": {
+      "peak_error": {"from": "2026-02-20T10:32:00Z", "to": "2026-02-20T10:37:00Z"},
+      "incident_start": {"from": "2026-02-20T10:32:00Z", "to": "2026-02-20T10:33:00Z"},
+      "steady_state": {"from": "2026-02-20T10:00:00Z", "to": "2026-02-20T10:30:00Z"}
+    }
+  },
+  "severity": "high",
+  "suggested_commands": [
+    "logtap slice ./capture --from 10:32 --to 10:37 --out ./peak",
+    "logtap grep 'OOMKilled' ./capture --format text"
+  ]
+}
+```
+
+**Files:**
+- `cmd/logtap/report.go` (create) — Cobra command, orchestrates inspect + triage
+- `internal/archive/report.go` (create) — `Report()` function, `ReportResult` struct, JSON/HTML writers
+- `cmd/logtap/main.go` — register `newReportCmd()`
+
+**Implementation:**
+- Reuse `archive.Inspect()` for capture metadata
+- Reuse `archive.Triage()` for error analysis
+- Combine into `ReportResult` struct
+- Severity classification: high (>5% error rate or OOM/panic), medium (1-5%), low (<1%)
+- Suggested commands generated from top error patterns and peak windows
+- HTML report extends triage HTML template with capture overview section
+
+**Tests:**
+- `cmd/logtap/report_test.go` — help doesn't panic, flag defaults
+- `internal/archive/report_test.go` — report generation with fixture capture, JSON output validation, severity classification
+
+**Acceptance:**
+- `logtap report ./capture --json` produces valid JSON with all sections
+- `logtap report ./capture --out ./report` writes report.json + report.html
+- `--include-evidence` creates evidence/ dir with sliced logs
+- Tests pass with -race, lint clean
+
+---
+
+### WO-72: Cross-service error correlation in triage
+
+**Goal:** Detect temporal patterns across labels/services. When pod A fails, did pod B start erroring N seconds later?
+
+**Example detection:**
+```
+10:32:00  pod=api-gateway     error: upstream timeout (cart-svc)
+10:32:12  pod=cart-svc         error: OOMKilled
+10:32:15  pod=payment-svc      error: connection refused (cart-svc)
+→ Correlation: cart-svc OOMKilled caused cascade (api-gateway timeout 12s before, payment-svc refused 3s after)
+```
+
+**Approach:** Deterministic — no ML. Temporal proximity + label-based grouping + error message service name extraction.
+
+**Algorithm:**
+1. Group error entries by label (app or pod)
+2. For each service pair (A, B), compute cross-correlation of error rates in 10s windows
+3. If correlation > threshold (0.7) with consistent time lag, report as cascade
+4. Extract service names from error messages (regex: `timeout.*<service>`, `connection refused.*<service>`)
+5. Build directed graph of failure propagation
+
+**Output (added to TriageResult):**
+```json
+{
+  "correlations": [
+    {
+      "source": "cart-svc",
+      "target": "api-gateway",
+      "lag_seconds": -12,
+      "pattern": "timeout_cascade",
+      "confidence": 0.85,
+      "source_error": "OOMKilled",
+      "target_error": "upstream timeout"
+    }
+  ]
+}
+```
+
+**Files:**
+- `internal/archive/correlate.go` (create) — `Correlate()` function, correlation types
+- `internal/archive/correlate_test.go` (create) — test with synthetic multi-service error patterns
+- `internal/archive/triage.go` — integrate correlation into `Triage()` result
+
+**Tests:**
+- `TestCorrelate_CascadeDetection` — service A fails, B errors 10s later → detected
+- `TestCorrelate_NoCascade` — independent errors → no false correlation
+- `TestCorrelate_BidirectionalCascade` — mutual failure detection
+- `TestCorrelate_EmptyInput` — no errors → empty correlations
+
+**Acceptance:**
+- Correlations appear in `triage --json` output
+- No false positives on independent service errors
+- Confidence score between 0.0-1.0
+- Tests pass with -race, lint clean
+
+---
+
+### WO-73: Structured JSON error output for agents
+
+**Goal:** When `--json` is set, output structured errors to stderr so agents can programmatically distinguish error types and decide whether to retry, fix config, or escalate.
+
+**Error output (stderr):**
+```json
+{"error": "capture_not_found", "message": "no metadata.json in ./missing", "recoverable": false}
+```
+
+**Error categories:**
+| Category | Recoverable | Exit Code | Examples |
+|----------|-------------|-----------|----------|
+| `invalid_args` | false | 2 | Bad flag values, missing required args |
+| `not_found` | false | 3 | Capture dir missing, workload not found |
+| `permission` | false | 4 | RBAC denied, file permissions |
+| `network` | true | 5 | Receiver unreachable, timeout |
+| `internal` | false | 1 | Unexpected errors |
+
+**Implementation:**
+- Add `internal/cli/error.go` — `CLIError` struct with `Code`, `Type`, `Message`, `Recoverable` fields
+- Add `internal/cli/error.go` — `FormatError(err, jsonMode)` function
+- Wrap `RunE` in each command to catch errors and format them
+- When `--json` is NOT set, behavior unchanged (plain text errors)
+
+**Files:**
+- `internal/cli/error.go` (create) — error types and formatter
+- `internal/cli/error_test.go` (create) — formatting tests
+- `cmd/logtap/main.go` — wrap execute() error handling
+
+**Tests:**
+- `TestCLIError_JSON` — produces valid JSON on stderr
+- `TestCLIError_Text` — unchanged plain text when json mode off
+- `TestCLIError_Categories` — each category maps to correct exit code
+- `TestCLIError_Wrapping` — wrapped errors preserve category
+
+**Acceptance:**
+- `logtap inspect ./nonexistent --json 2>err.json` produces structured error
+- Exit codes match category table
+- Non-JSON mode unchanged
+- Tests pass with -race, lint clean
+
+---
+
+### WO-74: `logtap catalog` — discover and list captures
+
+**Goal:** An agent running autonomously needs to discover what captures exist on disk without knowing paths.
+
+**CLI interface:**
+```
+logtap catalog [dir]              # scan dir (default: current directory)
+logtap catalog --json [dir]       # machine-readable output
+logtap catalog --recursive [dir]  # scan subdirectories recursively
+```
+
+**Output (text):**
+```
+CAPTURE                     STARTED              STOPPED              FILES  ENTRIES  SIZE
+./capture-20260220-1030     2026-02-20 10:30     2026-02-20 11:15     12     48230    15MB
+./capture-20260220-1400     2026-02-20 14:00     (active)              3      8100     2MB
+```
+
+**Output (JSON):**
+```json
+[
+  {
+    "dir": "./capture-20260220-1030",
+    "started": "2026-02-20T10:30:00Z",
+    "stopped": "2026-02-20T11:15:00Z",
+    "files": 12,
+    "entries": 48230,
+    "bytes": 15728640,
+    "active": false,
+    "labels": ["app=gateway", "app=cart-svc"]
+  }
+]
+```
+
+**Implementation:**
+- Walk directory tree looking for `metadata.json` files
+- Parse each metadata.json for capture info
+- If `stopped` is zero time, mark as active
+- Sort by started time (newest first)
+
+**Files:**
+- `cmd/logtap/catalog.go` (create) — Cobra command
+- `internal/archive/catalog.go` (create) — `Catalog()` function, directory scanner
+- `internal/archive/catalog_test.go` (create) — test with temp dirs containing mock captures
+- `cmd/logtap/main.go` — register `newCatalogCmd()`
+
+**Tests:**
+- `TestCatalog_FindCaptures` — multiple capture dirs found and sorted
+- `TestCatalog_ActiveCapture` — live capture detected (stopped=zero)
+- `TestCatalog_EmptyDir` — no captures → empty list
+- `TestCatalog_JSON` — valid JSON output
+- `TestCatalog_Recursive` — finds captures in subdirectories
+
+**Acceptance:**
+- `logtap catalog --json` outputs valid JSON array of captures
+- Active captures detected and marked
+- Recursive mode works
+- Tests pass with -race, lint clean
+
+---
+
+### WO-75: Baseline diff (`logtap diff --baseline`)
+
+**Goal:** Compare a capture against a "known good" baseline to answer: "is this different from normal?"
+
+**CLI interface:**
+```
+logtap diff --baseline ./baseline-capture ./incident-capture --json
+```
+
+**Enhanced diff output:**
+```json
+{
+  "baseline": "./baseline-capture",
+  "current": "./incident-capture",
+  "error_rate_change": "+340%",
+  "new_error_patterns": [
+    {"signature": "OOMKilled", "count": 1247, "baseline_count": 0}
+  ],
+  "volume_change": "+15%",
+  "missing_labels": [],
+  "new_labels": ["pod=api-gateway-canary"],
+  "verdict": "regression",
+  "confidence": 0.92
+}
+```
+
+**Implementation:**
+- Extend existing `archive.Diff()` with baseline mode
+- Compute: error rate delta, new error patterns, volume change, label drift
+- Verdict classification: `regression` (error rate increase >50% + new patterns), `improvement` (error rate decrease), `stable` (within 20% variance), `different` (significant changes but not clearly worse)
+
+**Files:**
+- `internal/archive/diff.go` — extend `DiffResult` with baseline fields and verdict
+- `internal/archive/diff_test.go` — add baseline comparison tests
+- `cmd/logtap/diff.go` — add `--baseline` flag
+
+**Tests:**
+- `TestDiff_Baseline_Regression` — higher error rate → regression verdict
+- `TestDiff_Baseline_Stable` — similar captures → stable verdict
+- `TestDiff_Baseline_NewPatterns` — new error signatures detected
+
+**Acceptance:**
+- `--baseline` flag changes diff behavior to comparison mode
+- Verdict and confidence computed deterministically
+- JSON output includes all delta fields
+- Tests pass with -race, lint clean
+
+---
+
+### WO-76: Webhook authentication (bearer + HMAC)
+
+**Goal:** Add authentication to webhook notifications so they're usable in real environments.
+
+**CLI flags:**
+```
+logtap recv --webhook-url https://hook.example.com \
+            --webhook-auth bearer:my-token
+logtap recv --webhook-url https://hook.example.com \
+            --webhook-auth hmac-sha256:my-secret
+```
+
+**Implementation:**
+
+Bearer mode:
+- Add `Authorization: Bearer <token>` header to webhook requests
+
+HMAC mode:
+- Compute `HMAC-SHA256(secret, body)` → hex string
+- Add `X-Logtap-Signature: sha256=<hex>` header
+- Receiver can verify: `HMAC(secret, body) == signature`
+
+**Files:**
+- `internal/recv/webhook.go` — add auth field to `WebhookDispatcher`, apply in `post()`
+- `internal/recv/webhook_test.go` — test bearer header, test HMAC signature verification
+- `cmd/logtap/recv.go` — add `--webhook-auth` flag, parse `bearer:<token>` or `hmac-sha256:<secret>`
+
+**Tests:**
+- `TestWebhook_BearerAuth` — Authorization header present
+- `TestWebhook_HMACAuth` — signature header present and verifiable
+- `TestWebhook_NoAuth` — backward compatible, no headers added
+- `TestWebhook_InvalidAuthFormat` — returns error for bad format
+
+**Acceptance:**
+- Bearer and HMAC modes work
+- Backward compatible when no auth configured
+- Tests pass with -race, lint clean
+
+---
+
+### WO-77: `--json` flag for all remaining subcommands
+
+**Goal:** Every subcommand that produces output should support `--json` for agent consumption.
+
+**Subcommands needing `--json`:**
+| Command | Current | Needed |
+|---------|---------|--------|
+| `slice` | text progress only | JSON summary: input/output counts, time range, labels |
+| `export` | text progress only | JSON summary: format, rows, bytes, duration |
+| `merge` | text progress only | JSON summary: inputs, output, merged entries |
+| `gc` | text listing | JSON: deleted dirs, freed bytes, remaining |
+| `upload` | text progress | JSON: files uploaded, bytes, duration, URL |
+| `download` | text progress | JSON: files downloaded, bytes, duration |
+| `snapshot` | text output | JSON: path, size, files |
+| `watch` | text stream | JSONL stream (already works for individual lines) |
+
+**Implementation:** Add `--json bool` flag to each command, add `WriteJSON` method or direct `json.Encoder` output after operation completes.
+
+**Files:**
+- `cmd/logtap/slice.go`, `export.go`, `merge.go`, `gc.go`, `upload.go`, `download.go`, `snapshot.go` — add `--json` flag and JSON output path
+
+**Tests:**
+- One test per command verifying JSON output is valid
+
+**Acceptance:**
+- All subcommands support `--json`
+- JSON output is valid and contains all relevant fields
+- Tests pass with -race, lint clean
+
+---
+
+### WO-78: Refined exit codes for agent retry logic
+
+**Goal:** Agents need to programmatically decide: retry, fix config, or escalate.
+
+**Exit code scheme:**
+| Code | Meaning | Agent action |
+|------|---------|-------------|
+| 0 | Success | Continue |
+| 1 | Internal error | Escalate |
+| 2 | Invalid arguments / usage | Fix command |
+| 3 | Resource not found | Check paths |
+| 4 | Permission denied | Escalate |
+| 5 | Network / timeout | Retry |
+| 6 | Findings (triage anomalies, check failures) | Process results |
+
+**Implementation:** Depends on WO-73 (`CLIError` types). Map error categories to exit codes in `main.go`.
+
+**Files:**
+- `cmd/logtap/main.go` — map `CLIError.Code` to `os.Exit()` code
+- `internal/cli/error.go` — ensure all error types have correct codes
+
+**Tests:**
+- Tested via WO-73 tests (category → exit code mapping)
+
+**Acceptance:**
+- Exit codes follow the scheme above
+- Backward compatible: existing exit(1) for unknown errors unchanged
+- Tests pass with -race, lint clean
+
+---
+
+### WO-79: `logtap grep --context N` for surrounding lines
+
+**Goal:** When searching for a specific error, show N lines of context before and after each match — like `grep -C`.
+
+**CLI interface:**
+```
+logtap grep "OOMKilled" ./capture --context 5
+logtap grep "OOMKilled" ./capture -C 5
+```
+
+**Implementation:**
+- Maintain a ring buffer of N previous entries while scanning
+- When match found, emit previous N entries (with `context: "before"` marker in JSON)
+- Continue emitting next N entries after match (with `context: "after"` marker)
+- Deduplicate overlapping context windows
+
+**Files:**
+- `cmd/logtap/grep.go` — add `--context` / `-C` flag
+- `internal/archive/filter.go` — extend `Filter` with context window support
+
+**Tests:**
+- `TestGrep_Context` — 2 lines before/after match included
+- `TestGrep_ContextOverlap` — adjacent matches don't duplicate context lines
+- `TestGrep_ContextZero` — default (0) unchanged behavior
+
+**Acceptance:**
+- Context lines included in output with marker
+- No duplicates in overlapping windows
+- Works with --sort and --format text
+- Tests pass with -race, lint clean
+
+---
+
+## Research Orders
+
+### RO-1: Kubernetes event stream integration
+
+**Question:** Can triage correlate k8s events (deployments, restarts, scaling, OOM kills) with log timestamps to provide richer incident context?
+
+**Investigation:**
+- Can the forwarder sidecar also capture k8s events via the API?
+- Or should this be a separate `logtap events` command that queries the cluster?
+- What events are most useful: pod restarts, deployment rollouts, HPA scaling, node conditions?
+- How to store events alongside logs (same capture dir, separate file?)
+
+**Output:** Decision document on whether and how to integrate k8s events.
+
+---
+
+### RO-2: Capture sharing via presigned URLs
+
+**Question:** After `logtap upload`, can the tool return a presigned URL for direct sharing without cloud console access?
+
+**Investigation:**
+- S3: `aws s3 presign` generates time-limited URLs
+- GCS: signed URLs via Go SDK
+- What expiry is appropriate? (1h? 24h? configurable?)
+- Security implications of presigned URLs for log data
+
+**Output:** Implementation plan for `logtap upload --share` flag.
+
+---
+
+### RO-3: Helm chart vs imperative CLI
+
+**Question:** Does the target audience benefit from a Helm chart for receiver deployment, or is `logtap deploy` sufficient?
+
+**Investigation:**
+- Survey existing `logtap deploy` usage patterns
+- Helm charts add: values.yaml templating, `helm upgrade`, GitOps compatibility
+- Downsides: maintenance burden, versioning complexity, goes against "no CRDs" philosophy
+- Alternative: just document `logtap deploy` flags for common patterns
+
+**Output:** Decision: Helm chart (create) or document-only (skip).
