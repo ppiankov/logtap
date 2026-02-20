@@ -4,6 +4,16 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [1.1.0] - 2026-02-20
+
+### Added
+
+- `logtap report` command — single-command incident deliverable (inspect + triage → JSON + HTML)
+- `logtap catalog` command — discover and list capture directories with `--json` and `--recursive`
+- Structured JSON error output when `--json` flag is active (agents can parse error types)
+- Severity classification in reports (high/medium/low based on error rate and patterns)
+- Suggested commands in report output for follow-up investigation
+
 ## [1.0.9] - 2026-02-20
 
 ### Added
