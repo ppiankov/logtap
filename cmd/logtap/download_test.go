@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/ppiankov/logtap/internal/cloud"
@@ -33,7 +34,7 @@ func TestDownloadCapture(t *testing.T) {
 	}
 
 	outDir := filepath.Join(t.TempDir(), "output")
-	err = downloadCapture(context.Background(), mock, "captures/test", outDir, 2)
+	_, err = downloadCapture(context.Background(), mock, "captures/test", outDir, 2)
 	if err != nil {
 		t.Fatalf("downloadCapture error: %v", err)
 	}
@@ -59,7 +60,7 @@ func TestDownloadCapture_EmptyList(t *testing.T) {
 	}
 
 	outDir := filepath.Join(t.TempDir(), "output")
-	err := downloadCapture(context.Background(), mock, "prefix", outDir, 1)
+	_, err := downloadCapture(context.Background(), mock, "prefix", outDir, 1)
 	if err == nil {
 		t.Fatal("expected error for empty object list")
 	}
@@ -75,7 +76,7 @@ func TestDownloadCapture_DownloadError(t *testing.T) {
 	}
 
 	outDir := filepath.Join(t.TempDir(), "output")
-	err := downloadCapture(context.Background(), mock, "prefix", outDir, 1)
+	_, err := downloadCapture(context.Background(), mock, "prefix", outDir, 1)
 	if err == nil {
 		t.Fatal("expected error on download failure")
 	}
@@ -92,7 +93,7 @@ func TestDownloadCapture_InvalidMetadata(t *testing.T) {
 	}
 
 	outDir := filepath.Join(t.TempDir(), "output")
-	err := downloadCapture(context.Background(), mock, "prefix", outDir, 1)
+	_, err := downloadCapture(context.Background(), mock, "prefix", outDir, 1)
 	if err == nil {
 		t.Fatal("expected error for invalid metadata")
 	}
@@ -104,9 +105,43 @@ func TestDownloadCapture_ListError(t *testing.T) {
 	}
 
 	outDir := filepath.Join(t.TempDir(), "output")
-	err := downloadCapture(context.Background(), mock, "prefix", outDir, 1)
+	_, err := downloadCapture(context.Background(), mock, "prefix", outDir, 1)
 	if err == nil {
 		t.Fatal("expected error on list failure")
+	}
+}
+
+func TestDownloadCapture_PathTraversal(t *testing.T) {
+	tests := []struct {
+		name string
+		key  string
+	}{
+		{"dot-dot prefix", "prefix/../../../etc/passwd"},
+		{"dot-dot mid-path", "prefix/sub/../../.ssh/authorized_keys"},
+		{"absolute path", "prefix//etc/shadow"},
+		{"dot-dot after strip", "prefix/../outside"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			mock := &mockBackend{
+				objects: []cloud.ObjectInfo{
+					{Key: tt.key, Size: 5},
+				},
+				data: map[string][]byte{
+					tt.key: []byte("pwned"),
+				},
+			}
+
+			outDir := filepath.Join(t.TempDir(), "output")
+			_, err := downloadCapture(context.Background(), mock, "prefix", outDir, 1)
+			if err == nil {
+				t.Fatal("expected error for path traversal key")
+			}
+			if !strings.Contains(err.Error(), "unsafe object key") {
+				t.Errorf("expected 'unsafe object key' error, got: %v", err)
+			}
+		})
 	}
 }
 

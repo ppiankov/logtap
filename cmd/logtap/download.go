@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -20,6 +21,7 @@ func newDownloadCmd() *cobra.Command {
 	var (
 		outDir      string
 		concurrency int
+		jsonOutput  bool
 	)
 
 	cmd := &cobra.Command{
@@ -31,17 +33,18 @@ func newDownloadCmd() *cobra.Command {
 			if outDir == "" {
 				return fmt.Errorf("--out is required")
 			}
-			return runDownload(cmd.Context(), args[0], outDir, concurrency)
+			return runDownload(cmd.Context(), args[0], outDir, concurrency, jsonOutput)
 		},
 	}
 
 	cmd.Flags().StringVarP(&outDir, "out", "o", "", "output directory (required)")
 	cmd.Flags().IntVar(&concurrency, "concurrency", 4, "number of parallel downloads")
+	cmd.Flags().BoolVar(&jsonOutput, "json", false, "output summary as JSON")
 
 	return cmd
 }
 
-func runDownload(ctx context.Context, fromURL, outDir string, concurrency int) error {
+func runDownload(ctx context.Context, fromURL, outDir string, concurrency int, jsonOutput bool) error {
 	scheme, bucket, prefix, err := cloud.ParseURL(fromURL)
 	if err != nil {
 		return fmt.Errorf("invalid URL: %w", err)
@@ -52,20 +55,38 @@ func runDownload(ctx context.Context, fromURL, outDir string, concurrency int) e
 		return fmt.Errorf("connect to %s: %w", scheme, err)
 	}
 
-	return downloadCapture(ctx, backend, prefix, outDir, concurrency)
+	stats, err := downloadCapture(ctx, backend, prefix, outDir, concurrency)
+	if err != nil {
+		return err
+	}
+
+	if jsonOutput {
+		return json.NewEncoder(os.Stdout).Encode(map[string]any{
+			"source": fromURL,
+			"output": outDir,
+			"files":  stats.files,
+			"bytes":  stats.bytes,
+		})
+	}
+	return nil
 }
 
-func downloadCapture(ctx context.Context, backend cloud.Backend, prefix, outDir string, concurrency int) error {
+type downloadStats struct {
+	files int
+	bytes int64
+}
+
+func downloadCapture(ctx context.Context, backend cloud.Backend, prefix, outDir string, concurrency int) (downloadStats, error) {
 	objects, err := backend.List(ctx, prefix)
 	if err != nil {
-		return fmt.Errorf("list objects: %w", err)
+		return downloadStats{}, fmt.Errorf("list objects: %w", err)
 	}
 	if len(objects) == 0 {
-		return fmt.Errorf("no objects found under prefix %q", prefix)
+		return downloadStats{}, fmt.Errorf("no objects found under prefix %q", prefix)
 	}
 
 	if err := os.MkdirAll(outDir, 0o755); err != nil {
-		return fmt.Errorf("create output dir: %w", err)
+		return downloadStats{}, fmt.Errorf("create output dir: %w", err)
 	}
 
 	var totalBytes int64
@@ -90,7 +111,12 @@ func downloadCapture(ctx context.Context, backend cloud.Backend, prefix, outDir 
 			defer func() { <-sem }()
 
 			relPath := stripPrefix(obj.Key, prefix)
-			localPath := filepath.Join(outDir, filepath.FromSlash(relPath))
+			clean := filepath.Clean(filepath.FromSlash(relPath))
+			if strings.HasPrefix(clean, "..") || filepath.IsAbs(clean) {
+				errOnce.Do(func() { firstErr = fmt.Errorf("unsafe object key: %s", obj.Key) })
+				return
+			}
+			localPath := filepath.Join(outDir, clean)
 
 			if err := os.MkdirAll(filepath.Dir(localPath), 0o755); err != nil {
 				errOnce.Do(func() { firstErr = fmt.Errorf("mkdir for %s: %w", relPath, err) })
@@ -112,25 +138,25 @@ func downloadCapture(ctx context.Context, backend cloud.Backend, prefix, outDir 
 
 			n := downloadedFiles.Add(1)
 			b := downloadedBytes.Add(obj.Size)
-			fmt.Fprintf(os.Stderr, "\rDownloading: %d/%d files (%s / %s)",
+			_, _ = fmt.Fprintf(os.Stderr, "\rDownloading: %d/%d files (%s / %s)",
 				n, int64(len(objects)), archive.FormatBytes(b), archive.FormatBytes(totalBytes))
 		}(obj)
 	}
 
 	wg.Wait()
-	fmt.Fprintln(os.Stderr)
+	_, _ = fmt.Fprintln(os.Stderr)
 
 	if firstErr != nil {
-		return firstErr
+		return downloadStats{}, firstErr
 	}
 
 	if _, err := recv.ReadMetadata(outDir); err != nil {
-		return fmt.Errorf("downloaded capture invalid (missing or corrupt metadata.json): %w", err)
+		return downloadStats{}, fmt.Errorf("downloaded capture invalid (missing or corrupt metadata.json): %w", err)
 	}
 
-	fmt.Fprintf(os.Stderr, "Downloaded %d files (%s) to %s\n",
+	_, _ = fmt.Fprintf(os.Stderr, "Downloaded %d files (%s) to %s\n",
 		len(objects), archive.FormatBytes(totalBytes), outDir)
-	return nil
+	return downloadStats{files: len(objects), bytes: totalBytes}, nil
 }
 
 func stripPrefix(key, prefix string) string {

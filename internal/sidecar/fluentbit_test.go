@@ -34,6 +34,55 @@ func TestFluentBitConfig(t *testing.T) {
 	}
 }
 
+func TestValidateTarget(t *testing.T) {
+	valid := []string{
+		"receiver:3100",
+		"localhost:9000",
+		"10.0.0.1:3100",
+		"my-svc.ns.svc.cluster.local:3100",
+		"receiver",
+		"my-host.example.com",
+	}
+	for _, target := range valid {
+		if err := ValidateTarget(target); err != nil {
+			t.Errorf("ValidateTarget(%q) = %v, want nil", target, err)
+		}
+	}
+
+	invalid := []string{
+		"host\n[OUTPUT]\n    Name null",
+		"host port",
+		"host;rm -rf /",
+		"host\ttab",
+		"host:port",
+		":3100",
+		"",
+		"host:3100/path",
+		"host:3100\n[FILTER]",
+	}
+	for _, target := range invalid {
+		if err := ValidateTarget(target); err == nil {
+			t.Errorf("ValidateTarget(%q) = nil, want error", target)
+		}
+	}
+}
+
+func TestFluentBitConfig_InvalidTarget(t *testing.T) {
+	// Verify that a newline-injected target would produce extra config sections.
+	// This test documents the attack vector that ValidateTarget prevents.
+	injected := FluentBitConfig("host\n[OUTPUT]\n    Name null", "lt-abc", "default")
+	// Count [OUTPUT] sections — an injection would produce more than one.
+	count := strings.Count(injected, "[OUTPUT]")
+	if count <= 1 {
+		// If this ever passes with count==1, the template itself was hardened,
+		// but ValidateTarget remains the primary defense.
+		t.Logf("injection produced %d [OUTPUT] sections (template may be safe)", count)
+	}
+	if count > 1 {
+		t.Logf("injection produced %d [OUTPUT] sections — ValidateTarget must block this", count)
+	}
+}
+
 func TestConfigMapName(t *testing.T) {
 	name := ConfigMapName("lt-abc123")
 	if name != "logtap-fb-lt-abc123" {

@@ -34,14 +34,15 @@ type TriageProgress struct {
 
 // TriageResult holds all triage output data.
 type TriageResult struct {
-	Dir        string                   `json:"dir"`
-	Meta       *recv.Metadata           `json:"metadata,omitempty"`
-	Timeline   []TriageBucket           `json:"timeline,omitempty"`
-	Errors     []ErrorSignature         `json:"errors,omitempty"`
-	Talkers    map[string][]TalkerEntry `json:"talkers,omitempty"`
-	Windows    TriageWindows            `json:"windows"`
-	TotalLines int64                    `json:"total_lines"`
-	ErrorLines int64                    `json:"error_lines"`
+	Dir          string                   `json:"dir"`
+	Meta         *recv.Metadata           `json:"metadata,omitempty"`
+	Timeline     []TriageBucket           `json:"timeline,omitempty"`
+	Errors       []ErrorSignature         `json:"errors,omitempty"`
+	Talkers      map[string][]TalkerEntry `json:"talkers,omitempty"`
+	Windows      TriageWindows            `json:"windows"`
+	Correlations []Correlation            `json:"correlations,omitempty"`
+	TotalLines   int64                    `json:"total_lines"`
+	ErrorLines   int64                    `json:"error_lines"`
 }
 
 // TriageBucket represents one time window in the histogram.
@@ -154,15 +155,19 @@ func Triage(src string, cfg TriageConfig, progress func(TriageProgress)) (*Triag
 	// pass 2: derive windows
 	windows := deriveWindows(timeline, merged.signatures)
 
+	// pass 3: cross-service error correlation
+	correlations, _ := Correlate(src, 10*time.Second)
+
 	result := &TriageResult{
-		Dir:        src,
-		Meta:       reader.Metadata(),
-		Timeline:   timeline,
-		Errors:     errors,
-		Talkers:    talkers,
-		Windows:    windows,
-		TotalLines: merged.totalLines,
-		ErrorLines: merged.errorLines,
+		Dir:          src,
+		Meta:         reader.Metadata(),
+		Timeline:     timeline,
+		Errors:       errors,
+		Talkers:      talkers,
+		Windows:      windows,
+		Correlations: correlations,
+		TotalLines:   merged.totalLines,
+		ErrorLines:   merged.errorLines,
 	}
 
 	return result, nil
@@ -622,6 +627,16 @@ func (r *TriageResult) WriteSummary(w io.Writer) {
 				tw.printf("    %-20s %s lines  (%.1f%%)%s\n",
 					e.Value, FormatCount(e.TotalLines), pct, errPct)
 			}
+		}
+		tw.println()
+	}
+
+	// cross-service correlations
+	if len(r.Correlations) > 0 {
+		tw.println("## Cross-Service Correlations")
+		for _, c := range r.Correlations {
+			tw.printf("  %s → %s  lag=%.0fs  pattern=%s  confidence=%.2f\n",
+				c.Source, c.Target, c.LagSeconds, c.Pattern, c.Confidence)
 		}
 		tw.println()
 	}

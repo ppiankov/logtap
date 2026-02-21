@@ -178,7 +178,12 @@ func startHealthServer(ctx context.Context, addr string, log io.Writer) (string,
 }
 
 func startHealthServerWithListener(ctx context.Context, ln net.Listener, log io.Writer) (string, error) {
-	srv := &http.Server{Handler: healthHandler()}
+	srv := &http.Server{
+		Handler:      healthHandler(),
+		ReadTimeout:  30 * time.Second,
+		WriteTimeout: 30 * time.Second,
+		IdleTimeout:  120 * time.Second,
+	}
 	go func() {
 		<-ctx.Done()
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)

@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -19,6 +20,7 @@ func newUploadCmd() *cobra.Command {
 	var (
 		to          string
 		concurrency int
+		jsonOutput  bool
 	)
 
 	cmd := &cobra.Command{
@@ -30,17 +32,18 @@ func newUploadCmd() *cobra.Command {
 			if to == "" {
 				return fmt.Errorf("--to is required")
 			}
-			return runUpload(cmd.Context(), args[0], to, concurrency)
+			return runUpload(cmd.Context(), args[0], to, concurrency, jsonOutput)
 		},
 	}
 
 	cmd.Flags().StringVar(&to, "to", "", "destination URL (s3://bucket/prefix or gs://bucket/prefix)")
 	cmd.Flags().IntVar(&concurrency, "concurrency", 4, "number of parallel uploads")
+	cmd.Flags().BoolVar(&jsonOutput, "json", false, "output summary as JSON")
 
 	return cmd
 }
 
-func runUpload(ctx context.Context, dir, toURL string, concurrency int) error {
+func runUpload(ctx context.Context, dir, toURL string, concurrency int, jsonOutput bool) error {
 	if _, err := recv.ReadMetadata(dir); err != nil {
 		return fmt.Errorf("not a valid capture directory: %w", err)
 	}
@@ -55,10 +58,21 @@ func runUpload(ctx context.Context, dir, toURL string, concurrency int) error {
 		return fmt.Errorf("connect to %s: %w", scheme, err)
 	}
 
-	if err := uploadCapture(ctx, dir, backend, prefix, concurrency); err != nil {
+	stats, err := uploadCapture(ctx, dir, backend, prefix, concurrency)
+	if err != nil {
 		return err
 	}
-	fmt.Fprintf(os.Stderr, "Destination: %s\n", toURL)
+
+	if jsonOutput {
+		return json.NewEncoder(os.Stdout).Encode(map[string]any{
+			"source":      dir,
+			"destination": toURL,
+			"files":       stats.files,
+			"bytes":       stats.bytes,
+		})
+	}
+
+	_, _ = fmt.Fprintf(os.Stderr, "Destination: %s\n", toURL)
 	return nil
 }
 
@@ -68,7 +82,12 @@ type uploadFile struct {
 	size    int64
 }
 
-func uploadCapture(ctx context.Context, dir string, backend cloud.Backend, prefix string, concurrency int) error {
+type uploadStats struct {
+	files int
+	bytes int64
+}
+
+func uploadCapture(ctx context.Context, dir string, backend cloud.Backend, prefix string, concurrency int) (uploadStats, error) {
 	var files []uploadFile
 	var totalBytes int64
 
@@ -88,11 +107,11 @@ func uploadCapture(ctx context.Context, dir string, backend cloud.Backend, prefi
 		return nil
 	})
 	if err != nil {
-		return fmt.Errorf("walk capture dir: %w", err)
+		return uploadStats{}, fmt.Errorf("walk capture dir: %w", err)
 	}
 
 	if len(files) == 0 {
-		return fmt.Errorf("no files found in %s", dir)
+		return uploadStats{}, fmt.Errorf("no files found in %s", dir)
 	}
 
 	var (
@@ -130,19 +149,19 @@ func uploadCapture(ctx context.Context, dir string, backend cloud.Backend, prefi
 
 			n := uploadedFiles.Add(1)
 			b := uploadedBytes.Add(uf.size)
-			fmt.Fprintf(os.Stderr, "\rUploading: %d/%d files (%s / %s)",
+			_, _ = fmt.Fprintf(os.Stderr, "\rUploading: %d/%d files (%s / %s)",
 				n, int64(len(files)), archive.FormatBytes(b), archive.FormatBytes(totalBytes))
 		}(uf)
 	}
 
 	wg.Wait()
-	fmt.Fprintln(os.Stderr)
+	_, _ = fmt.Fprintln(os.Stderr)
 
 	if firstErr != nil {
-		return firstErr
+		return uploadStats{}, firstErr
 	}
 
-	fmt.Fprintf(os.Stderr, "Uploaded %d files (%s)\n",
+	_, _ = fmt.Fprintf(os.Stderr, "Uploaded %d files (%s)\n",
 		len(files), archive.FormatBytes(totalBytes))
-	return nil
+	return uploadStats{files: len(files), bytes: totalBytes}, nil
 }

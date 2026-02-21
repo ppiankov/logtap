@@ -2,9 +2,11 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"runtime"
+	"strings"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -32,6 +34,7 @@ type buildInfo struct {
 
 func main() {
 	if err := execute(); err != nil {
+		err = classifyError(err)
 		jsonMode := hasJSONFlag(os.Args)
 		cli.FormatError(os.Stderr, err, jsonMode)
 		os.Exit(cli.ExitCode(err))
@@ -46,6 +49,39 @@ func hasJSONFlag(args []string) bool {
 		}
 	}
 	return false
+}
+
+// classifyError wraps generic errors into CLIError for structured exit codes.
+// Already-classified CLIErrors pass through unchanged.
+func classifyError(err error) error {
+	if err == nil {
+		return nil
+	}
+	var ce *cli.CLIError
+	if errors.As(err, &ce) {
+		return err
+	}
+
+	msg := err.Error()
+
+	// Not found patterns
+	if os.IsNotExist(err) || strings.Contains(msg, "no such file") ||
+		strings.Contains(msg, "metadata.json") || strings.Contains(msg, "not a valid capture") {
+		return cli.NewNotFoundError(msg)
+	}
+
+	// Permission patterns
+	if os.IsPermission(err) || strings.Contains(msg, "permission denied") {
+		return cli.NewPermissionError(msg)
+	}
+
+	// Network patterns
+	if strings.Contains(msg, "connection refused") || strings.Contains(msg, "timeout") ||
+		strings.Contains(msg, "no such host") || strings.Contains(msg, "network is unreachable") {
+		return cli.NewNetworkError(msg)
+	}
+
+	return err
 }
 
 func execute() error {

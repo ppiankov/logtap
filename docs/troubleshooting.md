@@ -1,189 +1,201 @@
-# Troubleshooting
+# Troubleshooting Guide
 
-Common failure modes and solutions for logtap operators.
+This guide documents common failure modes and solutions for operators using `logtap`.
 
----
-
-## Receiver won't start
-
-**Symptom:** `logtap recv` exits immediately with "address already in use".
-
-**Cause:** Another process (or a previous logtap instance) is bound to the port.
-
-**Solution:**
-```bash
-# Find what's using the port
-lsof -i :9000
-
-# Use a different port
-logtap recv --port 9001
-```
+## Table of Contents
+- [Receiver Won't Start](#receiver-wont-start)
+- [Sidecar Not Forwarding Logs](#sidecar-not-forwarding-logs)
+- [`logtap check` Failures](#logtap-check-failures)
+- [Disk Full / Rotation Not Working](#disk-full--rotation-not-working)
+- [Capture Cannot Be Opened](#capture-cannot-be-opened)
+- [Port-Forward Drops / Tunnel Instability](#port-forward-drops--tunnel-instability)
+- [Redaction Not Working](#redaction-not-working)
+- [`logtap tap` Timed Out](#logtap-tap-timed-out)
 
 ---
 
-## Receiver fills disk
+### Receiver Won't Start
 
-**Symptom:** `logtap recv` stops writing, logs show "disk cap reached" or the output directory is full.
+**Symptom**: The `logtap recv` command fails to start or immediately exits with an error.
 
-**Cause:** The `--cap` limit was reached or the filesystem is full. Rotation drops oldest files but cannot free space below OS-level limits.
+**Cause**:
+- **Port in use**: Another process is already listening on the specified port (`--listen`).
+- **Directory permissions**: `logtap` does not have write permissions to the capture directory (`--dir`).
+- **Configuration errors**: Invalid values in the config file or command-line flags.
 
-**Solution:**
-```bash
-# Increase the cap
-logtap recv --cap 10GB
+**Solution**:
+- **Port in use**:
+    - Choose a different port: `logtap recv --listen :9001`
+    - Identify and stop the process using the port (e.g., `lsof -i :9000`).
+- **Directory permissions**:
+    - Ensure the user running `logtap` has write permissions to the `--dir` path.
+    - Change the capture directory to an accessible location: `logtap recv --dir /tmp/my-capture`.
+- **Configuration errors**:
+    - Review the error message for specific configuration issues.
+    - Double-check the values provided for flags like `--max-disk`, `--max-file`, etc.
+    - If using a config file, ensure it's valid YAML and follows the schema.
 
-# Clean old captures
-rm -rf /path/to/old-captures/
+### Sidecar Not Forwarding Logs
 
-# Check disk space
-df -h .
-```
+**Symptom**: `logtap tap` successfully injects the sidecar, but no logs appear in the receiver's TUI or capture directory.
 
----
+**Cause**:
+- **Image pull errors**: The Kubernetes cluster cannot pull the `logtap-forwarder` image (e.g., wrong image name, private registry authentication issues, image not multi-arch compatible with node).
+- **Network policy blocking**: A Kubernetes NetworkPolicy prevents the sidecar from reaching the `logtap` receiver.
+- **Receiver unreachable**: The `--target` address specified for the sidecar is incorrect or the receiver pod is not running/accessible.
+- **Log volume mounting**: The sidecar cannot access the application logs (e.g., incorrect volume mount, application logs to a non-standard location).
 
-## Sidecar not forwarding logs
+**Solution**:
+- **Image pull errors**:
+    - Verify the sidecar image name and tag: `kubectl describe pod <tapped-pod-name>`.
+    - Ensure the image exists and is accessible from the cluster.
+    - For private registries, verify image pull secrets are configured correctly.
+- **Network policy blocking**:
+    - Temporarily disable or adjust relevant NetworkPolicies.
+    - Create a NetworkPolicy that allows egress from the sidecar to the receiver.
+- **Receiver unreachable**:
+    - Double-check the `--target` address is correct (e.g., `logtap.logtap:9000` for in-cluster).
+    - Use `kubectl logs <logtap-forwarder-pod>` to check the sidecar logs for connection errors.
+    - Verify the receiver is running and its service is reachable (e.g., `kubectl get svc -n logtap logtap`).
+- **Log volume mounting**:
+    - Inspect the `logtap-forwarder` container spec in the tapped pod to confirm volume mounts.
+    - Ensure the application logs to standard output/error or a path that the sidecar can access.
 
-**Symptom:** Sidecar container is running but receiver gets no data.
+### `logtap check` Failures
 
-**Cause:** Network policy blocking traffic, incorrect receiver target URL, or image pull failure.
+**Symptom**: `logtap check` reports warnings or errors regarding RBAC, quota, or orphaned resources.
 
-**Solution:**
-```bash
-# Check sidecar logs
-kubectl logs <pod> -c logtap-forwarder-<session-id>
+**Cause**:
+- **RBAC Missing**: The Kubernetes user or service account lacks permissions to perform necessary actions (e.g., `patch deployments`, `create pods`).
+- **Quota Exceeded**: Injecting sidecars would exceed a namespace's resource quota.
+- **Orphaned Resources**: Previous `logtap` sessions were not fully cleaned up, leaving behind sidecars or tunnel pods/services.
+- **Prod Namespace Warning**: Attempting to tap a namespace identified as "production" without the `--allow-prod` flag.
 
-# Verify the receiver is reachable from the cluster
-kubectl run curl-test --rm -it --image=curlimages/curl -- curl -s http://<receiver-service>:9000/healthz
+**Solution**:
+- **RBAC Missing**:
+    - Work with a cluster administrator to grant the required RBAC permissions to your user or service account.
+    - The `logtap check` output often provides hints about missing permissions.
+- **Quota Exceeded**:
+    - Increase the namespace's `ResourceQuota` (requires admin privileges).
+    - Reduce the sidecar's resource requests using `--sidecar-memory` or `--sidecar-cpu` flags in `logtap tap`.
+    - Use `--force` with `logtap tap` if you understand the risks (pods may fail to schedule).
+- **Orphaned Resources**:
+    - Follow the suggestions from `logtap check` to clean up:
+        - `logtap untap --all` to remove orphaned sidecars.
+        - `kubectl delete ns logtap` to remove orphaned tunnel resources if `logtap` was deployed in-cluster.
+- **Prod Namespace Warning**:
+    - If you intend to tap a production namespace, explicitly use the `--allow-prod` flag with `logtap tap`. Be aware of the implications.
+    - Ensure PII redaction is enabled (`--redact`) if tapping production.
 
-# Check for image pull errors
-kubectl describe pod <pod> | grep -A5 "Events:"
-```
+### Disk Full / Rotation Not Working
 
----
+**Symptom**: The receiver stops writing logs, reports drops, or the capture directory exceeds its `--max-disk` limit without old files being deleted.
 
-## `logtap check` reports RBAC errors
+**Cause**:
+- **Disk write errors**: The underlying disk is full, has I/O errors, or permissions issues.
+- **Incorrect `--max-disk` or `--max-file`**: Values are too high, or a configuration mistake prevents rotation.
+- **Slow file deletion**: The system is slow to delete files, or `logtap` is unable to delete files.
 
-**Symptom:** `logtap check` shows "FAIL" for RBAC permissions.
+**Solution**:
+- **Disk write errors**:
+    - Check available disk space on the volume hosting the capture directory.
+    - Investigate system logs for disk-related errors.
+    - Ensure `logtap` has full permissions to manage files in the capture directory.
+- **Incorrect limits**:
+    - Review `logtap recv` command flags and config file for `--max-disk` and `--max-file` values.
+    - Ensure `--max-disk` is a reasonable limit for your storage.
+- **Slow file deletion**:
+    - Monitor `logtap`'s internal metrics for `logtap_disk_usage_bytes` and `logtap_backpressure_events_total`.
+    - Consider increasing disk I/O capacity or reducing log volume if persistently hitting limits.
 
-**Cause:** The current kubeconfig context doesn't have permission to patch Deployments/StatefulSets/DaemonSets.
+### Capture Cannot Be Opened
 
-**Solution:**
-```bash
-# Check what permissions you have
-kubectl auth can-i patch deployments
-kubectl auth can-i patch daemonsets
+**Symptom**: `logtap open`, `inspect`, `slice`, or `export` fail with errors about corrupt metadata, missing index, or invalid file formats.
 
-# If using a service account, bind the required ClusterRole:
-kubectl create clusterrolebinding logtap-admin \
-  --clusterrole=edit \
-  --serviceaccount=default:default
-```
+**Cause**:
+- **Corrupt `metadata.json`**: The `metadata.json` file in the capture directory is malformed or missing.
+- **Corrupt `index.jsonl`**: The `index.jsonl` file is malformed, preventing proper indexing of log files.
+- **Incomplete capture**: The `logtap recv` process was terminated abruptly without flushing buffers, leaving an incomplete or inconsistent capture.
+- **Manual tampering**: Files within the capture directory were manually modified, moved, or deleted.
 
----
+**Solution**:
+- **Corrupt files**:
+    - If the capture is critical, attempt to manually repair `metadata.json` or `index.jsonl` if the corruption is minor and understandable.
+    - For a robust solution, avoid manual modification of capture directories.
+- **Incomplete capture**:
+    - Always ensure `logtap recv` is gracefully shut down (Ctrl+C) to allow for buffer flushing and metadata updates.
+    - For corrupted captures, try `logtap open --force` (if available and supported for recovery), but data integrity cannot be guaranteed.
+- **Manual tampering**:
+    - Restore the capture directory from a backup if available.
+    - Avoid direct manipulation of files within `logtap` capture directories.
 
-## Capture can't be opened
+### Port-Forward Drops / Tunnel Instability
 
-**Symptom:** `logtap open` or `logtap inspect` reports "invalid capture directory" or missing metadata.
+**Symptom**: When using `logtap recv --tunnel`, the connection between the in-cluster forwarder and your local receiver frequently disconnects or logs stop flowing.
 
-**Cause:** The `metadata.json` or `index.jsonl` file is missing or corrupt. This can happen if the receiver was killed before finalizing.
+**Cause**:
+- **Local network instability**: Your machine's network connection is unreliable.
+- **Kubernetes API server load**: The Kubernetes API server is under heavy load, causing `kubectl port-forward` to become unstable.
+- **Receiver pod restart**: The temporary receiver pod in the cluster (used for the tunnel) is restarting due to resource limits, errors, or Kubernetes eviction policies.
+- **Idle timeouts**: Some network infrastructure or VPNs may aggressively close idle connections, even if traffic is low.
 
-**Solution:**
-```bash
-# Check what exists
-ls -la <capture-dir>/
+**Solution**:
+- **Local network stability**:
+    - Ensure your local machine has a stable network connection.
+    - Avoid actions that might disrupt network connectivity (e.g., VPN changes).
+- **Kubernetes API server load**:
+    - Monitor the Kubernetes API server's health and resource usage.
+    - If API server load is an issue, consider deploying `logtap recv --in-cluster` for more stability.
+- **Receiver pod restart**:
+    - Use `kubectl describe pod <receiver-pod-name> -n logtap` to check for restart reasons (OOMKilled, errors).
+    - Increase the resource requests/limits for the in-cluster receiver pod if necessary.
+- **Idle timeouts**:
+    - If possible, configure your network or VPN to have longer idle timeouts.
+    - Consider `logtap recv --in-cluster` as an alternative if the tunnel remains unstable.
 
-# If metadata.json is missing, the capture is unrecoverable via CLI.
-# Data files (.jsonl, .jsonl.zst) can still be read manually:
-zstd -d <capture-dir>/*.jsonl.zst
-cat <capture-dir>/*.jsonl | jq .
-```
+### Redaction Not Working
 
----
+**Symptom**: PII or sensitive data is still visible in captured logs despite using the `--redact` flag.
 
-## Port-forward drops frequently
+**Cause**:
+- **Incorrect flag usage**: `--redact` was not used, or specific patterns were not enabled (e.g., `--redact=email` but a credit card number is visible).
+- **Pattern not matching**: The built-in or custom redaction patterns do not correctly match the format of the sensitive data in the logs.
+- **Custom patterns file format**: The `--redact-patterns` YAML file is malformed or its regex patterns are incorrect.
+- **Redaction pipeline bypass**: Logs are entering the system through a path that bypasses the redaction pipeline.
 
-**Symptom:** `logtap recv --in-cluster` port-forward dies after a few minutes, logs stop flowing.
+**Solution**:
+- **Correct flag usage**:
+    - Ensure `logtap recv --redact` is used to enable all built-in patterns.
+    - If specific patterns are desired, ensure all relevant ones are listed (e.g., `--redact=credit_card,email,jwt`).
+- **Pattern not matching**:
+    - Examine the sensitive data's exact format in the raw logs.
+    - If using custom patterns, test the regex patterns against sample data using an online regex tester.
+    - Built-in patterns are comprehensive but might not cover highly unusual formats.
+- **Custom patterns file format**:
+    - Validate your `patterns.yaml` file using a YAML linter.
+    - Ensure the `regex` values are valid regular expressions.
+- **Redaction pipeline bypass**:
+    - Confirm all log ingestion paths (Loki push API, raw JSON) are properly configured to pass through the redaction stage. This is usually handled internally by `logtap` when `--redact` is active.
 
-**Cause:** Kubernetes port-forward is inherently unstable — idle connections are dropped by load balancers, NAT timeouts, or API server restarts.
+### `logtap tap` Timed Out
 
-**Solution:**
-```bash
-# Run with explicit timeout extension (if your kubectl supports it)
-kubectl port-forward pod/logtap-receiver 9000:9000 --pod-running-timeout=0
+**Symptom**: `logtap tap` command returns a timeout error after a period of waiting, especially when interacting with Kubernetes.
 
-# Alternative: use a NodePort or LoadBalancer service instead of port-forward
-# for long-running captures
-```
+**Cause**:
+- **Unresponsive Kubernetes API server**: The Kubernetes API server is slow, overloaded, or unreachable from where `logtap` is running.
+- **Network latency**: High network latency between the `logtap` CLI and the Kubernetes cluster.
+- **Resource constraints on `logtap` host**: The machine running `logtap` is under heavy load, causing operations to be slow.
+- **Long-running cluster operations**: The Kubernetes cluster itself is busy with other operations (e.g., many rolling updates) that delay `logtap`'s ability to patch resources.
 
----
-
-## Redaction not matching expected patterns
-
-**Symptom:** `logtap recv --redact` is enabled but sensitive data still appears in captures.
-
-**Cause:** The default patterns cover common formats (emails, IPs, JWTs). Custom patterns may not match your data format.
-
-**Solution:**
-```bash
-# Check what patterns were active in a capture
-cat ./capture/metadata.json | jq '.redaction'
-
-# Built-in patterns: credit_card, email, jwt, bearer, ip_v4, ssn, phone
-# Enable specific patterns only
-logtap recv --redact=email,jwt --dir ./capture
-
-# Add custom patterns via YAML file
-logtap recv --redact --redact-patterns ./my-patterns.yaml --dir ./capture
-
-# Custom patterns YAML format:
-# - name: api_key
-#   pattern: "api_key=[A-Za-z0-9]{32}"
-#   replacement: "[REDACTED:api_key]"
-
-# Test a pattern against sample data
-echo 'user email: test@example.com' | grep -oP 'your-pattern-here'
-```
-
----
-
-## Fluent Bit sidecar fails to start
-
-**Symptom:** Fluent Bit sidecar container enters CrashLoopBackOff after `logtap tap --forwarder fluent-bit`.
-
-**Cause:** ConfigMap not created, incorrect image, or volume mount permissions.
-
-**Solution:**
-```bash
-# Check ConfigMap exists
-kubectl get configmap logtap-fb-<session-id>
-
-# Check sidecar logs
-kubectl logs <pod> -c logtap-forwarder-<session-id>
-
-# Verify the image is pullable
-kubectl run fb-test --rm -it --image=fluent/fluent-bit:3.0 -- /fluent-bit/bin/fluent-bit --version
-
-# Remove and retry
-logtap untap <workload>
-logtap tap <workload> --forwarder fluent-bit --image fluent/fluent-bit:3.0
-```
-
----
-
-## Triage shows no error patterns
-
-**Symptom:** `logtap triage` returns empty results even though logs contain errors.
-
-**Cause:** Error detection uses keyword matching (error, fatal, panic, exception, fail). If your error logs use different patterns, they won't be detected.
-
-**Solution:**
-```bash
-# Check what the triage scans for
-logtap triage <capture-dir> --json | jq .
-
-# Use grep for custom error patterns
-logtap grep "YOUR_ERROR_PATTERN" <capture-dir>
-
-# Check if entries exist at all
-logtap inspect <capture-dir>
-```
+**Solution**:
+- **Unresponsive Kubernetes API server**:
+    - Check the health and load of your Kubernetes API server (`kubectl top node`, `kubectl get --raw=/metrics`).
+    - If possible, try running `logtap` from a location with better network connectivity to the cluster.
+- **Increase timeout**:
+    - Use the `--timeout` flag to allow `logtap` more time to complete its operations, e.g., `logtap tap --deployment my-app --target ... --timeout 60s`.
+    - This is a workaround; address the root cause of the slow API server if possible.
+- **Check local machine resources**:
+    - Ensure the machine running the `logtap` CLI has sufficient CPU and memory.
+- **Monitor cluster activity**:
+    - Observe if other cluster operations are ongoing that might be consuming resources or locking resources `logtap` needs to modify.
+    - Retry the `logtap tap` command after some time.

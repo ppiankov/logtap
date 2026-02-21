@@ -145,9 +145,11 @@ func (d *DiffResult) WriteText(w io.Writer) {
 }
 
 type captureData struct {
-	summary DiffCapture
-	errors  []ErrorSummary
-	rates   map[time.Time]int64 // per-minute counts
+	summary    DiffCapture
+	errors     []ErrorSummary
+	allErrors  map[string]int64    // full error counts (not truncated)
+	errorLines int64               // total lines matching IsError
+	rates      map[time.Time]int64 // per-minute counts
 }
 
 func summarizeCapture(dir string) (*captureData, error) {
@@ -181,12 +183,14 @@ func summarizeCapture(dir string) (*captureData, error) {
 	// Scan for errors and per-minute rates
 	errorCounts := make(map[string]int64)
 	rates := make(map[time.Time]int64)
+	var errorLines int64
 
 	_, err = r.Scan(nil, func(e recv.LogEntry) bool {
 		minute := e.Timestamp.Truncate(time.Minute)
 		rates[minute]++
 
 		if IsError(e.Message) {
+			errorLines++
 			normalized := NormalizeMessage(e.Message)
 			errorCounts[normalized]++
 		}
@@ -216,8 +220,10 @@ func summarizeCapture(dir string) (*captureData, error) {
 			LinesPerS: linesPerSec,
 			Labels:    labels,
 		},
-		errors: errors,
-		rates:  rates,
+		errors:     errors,
+		allErrors:  errorCounts,
+		errorLines: errorLines,
+		rates:      rates,
 	}, nil
 }
 
@@ -248,4 +254,216 @@ func setFromSlice(s []string) map[string]bool {
 		m[v] = true
 	}
 	return m
+}
+
+// BaselineDiffResult holds a verdict-oriented comparison against a baseline capture.
+type BaselineDiffResult struct {
+	Baseline         string       `json:"baseline"`
+	Current          string       `json:"current"`
+	ErrorRateChange  string       `json:"error_rate_change"`
+	VolumeChange     string       `json:"volume_change"`
+	NewErrorPatterns []ErrorDelta `json:"new_error_patterns,omitempty"`
+	MissingLabels    []string     `json:"missing_labels,omitempty"`
+	NewLabels        []string     `json:"new_labels,omitempty"`
+	Verdict          string       `json:"verdict"`
+	Confidence       float64      `json:"confidence"`
+}
+
+// ErrorDelta describes an error pattern that is new or significantly worse in the current capture.
+type ErrorDelta struct {
+	Pattern       string `json:"pattern"`
+	Count         int64  `json:"count"`
+	BaselineCount int64  `json:"baseline_count"`
+}
+
+// BaselineDiff compares a current capture against a baseline, producing a verdict.
+// baselineDir is the known-good reference; currentDir is the capture under evaluation.
+func BaselineDiff(baselineDir, currentDir string) (*BaselineDiffResult, error) {
+	baseCap, err := summarizeCapture(baselineDir)
+	if err != nil {
+		return nil, fmt.Errorf("baseline: %w", err)
+	}
+	curCap, err := summarizeCapture(currentDir)
+	if err != nil {
+		return nil, fmt.Errorf("current: %w", err)
+	}
+
+	result := &BaselineDiffResult{
+		Baseline: baselineDir,
+		Current:  currentDir,
+	}
+
+	// Error rates
+	baseErrorRate := errorRate(baseCap.errorLines, baseCap.summary.Lines)
+	curErrorRate := errorRate(curCap.errorLines, curCap.summary.Lines)
+	errorRateChangePct := percentChange(baseErrorRate, curErrorRate)
+	result.ErrorRateChange = formatPercentChange(errorRateChangePct)
+
+	// Volume change
+	volumeChangePct := percentChange(float64(baseCap.summary.Lines), float64(curCap.summary.Lines))
+	result.VolumeChange = formatPercentChange(volumeChangePct)
+
+	// New or significantly worse error patterns
+	for pat, count := range curCap.allErrors {
+		baseCount := baseCap.allErrors[pat]
+		if baseCount == 0 {
+			// entirely new pattern
+			result.NewErrorPatterns = append(result.NewErrorPatterns, ErrorDelta{
+				Pattern:       pat,
+				Count:         count,
+				BaselineCount: 0,
+			})
+		} else if count > baseCount*2 {
+			// more than 2x increase
+			result.NewErrorPatterns = append(result.NewErrorPatterns, ErrorDelta{
+				Pattern:       pat,
+				Count:         count,
+				BaselineCount: baseCount,
+			})
+		}
+	}
+	sort.Slice(result.NewErrorPatterns, func(i, j int) bool {
+		return result.NewErrorPatterns[i].Count > result.NewErrorPatterns[j].Count
+	})
+
+	// Label diffs (baseline perspective: missing = was in baseline but gone; new = appeared)
+	baseLabels := setFromSlice(baseCap.summary.Labels)
+	curLabels := setFromSlice(curCap.summary.Labels)
+	for _, l := range baseCap.summary.Labels {
+		if !curLabels[l] {
+			result.MissingLabels = append(result.MissingLabels, l)
+		}
+	}
+	for _, l := range curCap.summary.Labels {
+		if !baseLabels[l] {
+			result.NewLabels = append(result.NewLabels, l)
+		}
+	}
+
+	// Verdict classification (deterministic)
+	result.Verdict, result.Confidence = classifyVerdict(errorRateChangePct, volumeChangePct, result.NewErrorPatterns)
+
+	return result, nil
+}
+
+// errorRate computes error percentage. Returns 0 if totalLines is 0.
+func errorRate(errorLines, totalLines int64) float64 {
+	if totalLines == 0 {
+		return 0
+	}
+	return float64(errorLines) / float64(totalLines) * 100
+}
+
+// percentChange computes the percentage change from before to after.
+// Returns 0 if before is 0 and after is 0. Returns +100 if before is 0 and after > 0.
+func percentChange(before, after float64) float64 {
+	if before == 0 {
+		if after == 0 {
+			return 0
+		}
+		return 100
+	}
+	return (after - before) / before * 100
+}
+
+// formatPercentChange formats a percentage change as "+340%" or "-20%".
+func formatPercentChange(pct float64) string {
+	if pct >= 0 {
+		return fmt.Sprintf("+%.0f%%", pct)
+	}
+	return fmt.Sprintf("%.0f%%", pct)
+}
+
+// classifyVerdict returns a deterministic verdict and confidence score.
+func classifyVerdict(errorRateChangePct, volumeChangePct float64, newPatterns []ErrorDelta) (string, float64) {
+	hasNewPatterns := len(newPatterns) > 0
+
+	// improvement: error rate decreased more than 20%
+	if errorRateChangePct < -20 {
+		confidence := 0.7
+		if errorRateChangePct < -50 {
+			confidence = 0.9
+		}
+		return "improvement", confidence
+	}
+
+	// regression: error rate increased more than 50% AND new error patterns exist
+	if errorRateChangePct > 50 && hasNewPatterns {
+		confidence := 0.7
+		if errorRateChangePct > 200 {
+			confidence = 0.95
+		} else if errorRateChangePct > 100 {
+			confidence = 0.85
+		}
+		return "regression", confidence
+	}
+
+	// different: significant volume change (>50%) but error rate within bounds,
+	// or error rate increased but no new patterns
+	absErrorChange := errorRateChangePct
+	if absErrorChange < 0 {
+		absErrorChange = -absErrorChange
+	}
+	absVolumeChange := volumeChangePct
+	if absVolumeChange < 0 {
+		absVolumeChange = -absVolumeChange
+	}
+
+	if absVolumeChange > 50 && absErrorChange <= 50 {
+		return "different", 0.6
+	}
+	if errorRateChangePct > 50 && !hasNewPatterns {
+		return "different", 0.5
+	}
+
+	// stable: error rate change within 20% AND no new patterns
+	if absErrorChange <= 20 && !hasNewPatterns {
+		confidence := 0.8
+		if absErrorChange <= 5 {
+			confidence = 0.95
+		}
+		return "stable", confidence
+	}
+
+	// borderline cases that don't fit cleanly
+	if hasNewPatterns {
+		return "different", 0.5
+	}
+	return "stable", 0.5
+}
+
+// WriteJSON writes the baseline diff result as JSON.
+func (b *BaselineDiffResult) WriteJSON(w io.Writer) error {
+	enc := json.NewEncoder(w)
+	enc.SetIndent("", "  ")
+	return enc.Encode(b)
+}
+
+// WriteText writes a human-readable baseline diff summary.
+func (b *BaselineDiffResult) WriteText(w io.Writer) {
+	tw := &textWriter{w: w}
+
+	tw.printf("Baseline: %s\n", b.Baseline)
+	tw.printf("Current:  %s\n", b.Current)
+	tw.printf("\nVerdict:    %s (confidence %.0f%%)\n", b.Verdict, b.Confidence*100)
+	tw.printf("Error rate: %s\n", b.ErrorRateChange)
+	tw.printf("Volume:     %s\n", b.VolumeChange)
+
+	if len(b.NewErrorPatterns) > 0 {
+		tw.printf("\nNew/worse error patterns:\n")
+		for _, e := range b.NewErrorPatterns {
+			if e.BaselineCount == 0 {
+				tw.printf("  [NEW %d] %s\n", e.Count, e.Pattern)
+			} else {
+				tw.printf("  [%d -> %d] %s\n", e.BaselineCount, e.Count, e.Pattern)
+			}
+		}
+	}
+
+	if len(b.MissingLabels) > 0 {
+		tw.printf("\nMissing labels (in baseline, not in current): %v\n", b.MissingLabels)
+	}
+	if len(b.NewLabels) > 0 {
+		tw.printf("\nNew labels (in current, not in baseline): %v\n", b.NewLabels)
+	}
 }

@@ -71,6 +71,11 @@ func ExitCode(err error) int {
 	return ExitInternal
 }
 
+// NewFindingsError creates an error indicating that findings were detected (non-zero triage).
+func NewFindingsError(msg string) *CLIError {
+	return &CLIError{Code: ExitFindings, Type: "findings", Message: msg}
+}
+
 // FormatError writes the error to w. In JSON mode, it writes structured JSON.
 // In text mode, it writes "error: <message>".
 func FormatError(w io.Writer, err error, jsonMode bool) {

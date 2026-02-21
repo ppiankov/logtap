@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"regexp"
@@ -18,6 +19,7 @@ var (
 	sliceLabel []string
 	sliceGrep  string
 	sliceOut   string
+	sliceJSON  bool
 )
 
 func newSliceCmd() *cobra.Command {
@@ -26,12 +28,11 @@ func newSliceCmd() *cobra.Command {
 		Short: "Extract a time range and/or label filter into a new smaller capture directory",
 		Long:  "Slice reads a capture directory, applies time range and/or label filters, and writes matching entries to a new capture directory with its own metadata and index.",
 		Args:  cobra.ExactArgs(1),
-		Run: func(cmd *cobra.Command, args []string) {
+		RunE: func(cmd *cobra.Command, args []string) error {
 			captureDir := args[0]
 
 			if sliceOut == "" {
-				fmt.Fprintf(os.Stderr, "Error: --out flag is required\n")
-				os.Exit(1)
+				return fmt.Errorf("--out flag is required")
 			}
 
 			var fromTime, toTime time.Time
@@ -40,15 +41,13 @@ func newSliceCmd() *cobra.Command {
 			if sliceFrom != "" {
 				fromTime, err = parseTime(sliceFrom)
 				if err != nil {
-					fmt.Fprintf(os.Stderr, "Error parsing --from: %v\n", err)
-					os.Exit(1)
+					return fmt.Errorf("invalid --from: %w", err)
 				}
 			}
 			if sliceTo != "" {
 				toTime, err = parseTime(sliceTo)
 				if err != nil {
-					fmt.Fprintf(os.Stderr, "Error parsing --to: %v\n", err)
-					os.Exit(1)
+					return fmt.Errorf("invalid --to: %w", err)
 				}
 			}
 
@@ -56,8 +55,7 @@ func newSliceCmd() *cobra.Command {
 			for _, l := range sliceLabel {
 				parts := strings.SplitN(l, "=", 2)
 				if len(parts) != 2 || parts[0] == "" || parts[1] == "" {
-					fmt.Fprintf(os.Stderr, "Error: invalid --label format '%s'. Expected key=value\n", l)
-					os.Exit(1)
+					return fmt.Errorf("invalid --label format '%s': expected key=value", l)
 				}
 				labelFilters = append(labelFilters, archive.LabelFilter{Key: parts[0], Value: parts[1]})
 			}
@@ -66,8 +64,7 @@ func newSliceCmd() *cobra.Command {
 			if sliceGrep != "" {
 				grepRegex, err = regexp.Compile(sliceGrep)
 				if err != nil {
-					fmt.Fprintf(os.Stderr, "Error compiling --grep regex: %v\n", err)
-					os.Exit(1)
+					return fmt.Errorf("invalid --grep regex: %w", err)
 				}
 			}
 
@@ -81,10 +78,25 @@ func newSliceCmd() *cobra.Command {
 			}
 
 			if err := archive.Slice(opts); err != nil {
-				fmt.Fprintf(os.Stderr, "Error slicing capture: %v\n", err)
-				os.Exit(1)
+				return err
 			}
-			fmt.Println("Slicing complete.")
+
+			if sliceJSON {
+				summary, err := archive.Inspect(sliceOut)
+				if err != nil {
+					return err
+				}
+				return json.NewEncoder(os.Stdout).Encode(map[string]any{
+					"source":  captureDir,
+					"output":  sliceOut,
+					"entries": summary.TotalLines,
+					"files":   summary.Files,
+					"bytes":   summary.DiskSize,
+				})
+			}
+
+			_, _ = fmt.Fprintln(os.Stderr, "Slicing complete.")
+			return nil
 		},
 	}
 
@@ -93,6 +105,7 @@ func newSliceCmd() *cobra.Command {
 	cmd.Flags().StringArrayVar(&sliceLabel, "label", []string{}, "label filter (key=value), repeatable")
 	cmd.Flags().StringVar(&sliceGrep, "grep", "", "regex filter on message content")
 	cmd.Flags().StringVarP(&sliceOut, "out", "o", "", "output directory for the new capture (required)")
+	cmd.Flags().BoolVar(&sliceJSON, "json", false, "output summary as JSON")
 	_ = cmd.MarkFlagRequired("out")
 
 	return cmd
