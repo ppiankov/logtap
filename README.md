@@ -114,8 +114,17 @@ logtap triage ./capture --out ./triage           # scan for anomalies
 | `logtap slice <dir>` | Extract time/label subset to a new capture directory |
 | `logtap export <dir>` | Convert capture to parquet, CSV, or JSONL |
 | `logtap triage <dir>` | Scan for anomalies and produce a triage report |
+| `logtap grep <pattern> <dir>` | Search captures for matching entries |
+| `logtap diff <dir1> <dir2>` | Compare two captures (structure or baseline regression) |
+| `logtap merge <dirs...>` | Merge multiple captures into one |
 | `logtap report <dir>` | Generate incident report (inspect + triage in one artifact) |
 | `logtap catalog [dir]` | Discover and list capture directories |
+| `logtap watch <dir>` | Tail a live or completed capture |
+| `logtap snapshot <dir>` | Pack or extract a capture archive (tar.zst) |
+| `logtap upload <dir>` | Upload capture to S3/GCS |
+| `logtap download <url>` | Download capture from S3/GCS |
+| `logtap deploy` | Deploy receiver as in-cluster pod + service |
+| `logtap gc <dir>` | Delete old captures by age or total size |
 | `logtap tap` | Inject log-forwarding sidecar into workloads |
 | `logtap untap` | Remove sidecar from workloads |
 | `logtap check` | Validate cluster readiness and detect leftovers |
@@ -151,9 +160,24 @@ logtap grep "error|timeout" ./capture                             # search all f
 logtap grep "ORD-12345" ./capture --format text                   # human-readable timeline
 logtap grep "tracking-id-abc123" ./capture --sort                 # chronological JSONL
 logtap grep "OOMKilled" ./capture --label app=worker --count      # count per file
+logtap grep "panic" ./capture -C 3                                # 3 context lines around matches
 
-# Manual sort (when not using --sort)
-logtap grep "tracking-id" ./capture | jq -s 'sort_by(.ts)[]' -c
+# Diff and baseline comparison
+logtap diff ./before ./after --json                               # structural diff
+logtap diff ./baseline ./current --baseline --json                # regression verdict
+
+# Cloud upload / download
+logtap upload ./capture s3://bucket/prefix
+logtap download s3://bucket/prefix --out ./capture
+
+# Webhook auth
+logtap recv --dir ./capture --webhook-url http://hook --webhook-auth bearer:my-token
+logtap recv --dir ./capture --webhook-url http://hook --webhook-auth hmac-sha256:secret
+
+# JSON output (available on most commands)
+logtap slice ./capture --label app=web --out ./slice --json
+logtap merge ./a ./b --out ./merged --json
+logtap snapshot ./capture --output capture.tar.zst --json
 
 # Triage
 logtap triage ./capture --out ./triage --jobs 8
@@ -175,6 +199,7 @@ logtap recv --redact --redact-patterns ./patterns.yaml --dir ./capture
 | `G` / `gg` | Jump to bottom / top |
 | `f` | Toggle follow mode |
 | `/` | Search (regex); prefix with `!` to negate |
+| `l` | Label filter (e.g., `app=gateway`) |
 | `n` / `N` | Next / previous match |
 | `q` | Quit |
 
@@ -225,6 +250,46 @@ capture/
   - [Multi-namespace tap](docs/examples/multi-namespace.sh) — tapping across namespaces
   - [CI integration](docs/examples/ci-integration.sh) — compare captures in CI
   - [DuckDB analysis](docs/examples/duckdb-analysis.sql) — query parquet exports
+
+## Security and safety
+
+logtap is designed to be safe for production-adjacent use during load testing and incident investigation.
+
+**Data safety:**
+- **PII redaction** — `--redact` strips emails, credit card numbers, JWTs, bearer tokens, IPs, SSNs, and phone numbers before bytes hit disk. Custom patterns supported via YAML
+- **Audit trail** — every connection, push, and rotation event is logged to `audit.jsonl` inside the capture directory
+- **Bounded resources** — `--max-disk` and `--max-file` enforce hard caps. When disk is full, oldest files are rotated out. The receiver never blocks the sender
+- **No upstream impact** — sidecar injection is read-only. The forwarder reads existing pod logs; it does not modify application logging or intercept traffic
+- **Clean removal** — `logtap untap` removes all injected sidecars. `logtap status` detects orphaned sidecars. `logtap check` validates cluster state
+
+**Network safety:**
+- **Localhost by default** — receiver binds to `127.0.0.1:3100`, not `0.0.0.0`
+- **TLS support** — `--tls-cert` and `--tls-key` for encrypted transport
+- **Webhook auth** — bearer tokens or HMAC-SHA256 signatures for webhook notifications
+- **Service mesh aware** — auto-detects Linkerd/Istio and adds sidecar bypass annotations
+
+**File safety:**
+- **Restrictive permissions** — capture files are written with `0600`/`0700` permissions
+- **Path traversal protection** — cloud download validates all object keys against directory escape
+- **No secrets in captures** — redaction happens in the receive pipeline, before the writer
+
+**Production guardrails:**
+- **`--allow-prod` required** — tapping production namespaces requires an explicit flag
+- **`--force` required** — namespace-wide tap (`--all`) requires explicit confirmation
+- **Dry-run support** — `--dry-run` on `tap`, `untap`, and `deploy` shows changes without applying
+- **Auto-rollback** — failed sidecar injection automatically rolls back the workload
+
+## Exit codes
+
+| Code | Meaning |
+|------|---------|
+| `0` | Success |
+| `1` | Internal error |
+| `2` | Invalid arguments |
+| `3` | Not found (missing capture, file, or resource) |
+| `4` | Permission denied |
+| `5` | Network error (recoverable — agent can retry) |
+| `6` | Findings detected (triage anomalies or check failures) |
 
 ## Known limitations
 
