@@ -2,6 +2,7 @@
 bin/
 dist/
 /logtap
+/logtap-forwarder
 *.exe
 *.exe~
 *.dll
