@@ -206,25 +206,25 @@ func TestRunGrep_Success(t *testing.T) {
 	defer restore()
 
 	t.Run("matches", func(t *testing.T) {
-		if err := runGrep("error", dir, "", "", nil, false, false, "json"); err != nil {
+		if err := runGrep("error", dir, "", "", nil, false, false, "json", 0); err != nil {
 			t.Fatalf("runGrep: %v", err)
 		}
 	})
 
 	t.Run("count", func(t *testing.T) {
-		if err := runGrep("error", dir, "", "", nil, true, false, "json"); err != nil {
+		if err := runGrep("error", dir, "", "", nil, true, false, "json", 0); err != nil {
 			t.Fatalf("runGrep count: %v", err)
 		}
 	})
 
 	t.Run("sort", func(t *testing.T) {
-		if err := runGrep("error", dir, "", "", nil, false, true, "json"); err != nil {
+		if err := runGrep("error", dir, "", "", nil, false, true, "json", 0); err != nil {
 			t.Fatalf("runGrep sort: %v", err)
 		}
 	})
 
 	t.Run("text", func(t *testing.T) {
-		if err := runGrep("error", dir, "", "", nil, false, false, "text"); err != nil {
+		if err := runGrep("error", dir, "", "", nil, false, false, "text", 0); err != nil {
 			t.Fatalf("runGrep text: %v", err)
 		}
 	})
@@ -249,7 +249,7 @@ func TestRunExport_Success(t *testing.T) {
 	restore := redirectOutput(t)
 	defer restore()
 
-	if err := runExport(dir, "jsonl", "", "", nil, "", outPath); err != nil {
+	if err := runExport(dir, "jsonl", "", "", nil, "", outPath, false); err != nil {
 		t.Fatalf("runExport: %v", err)
 	}
 	if _, err := os.Stat(outPath); err != nil {
@@ -266,7 +266,7 @@ func TestRunMerge_Success(t *testing.T) {
 	restore := redirectOutput(t)
 	defer restore()
 
-	if err := runMerge([]string{dirA, dirB}, outDir); err != nil {
+	if err := runMerge([]string{dirA, dirB}, outDir, false); err != nil {
 		t.Fatalf("runMerge: %v", err)
 	}
 	if _, err := os.Stat(filepath.Join(outDir, "metadata.json")); err != nil {
@@ -282,10 +282,10 @@ func TestRunSnapshot_Success(t *testing.T) {
 	restore := redirectOutput(t)
 	defer restore()
 
-	if err := runSnapshot(dir, archivePath, false); err != nil {
+	if err := runSnapshot(dir, archivePath, false, false); err != nil {
 		t.Fatalf("runSnapshot pack: %v", err)
 	}
-	if err := runSnapshot(archivePath, extractDir, true); err != nil {
+	if err := runSnapshot(archivePath, extractDir, true, false); err != nil {
 		t.Fatalf("runSnapshot extract: %v", err)
 	}
 	if _, err := os.Stat(filepath.Join(extractDir, "metadata.json")); err != nil {
@@ -339,7 +339,7 @@ func TestRunGrep_NoMatches(t *testing.T) {
 	restore := redirectOutput(t)
 	defer restore()
 
-	if err := runGrep("zzz_no_match_zzz", dir, "", "", nil, false, false, "json"); err != nil {
+	if err := runGrep("zzz_no_match_zzz", dir, "", "", nil, false, false, "json", 0); err != nil {
 		t.Fatalf("runGrep no match: %v", err)
 	}
 }
@@ -349,7 +349,7 @@ func TestRunGrep_WithLabelFilter(t *testing.T) {
 	restore := redirectOutput(t)
 	defer restore()
 
-	if err := runGrep("hello", dir, "", "", []string{"app=web"}, false, false, "json"); err != nil {
+	if err := runGrep("hello", dir, "", "", []string{"app=web"}, false, false, "json", 0); err != nil {
 		t.Fatalf("runGrep label: %v", err)
 	}
 }
@@ -361,7 +361,7 @@ func TestRunExport_CSV(t *testing.T) {
 	restore := redirectOutput(t)
 	defer restore()
 
-	if err := runExport(dir, "csv", "", "", nil, "", outPath); err != nil {
+	if err := runExport(dir, "csv", "", "", nil, "", outPath, false); err != nil {
 		t.Fatalf("runExport csv: %v", err)
 	}
 	if _, err := os.Stat(outPath); err != nil {
@@ -376,7 +376,7 @@ func TestRunExport_Parquet(t *testing.T) {
 	restore := redirectOutput(t)
 	defer restore()
 
-	if err := runExport(dir, "parquet", "", "", nil, "", outPath); err != nil {
+	if err := runExport(dir, "parquet", "", "", nil, "", outPath, false); err != nil {
 		t.Fatalf("runExport parquet: %v", err)
 	}
 	if _, err := os.Stat(outPath); err != nil {
@@ -400,7 +400,7 @@ func TestRunMerge_SingleDir(t *testing.T) {
 	dir := makeCaptureDir(t, sampleEntries(time.Date(2025, 1, 15, 10, 0, 0, 0, time.UTC)))
 	outDir := filepath.Join(t.TempDir(), "merged")
 
-	err := runMerge([]string{dir}, outDir)
+	err := runMerge([]string{dir}, outDir, false)
 	if err == nil {
 		t.Fatal("expected error for single capture merge")
 	}

@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"os/signal"
@@ -17,9 +18,10 @@ import (
 
 func newWatchCmd() *cobra.Command {
 	var (
-		lines    int
-		grepStr  string
-		labelStr string
+		lines      int
+		grepStr    string
+		labelStr   string
+		jsonOutput bool
 	)
 
 	cmd := &cobra.Command{
@@ -30,18 +32,19 @@ For live captures (receiver still running), it follows new entries like 'tail -f
 For completed captures, it shows the last N lines and exits.`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runWatch(args[0], lines, grepStr, labelStr)
+			return runWatch(args[0], lines, grepStr, labelStr, jsonOutput)
 		},
 	}
 
 	cmd.Flags().IntVarP(&lines, "lines", "n", 10, "number of initial lines to show")
 	cmd.Flags().StringVar(&grepStr, "grep", "", "regex filter on message content")
 	cmd.Flags().StringVar(&labelStr, "label", "", "label filter (key=value)")
+	cmd.Flags().BoolVar(&jsonOutput, "json", false, "output as JSON")
 
 	return cmd
 }
 
-func runWatch(dir string, n int, grepStr, labelStr string) error {
+func runWatch(dir string, n int, grepStr, labelStr string, jsonOutput bool) error {
 	// Validate dir
 	info, err := os.Stat(dir)
 	if err != nil {
@@ -90,6 +93,16 @@ func runWatch(dir string, n int, grepStr, labelStr string) error {
 	}
 	defer func() { _ = tailer.Close() }()
 
+	enc := json.NewEncoder(os.Stdout)
+
+	emit := func(e recv.LogEntry) {
+		if jsonOutput {
+			_ = enc.Encode(e)
+		} else {
+			printEntry(e)
+		}
+	}
+
 	// Show last N lines
 	last, err := tailer.ReadLast(n)
 	if err != nil {
@@ -97,7 +110,7 @@ func runWatch(dir string, n int, grepStr, labelStr string) error {
 	}
 	for _, e := range last {
 		if matchEntry(e) {
-			printEntry(e)
+			emit(e)
 		}
 	}
 
@@ -124,7 +137,7 @@ func runWatch(dir string, n int, grepStr, labelStr string) error {
 			}
 			for _, e := range entries {
 				if matchEntry(e) {
-					printEntry(e)
+					emit(e)
 				}
 			}
 		}

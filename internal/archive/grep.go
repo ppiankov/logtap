@@ -16,12 +16,15 @@ import (
 // GrepConfig controls grep behavior.
 type GrepConfig struct {
 	CountOnly bool // only report per-file counts, do not call onMatch
+	Context   int  // number of surrounding lines to include (0 = matches only)
 }
 
 // GrepMatch represents a matching entry with file context.
 type GrepMatch struct {
-	File  string
-	Entry recv.LogEntry
+	File    string
+	Entry   recv.LogEntry
+	Context string // "" for actual match, "before" or "after" for context lines
+	Group   int    // context group ID (0 when context is not used); entries in the same group are contiguous
 }
 
 // GrepProgress reports progress during grep scanning.
@@ -99,6 +102,12 @@ func grepFile(f FileInfo, filter *Filter, cfg GrepConfig, onMatch func(GrepMatch
 		r = dec
 	}
 
+	// When context is requested, collect all entries and match indices,
+	// then expand ranges and emit with context markers.
+	if cfg.Context > 0 && !cfg.CountOnly && onMatch != nil {
+		return grepFileWithContext(f.Name, r, filter, cfg.Context, onMatch)
+	}
+
 	var scanned, matches int64
 	scanner := bufio.NewScanner(r)
 	scanner.Buffer(make([]byte, 256*1024), 1024*1024)
@@ -126,4 +135,94 @@ func grepFile(f FileInfo, filter *Filter, cfg GrepConfig, onMatch func(GrepMatch
 	}
 
 	return matches, scanned, scanner.Err()
+}
+
+// grepFileWithContext scans a file, collecting all entries and tracking match
+// positions, then emits matches with surrounding context lines.
+func grepFileWithContext(name string, r io.Reader, filter *Filter, ctx int,
+	onMatch func(GrepMatch)) (int64, int64, error) {
+
+	scanner := bufio.NewScanner(r)
+	scanner.Buffer(make([]byte, 256*1024), 1024*1024)
+
+	var entries []recv.LogEntry
+	var matchIndices []int
+
+	for scanner.Scan() {
+		line := scanner.Bytes()
+		if len(line) == 0 {
+			continue
+		}
+		var entry recv.LogEntry
+		if err := json.Unmarshal(line, &entry); err != nil {
+			continue
+		}
+		idx := len(entries)
+		entries = append(entries, entry)
+		if filter == nil || filter.MatchEntry(entry) {
+			matchIndices = append(matchIndices, idx)
+		}
+	}
+	if err := scanner.Err(); err != nil {
+		return 0, 0, err
+	}
+
+	scanned := int64(len(entries))
+	matches := int64(len(matchIndices))
+
+	if matches == 0 {
+		return 0, scanned, nil
+	}
+
+	// Build a set of match indices for O(1) lookup.
+	matchSet := make(map[int]struct{}, len(matchIndices))
+	for _, i := range matchIndices {
+		matchSet[i] = struct{}{}
+	}
+
+	// Merge overlapping context ranges.
+	type span struct{ lo, hi int }
+	var spans []span
+	n := len(entries)
+	for _, mi := range matchIndices {
+		lo := mi - ctx
+		if lo < 0 {
+			lo = 0
+		}
+		hi := mi + ctx
+		if hi >= n {
+			hi = n - 1
+		}
+		if len(spans) > 0 && lo <= spans[len(spans)-1].hi+1 {
+			// Extend the previous span.
+			if hi > spans[len(spans)-1].hi {
+				spans[len(spans)-1].hi = hi
+			}
+		} else {
+			spans = append(spans, span{lo, hi})
+		}
+	}
+
+	// Emit entries within merged spans.
+	for spanIdx, s := range spans {
+		for i := s.lo; i <= s.hi; i++ {
+			ctxLabel := ""
+			if _, isMatch := matchSet[i]; !isMatch {
+				// Determine if this is before or after the nearest match.
+				ctxLabel = "after" // default
+				for _, mi := range matchIndices {
+					if mi > i {
+						ctxLabel = "before"
+						break
+					}
+					if mi == i {
+						break
+					}
+				}
+			}
+			onMatch(GrepMatch{File: name, Entry: entries[i], Context: ctxLabel, Group: spanIdx + 1})
+		}
+	}
+
+	return matches, scanned, nil
 }
