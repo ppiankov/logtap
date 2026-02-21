@@ -26,9 +26,13 @@ func TestWriteAndReadMetadata(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// verify file exists
-	if _, err := os.Stat(filepath.Join(dir, "metadata.json")); err != nil {
+	// verify file exists with restrictive permissions
+	info, err2 := os.Stat(filepath.Join(dir, "metadata.json"))
+	if err2 != nil {
 		t.Fatal("metadata.json not created")
+	}
+	if perm := info.Mode().Perm(); perm != 0o600 {
+		t.Errorf("metadata.json permissions = %o, want 0600", perm)
 	}
 
 	got, err := ReadMetadata(dir)

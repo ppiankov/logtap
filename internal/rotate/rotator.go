@@ -282,7 +282,7 @@ func (r *Rotator) compressFile(name string) (string, error) {
 		return "", err
 	}
 
-	if err := os.WriteFile(dstPath, compressed, 0o644); err != nil {
+	if err := os.WriteFile(dstPath, compressed, 0o640); err != nil {
 		return "", err
 	}
 	if err := os.Remove(srcPath); err != nil {
@@ -293,7 +293,7 @@ func (r *Rotator) compressFile(name string) (string, error) {
 
 func (r *Rotator) appendIndex(entry IndexEntry) error {
 	f, err := os.OpenFile(filepath.Join(r.cfg.Dir, "index.jsonl"),
-		os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o644)
+		os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o640)
 	if err != nil {
 		return err
 	}
@@ -411,5 +411,5 @@ func (r *Rotator) pruneIndex(deleted map[string]bool) error {
 		out = append(out, line...)
 		out = append(out, '\n')
 	}
-	return os.WriteFile(indexPath, out, 0o644)
+	return os.WriteFile(indexPath, out, 0o640)
 }

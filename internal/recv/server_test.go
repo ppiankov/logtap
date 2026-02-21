@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -424,5 +426,61 @@ func TestRedactionIntegration(t *testing.T) {
 	}
 	if !strings.Contains(output, "[REDACTED:cc]") {
 		t.Error("expected [REDACTED:cc] marker")
+	}
+}
+
+func TestRawPush_AuditEntry(t *testing.T) {
+	dir := t.TempDir()
+	var buf bytes.Buffer
+	w := NewWriter(1024, &buf, nil)
+	defer w.Close()
+
+	audit, err := NewAuditLogger(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	srv := NewServer(":0", w, nil, nil, nil, nil)
+	srv.SetAuditLogger(audit)
+	ts := httptest.NewServer(srv.httpSrv.Handler)
+	defer ts.Close()
+
+	payload := `{"ts":"2024-01-01T00:00:00Z","msg":"raw line 1"}
+{"ts":"2024-01-01T00:00:01Z","msg":"raw line 2"}
+`
+	resp, err := http.Post(ts.URL+"/logtap/raw", "application/json", strings.NewReader(payload))
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = resp.Body.Close()
+	if resp.StatusCode != http.StatusNoContent {
+		t.Fatalf("expected 204, got %d", resp.StatusCode)
+	}
+
+	if err := audit.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	// Read the audit log and verify an entry was written.
+	data, err := os.ReadFile(filepath.Join(dir, "audit.jsonl"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var entry AuditEntry
+	if err := json.Unmarshal(bytes.TrimSpace(data), &entry); err != nil {
+		t.Fatalf("unmarshal audit entry: %v", err)
+	}
+	if entry.Event != "raw_push_received" {
+		t.Errorf("event = %q, want %q", entry.Event, "raw_push_received")
+	}
+	if entry.Lines != 2 {
+		t.Errorf("lines = %d, want 2", entry.Lines)
+	}
+	if entry.Bytes != 20 {
+		t.Errorf("bytes = %d, want 20", entry.Bytes)
+	}
+	if entry.RemoteIP == "" {
+		t.Error("remote_ip is empty")
 	}
 }

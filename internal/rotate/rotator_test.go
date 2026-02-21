@@ -189,15 +189,32 @@ func TestDiskCap(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	var warningFired int
+	r.SetOnDiskWarning(func(usage, cap int64) {
+		t.Logf("Disk warning fired: usage %d, cap %d", usage, cap)
+		warningFired++
+	})
+
 	line := []byte(`{"ts":"2024-01-01T00:00:00Z","msg":"padding data for disk cap testing"}` + "\n")
 	// write enough for ~5 rotations
 	for i := 0; i < 50; i++ {
 		if _, err := r.Write(line); err != nil {
 			t.Fatal(err)
 		}
+		// Check for warning fired multiple times while writing
+		if i > 0 && r.DiskUsage() > int64(float64(maxDisk)*0.8) && warningFired == 0 {
+			t.Errorf("expected disk warning to fire, but it didn't after %d writes", i)
+		}
 	}
 	if err := r.Close(); err != nil {
 		t.Fatal(err)
+	}
+
+	// Verify the warning fired at least once
+	if warningFired == 0 {
+		t.Error("expected disk warning to fire at least once, but it didn't")
+	} else if warningFired > 1 {
+		t.Logf("warning fired %d times, expected 1 (first time it crosses 80%% threshold)", warningFired)
 	}
 
 	usage := totalDiskUsage(t, dir)
@@ -259,6 +276,45 @@ func TestCloseWritesIndex(t *testing.T) {
 	}
 	if entries[0].Lines != 1 {
 		t.Errorf("expected 1 line, got %d", entries[0].Lines)
+	}
+}
+
+func TestFilePermissions(t *testing.T) {
+	dir := t.TempDir()
+	r, err := New(Config{Dir: dir, MaxFile: 50, MaxDisk: 1 << 20, Compress: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	line := []byte(`{"ts":"2024-01-01T00:00:00Z","msg":"perm test"}` + "\n")
+	for i := 0; i < 5; i++ {
+		if _, err := r.Write(line); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := r.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	entries, _ := os.ReadDir(dir)
+	for _, e := range entries {
+		info, err := e.Info()
+		if err != nil {
+			t.Fatal(err)
+		}
+		perm := info.Mode().Perm()
+		name := e.Name()
+
+		switch {
+		case strings.HasSuffix(name, ".jsonl.zst"):
+			if perm != 0o640 {
+				t.Errorf("%s permissions = %o, want 0640", name, perm)
+			}
+		case name == "index.jsonl":
+			if perm != 0o640 {
+				t.Errorf("%s permissions = %o, want 0640", name, perm)
+			}
+		}
 	}
 }
 

@@ -4,6 +4,17 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [1.2.0] - 2026-02-21
+
+### Added
+
+- `grep --context N` / `-C N` flag for surrounding context lines around matches
+- `diff --baseline` flag for deterministic regression/improvement verdicts
+- Cross-service error correlation in `triage` (Pearson cross-correlation with lag detection)
+- `--json` flag for slice, export, merge, upload, download, and snapshot subcommands
+- `--webhook-auth` flag for recv (bearer token and HMAC-SHA256 signature support)
+- Structured exit codes: not_found (3), permission (4), network (5), findings (6)
+
 ## [1.1.0] - 2026-02-20
 
 ### Added

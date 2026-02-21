@@ -325,42 +325,42 @@ func TestRunSlice_InvalidDir(t *testing.T) {
 }
 
 func TestRunExport_InvalidFormat(t *testing.T) {
-	err := runExport("/nonexistent/dir", "xml", "", "", nil, "", "/tmp/out")
+	err := runExport("/nonexistent/dir", "xml", "", "", nil, "", "/tmp/out", false)
 	if err == nil {
 		t.Error("expected error for invalid format")
 	}
 }
 
 func TestRunExport_InvalidDir(t *testing.T) {
-	err := runExport("/nonexistent/dir", "csv", "", "", nil, "", "/tmp/out")
+	err := runExport("/nonexistent/dir", "csv", "", "", nil, "", "/tmp/out", false)
 	if err == nil {
 		t.Error("expected error for nonexistent dir")
 	}
 }
 
 func TestRunGrep_InvalidDir(t *testing.T) {
-	err := runGrep("pattern", "/nonexistent/dir", "", "", nil, false, false, "json")
+	err := runGrep("pattern", "/nonexistent/dir", "", "", nil, false, false, "json", 0)
 	if err == nil {
 		t.Error("expected error for nonexistent dir")
 	}
 }
 
 func TestRunMerge_InvalidDirs(t *testing.T) {
-	err := runMerge([]string{"/nonexistent/a", "/nonexistent/b"}, "/tmp/out")
+	err := runMerge([]string{"/nonexistent/a", "/nonexistent/b"}, "/tmp/out", false)
 	if err == nil {
 		t.Error("expected error for nonexistent source dirs")
 	}
 }
 
 func TestRunSnapshot_PackInvalidDir(t *testing.T) {
-	err := runSnapshot("/nonexistent/dir", "/tmp/out.tar.zst", false)
+	err := runSnapshot("/nonexistent/dir", "/tmp/out.tar.zst", false, false)
 	if err == nil {
 		t.Error("expected error for nonexistent source dir")
 	}
 }
 
 func TestRunSnapshot_ExtractInvalidFile(t *testing.T) {
-	err := runSnapshot("/nonexistent/file.tar.zst", "/tmp/out", true)
+	err := runSnapshot("/nonexistent/file.tar.zst", "/tmp/out", true, false)
 	if err == nil {
 		t.Error("expected error for nonexistent archive file")
 	}
@@ -381,14 +381,14 @@ func TestRunTriage_InvalidDir(t *testing.T) {
 }
 
 func TestRunRecv_InvalidByteSize(t *testing.T) {
-	err := runRecv(":3100", "/tmp", "invalid", "50GB", true, "", "", 100, true, "", "", nil, "", "")
+	err := runRecv(":3100", "/tmp", "invalid", "50GB", true, "", "", 100, true, "", "", nil, "", "", "")
 	if err == nil {
 		t.Error("expected error for invalid max-file size")
 	}
 }
 
 func TestRunRecv_InvalidDiskSize(t *testing.T) {
-	err := runRecv(":3100", "/tmp", "256MB", "invalid", true, "", "", 100, true, "", "", nil, "", "")
+	err := runRecv(":3100", "/tmp", "256MB", "invalid", true, "", "", 100, true, "", "", nil, "", "", "")
 	if err == nil {
 		t.Error("expected error for invalid max-disk size")
 	}
@@ -396,7 +396,7 @@ func TestRunRecv_InvalidDiskSize(t *testing.T) {
 
 func TestRunRecv_InvalidRedactPatterns(t *testing.T) {
 	dir := t.TempDir()
-	err := runRecv(":0", dir, "256MB", "50GB", true, "true", "/nonexistent/patterns.yaml", 100, true, "", "", nil, "", "")
+	err := runRecv(":0", dir, "256MB", "50GB", true, "true", "/nonexistent/patterns.yaml", 100, true, "", "", nil, "", "", "")
 	if err == nil {
 		t.Error("expected error for nonexistent redact patterns file")
 	}
@@ -404,7 +404,7 @@ func TestRunRecv_InvalidRedactPatterns(t *testing.T) {
 
 func TestRunRecv_MissingDir(t *testing.T) {
 	// --dir is required
-	err := runRecv(":0", "", "256MB", "50GB", true, "", "", 100, true, "", "", nil, "", "")
+	err := runRecv(":0", "", "256MB", "50GB", true, "", "", 100, true, "", "", nil, "", "", "")
 	// We check this in the command RunE, but runRecv itself creates the dir.
 	// Pass an empty dir — os.MkdirAll("") may fail on some systems.
 	// Just verify it doesn't panic.
@@ -413,9 +413,33 @@ func TestRunRecv_MissingDir(t *testing.T) {
 
 func TestRunRecv_InvalidRedactName(t *testing.T) {
 	dir := t.TempDir()
-	err := runRecv(":0", dir, "256MB", "50GB", true, "nonexistent_pattern_name", "", 100, true, "", "", nil, "", "")
+	err := runRecv(":0", dir, "256MB", "50GB", true, "nonexistent_pattern_name", "", 100, true, "", "", nil, "", "", "")
 	if err == nil {
 		t.Error("expected error for invalid redact pattern name")
+	}
+}
+
+func TestRunRecv_InvalidBufferSize(t *testing.T) {
+	dir := t.TempDir()
+	err := runRecv(":0", dir, "256MB", "50GB", true, "", "", maxBufSize+1, true, "", "", nil, "", "", "")
+	if err == nil {
+		t.Fatal("expected error for buffer size exceeding maximum")
+	}
+	if !strings.Contains(err.Error(), "exceeds maximum") {
+		t.Errorf("expected 'exceeds maximum' in error, got: %v", err)
+	}
+}
+
+func TestRunRecv_BufferSizeBoundary(t *testing.T) {
+	// Exactly at maxBufSize should NOT trigger the validation error
+	dir := t.TempDir()
+	err := runRecv(":0", dir, "invalid-size", "50GB", true, "", "", maxBufSize, true, "", "", nil, "", "", "")
+	// Should fail on parseByteSize("invalid-size"), not on buffer validation
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	if strings.Contains(err.Error(), "exceeds maximum") {
+		t.Errorf("maxBufSize should pass validation, got: %v", err)
 	}
 }
 
@@ -516,6 +540,17 @@ func TestSubcommand_RecvHelp(t *testing.T) {
 	root.SetArgs([]string{"recv", "--help"})
 	if err := root.Execute(); err != nil {
 		t.Errorf("recv --help: %v", err)
+	}
+}
+
+func TestRecvCmd_ListenDefaultLocalhost(t *testing.T) {
+	cmd := newRecvCmd()
+	f := cmd.Flags().Lookup("listen")
+	if f == nil {
+		t.Fatal("--listen flag not found")
+	}
+	if f.DefValue != "127.0.0.1:3100" {
+		t.Errorf("--listen default = %q, want %q", f.DefValue, "127.0.0.1:3100")
 	}
 }
 

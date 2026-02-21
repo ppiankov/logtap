@@ -350,6 +350,247 @@ func TestGrepProgress(t *testing.T) {
 	}
 }
 
+func TestGrep_Context(t *testing.T) {
+	dir := t.TempDir()
+	base := time.Date(2024, 1, 15, 10, 0, 0, 0, time.UTC)
+
+	// 7 entries: indices 0-6. Match at index 3.
+	// With context=2, expect indices 1,2 (before), 3 (match), 4,5 (after).
+	entries := []recv.LogEntry{
+		{Timestamp: base, Labels: map[string]string{"app": "api"}, Message: "line 0"},
+		{Timestamp: base.Add(time.Second), Labels: map[string]string{"app": "api"}, Message: "line 1"},
+		{Timestamp: base.Add(2 * time.Second), Labels: map[string]string{"app": "api"}, Message: "line 2"},
+		{Timestamp: base.Add(3 * time.Second), Labels: map[string]string{"app": "api"}, Message: "error: boom"},
+		{Timestamp: base.Add(4 * time.Second), Labels: map[string]string{"app": "api"}, Message: "line 4"},
+		{Timestamp: base.Add(5 * time.Second), Labels: map[string]string{"app": "api"}, Message: "line 5"},
+		{Timestamp: base.Add(6 * time.Second), Labels: map[string]string{"app": "api"}, Message: "line 6"},
+	}
+
+	writeMetadata(t, dir, base, base.Add(7*time.Second), 7)
+	writeDataFile(t, dir, "2024-01-15T100000-000.jsonl", entries)
+	writeIndex(t, dir, []rotate.IndexEntry{{
+		File: "2024-01-15T100000-000.jsonl", From: base, To: base.Add(6 * time.Second), Lines: 7,
+	}})
+
+	filter := &Filter{Grep: regexp.MustCompile("error")}
+
+	var got []GrepMatch
+	counts, err := Grep(dir, filter, GrepConfig{Context: 2}, func(m GrepMatch) {
+		got = append(got, m)
+	}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Should emit 5 entries: 2 before + 1 match + 2 after
+	if len(got) != 5 {
+		var msgs []string
+		for _, m := range got {
+			msgs = append(msgs, fmt.Sprintf("%s (ctx=%q)", m.Entry.Message, m.Context))
+		}
+		t.Fatalf("got %d entries %v, want 5", len(got), msgs)
+	}
+
+	// Verify context labels
+	if got[0].Context != "before" || got[0].Entry.Message != "line 1" {
+		t.Errorf("entry 0: context=%q msg=%q, want before/line 1", got[0].Context, got[0].Entry.Message)
+	}
+	if got[1].Context != "before" || got[1].Entry.Message != "line 2" {
+		t.Errorf("entry 1: context=%q msg=%q, want before/line 2", got[1].Context, got[1].Entry.Message)
+	}
+	if got[2].Context != "" || got[2].Entry.Message != "error: boom" {
+		t.Errorf("entry 2: context=%q msg=%q, want match", got[2].Context, got[2].Entry.Message)
+	}
+	if got[3].Context != "after" || got[3].Entry.Message != "line 4" {
+		t.Errorf("entry 3: context=%q msg=%q, want after/line 4", got[3].Context, got[3].Entry.Message)
+	}
+	if got[4].Context != "after" || got[4].Entry.Message != "line 5" {
+		t.Errorf("entry 4: context=%q msg=%q, want after/line 5", got[4].Context, got[4].Entry.Message)
+	}
+
+	// All entries should be in the same group
+	for i, m := range got {
+		if m.Group != 1 {
+			t.Errorf("entry %d: group=%d, want 1", i, m.Group)
+		}
+	}
+
+	// Match count should still be 1 (context entries are not counted as matches)
+	if len(counts) != 1 || counts[0].Count != 1 {
+		t.Errorf("counts = %v, want [{file 1}]", counts)
+	}
+}
+
+func TestGrep_ContextOverlap(t *testing.T) {
+	dir := t.TempDir()
+	base := time.Date(2024, 1, 15, 10, 0, 0, 0, time.UTC)
+
+	// 8 entries: indices 0-7. Matches at index 2 and 4.
+	// With context=1:
+	//   match@2 -> span [1,3]
+	//   match@4 -> span [3,5]
+	// Merged: single span [1,5]. No duplicate for index 3.
+	entries := []recv.LogEntry{
+		{Timestamp: base, Labels: map[string]string{"app": "api"}, Message: "line 0"},
+		{Timestamp: base.Add(time.Second), Labels: map[string]string{"app": "api"}, Message: "line 1"},
+		{Timestamp: base.Add(2 * time.Second), Labels: map[string]string{"app": "api"}, Message: "error: first"},
+		{Timestamp: base.Add(3 * time.Second), Labels: map[string]string{"app": "api"}, Message: "line 3"},
+		{Timestamp: base.Add(4 * time.Second), Labels: map[string]string{"app": "api"}, Message: "error: second"},
+		{Timestamp: base.Add(5 * time.Second), Labels: map[string]string{"app": "api"}, Message: "line 5"},
+		{Timestamp: base.Add(6 * time.Second), Labels: map[string]string{"app": "api"}, Message: "line 6"},
+		{Timestamp: base.Add(7 * time.Second), Labels: map[string]string{"app": "api"}, Message: "line 7"},
+	}
+
+	writeMetadata(t, dir, base, base.Add(8*time.Second), 8)
+	writeDataFile(t, dir, "2024-01-15T100000-000.jsonl", entries)
+	writeIndex(t, dir, []rotate.IndexEntry{{
+		File: "2024-01-15T100000-000.jsonl", From: base, To: base.Add(7 * time.Second), Lines: 8,
+	}})
+
+	filter := &Filter{Grep: regexp.MustCompile("error")}
+
+	var got []GrepMatch
+	counts, err := Grep(dir, filter, GrepConfig{Context: 1}, func(m GrepMatch) {
+		got = append(got, m)
+	}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Merged span [1,5]: line 1 (before), error: first (match), line 3 (between),
+	// error: second (match), line 5 (after) = 5 entries
+	if len(got) != 5 {
+		var msgs []string
+		for _, m := range got {
+			msgs = append(msgs, fmt.Sprintf("%s (ctx=%q)", m.Entry.Message, m.Context))
+		}
+		t.Fatalf("got %d entries %v, want 5", len(got), msgs)
+	}
+
+	// Verify no duplicates — check all messages are unique
+	seen := make(map[string]bool)
+	for _, m := range got {
+		if seen[m.Entry.Message] {
+			t.Errorf("duplicate entry: %q", m.Entry.Message)
+		}
+		seen[m.Entry.Message] = true
+	}
+
+	// All entries should share the same group (overlapping ranges merged)
+	for i, m := range got {
+		if m.Group != 1 {
+			t.Errorf("entry %d: group=%d, want 1", i, m.Group)
+		}
+	}
+
+	// Match count should be 2
+	if len(counts) != 1 || counts[0].Count != 2 {
+		t.Errorf("counts = %v, want [{file 2}]", counts)
+	}
+}
+
+func TestGrep_ContextZero(t *testing.T) {
+	dir := t.TempDir()
+	base := time.Date(2024, 1, 15, 10, 0, 0, 0, time.UTC)
+
+	entries := []recv.LogEntry{
+		{Timestamp: base, Labels: map[string]string{"app": "api"}, Message: "line 0"},
+		{Timestamp: base.Add(time.Second), Labels: map[string]string{"app": "api"}, Message: "error: match"},
+		{Timestamp: base.Add(2 * time.Second), Labels: map[string]string{"app": "api"}, Message: "line 2"},
+	}
+
+	writeMetadata(t, dir, base, base.Add(3*time.Second), 3)
+	writeDataFile(t, dir, "2024-01-15T100000-000.jsonl", entries)
+	writeIndex(t, dir, []rotate.IndexEntry{{
+		File: "2024-01-15T100000-000.jsonl", From: base, To: base.Add(2 * time.Second), Lines: 3,
+	}})
+
+	filter := &Filter{Grep: regexp.MustCompile("error")}
+
+	var got []GrepMatch
+	counts, err := Grep(dir, filter, GrepConfig{Context: 0}, func(m GrepMatch) {
+		got = append(got, m)
+	}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Context=0 should behave exactly like the default: only the match
+	if len(got) != 1 {
+		t.Fatalf("got %d matches, want 1", len(got))
+	}
+	if got[0].Entry.Message != "error: match" {
+		t.Errorf("match = %q, want %q", got[0].Entry.Message, "error: match")
+	}
+	if got[0].Context != "" {
+		t.Errorf("context = %q, want empty (direct match)", got[0].Context)
+	}
+	if got[0].Group != 0 {
+		t.Errorf("group = %d, want 0 (no context mode)", got[0].Group)
+	}
+	if len(counts) != 1 || counts[0].Count != 1 {
+		t.Errorf("counts = %v, want [{file 1}]", counts)
+	}
+}
+
+func TestGrep_ContextSeparateGroups(t *testing.T) {
+	dir := t.TempDir()
+	base := time.Date(2024, 1, 15, 10, 0, 0, 0, time.UTC)
+
+	// 10 entries, matches at index 1 and 8. Context=1.
+	// match@1 -> span [0,2], match@8 -> span [7,9]
+	// These don't overlap, so should be 2 separate groups.
+	entries := []recv.LogEntry{
+		{Timestamp: base, Labels: map[string]string{"app": "api"}, Message: "line 0"},
+		{Timestamp: base.Add(time.Second), Labels: map[string]string{"app": "api"}, Message: "error: early"},
+		{Timestamp: base.Add(2 * time.Second), Labels: map[string]string{"app": "api"}, Message: "line 2"},
+		{Timestamp: base.Add(3 * time.Second), Labels: map[string]string{"app": "api"}, Message: "line 3"},
+		{Timestamp: base.Add(4 * time.Second), Labels: map[string]string{"app": "api"}, Message: "line 4"},
+		{Timestamp: base.Add(5 * time.Second), Labels: map[string]string{"app": "api"}, Message: "line 5"},
+		{Timestamp: base.Add(6 * time.Second), Labels: map[string]string{"app": "api"}, Message: "line 6"},
+		{Timestamp: base.Add(7 * time.Second), Labels: map[string]string{"app": "api"}, Message: "line 7"},
+		{Timestamp: base.Add(8 * time.Second), Labels: map[string]string{"app": "api"}, Message: "error: late"},
+		{Timestamp: base.Add(9 * time.Second), Labels: map[string]string{"app": "api"}, Message: "line 9"},
+	}
+
+	writeMetadata(t, dir, base, base.Add(10*time.Second), 10)
+	writeDataFile(t, dir, "2024-01-15T100000-000.jsonl", entries)
+	writeIndex(t, dir, []rotate.IndexEntry{{
+		File: "2024-01-15T100000-000.jsonl", From: base, To: base.Add(9 * time.Second), Lines: 10,
+	}})
+
+	filter := &Filter{Grep: regexp.MustCompile("error")}
+
+	var got []GrepMatch
+	_, err := Grep(dir, filter, GrepConfig{Context: 1}, func(m GrepMatch) {
+		got = append(got, m)
+	}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Group 1: [0,2] = 3 entries. Group 2: [7,9] = 3 entries. Total: 6.
+	if len(got) != 6 {
+		var msgs []string
+		for _, m := range got {
+			msgs = append(msgs, fmt.Sprintf("%s (ctx=%q grp=%d)", m.Entry.Message, m.Context, m.Group))
+		}
+		t.Fatalf("got %d entries %v, want 6", len(got), msgs)
+	}
+
+	// First 3 should be group 1, last 3 should be group 2
+	for i := 0; i < 3; i++ {
+		if got[i].Group != 1 {
+			t.Errorf("entry %d: group=%d, want 1", i, got[i].Group)
+		}
+	}
+	for i := 3; i < 6; i++ {
+		if got[i].Group != 2 {
+			t.Errorf("entry %d: group=%d, want 2", i, got[i].Group)
+		}
+	}
+}
+
 func TestGrep_InvalidRegex(t *testing.T) {
 	// Verify that an invalid regex pattern fails at compilation,
 	// preventing it from reaching Grep via Filter.Grep.

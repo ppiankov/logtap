@@ -48,7 +48,10 @@ func newAlertTestSetup(t *testing.T, rules []AlertRule) (*AlertEngine, *alertCap
 	t.Helper()
 	capture := &alertCapture{}
 	srv := httptest.NewServer(capture.handler())
-	disp := NewWebhookDispatcher([]string{srv.URL}, nil)
+	disp, err := NewWebhookDispatcher([]string{srv.URL}, nil, "")
+	if err != nil {
+		t.Fatalf("new dispatcher: %v", err)
+	}
 	engine := NewAlertEngine(rules, disp)
 	return engine, capture, srv.Close
 }
