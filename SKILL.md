@@ -72,7 +72,11 @@ sudo mv logtap /usr/local/bin/
 | `--count` | grep | Count matches per file instead of printing entries |
 | `--from`, `--to` | grep, export, slice, open | Time range filter |
 | `--label` | grep, export, slice, open | Label filter (repeatable) |
-| `--json` | inspect, triage, check, version | JSON output |
+| `--json` | inspect, triage, check, version, slice, export, merge, upload, download, snapshot, report, catalog | JSON output |
+| `--context`, `-C` | grep | Show N surrounding context lines around matches |
+| `--baseline` | diff | Deterministic regression/improvement verdict |
+| `--webhook-auth` | recv | Webhook auth (`bearer:<token>` or `hmac-sha256:<secret>`) |
+| `--recursive` | catalog | Recursively scan subdirectories for captures |
 | `--html` | triage | Generate HTML report |
 | `--jobs` | triage | Parallel scan workers |
 | `--namespace`, `-n` | tap, untap, check, deploy | Kubernetes namespace |
@@ -184,8 +188,12 @@ chainwatch exec --profile ops -- logtap tap --deployment api-gateway --target ho
 ## Exit Codes
 
 - `0` — success
-- `1` — error
-- `2` — findings (triage anomalies found, or check failures)
+- `1` — internal error
+- `2` — invalid arguments
+- `3` — not found (missing capture, file, or resource)
+- `4` — permission denied
+- `5` — network error (recoverable)
+- `6` — findings (triage anomalies found, or check failures)
 
 ## What logtap Does NOT Do
 
