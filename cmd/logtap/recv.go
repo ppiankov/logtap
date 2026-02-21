@@ -40,6 +40,7 @@ func newRecvCmd() *cobra.Command {
 		ttlStr         string
 		webhookURLs    []string
 		webhookEvents  string
+		webhookAuth    string
 		alertRulesPath string
 	)
 
@@ -78,7 +79,7 @@ func newRecvCmd() *cobra.Command {
 			if dir == "" {
 				return fmt.Errorf("--dir is required (or use --in-cluster)")
 			}
-			return runRecv(listen, dir, maxFileStr, maxDiskStr, compress, redactFlag, redactPatterns, bufSize, headless, tlsCert, tlsKey, webhookURLs, webhookEvents, alertRulesPath)
+			return runRecv(listen, dir, maxFileStr, maxDiskStr, compress, redactFlag, redactPatterns, bufSize, headless, tlsCert, tlsKey, webhookURLs, webhookEvents, webhookAuth, alertRulesPath)
 		},
 	}
 
@@ -99,6 +100,7 @@ func newRecvCmd() *cobra.Command {
 	cmd.Flags().StringVar(&ttlStr, "ttl", "4h", "receiver pod TTL for in-cluster mode (e.g. 4h, 30m)")
 	cmd.Flags().StringSliceVar(&webhookURLs, "webhook", nil, "webhook URLs to notify on lifecycle events (repeatable)")
 	cmd.Flags().StringVar(&webhookEvents, "webhook-events", "", "comma-separated event filter (start,stop,rotation,error,disk-warning)")
+	cmd.Flags().StringVar(&webhookAuth, "webhook-auth", "", "webhook auth (bearer:<token> or hmac-sha256:<secret>)")
 	cmd.Flags().StringVar(&alertRulesPath, "alert-rules", "", "path to alert rules YAML file")
 
 	return cmd
@@ -106,7 +108,7 @@ func newRecvCmd() *cobra.Command {
 
 const maxBufSize = 1 << 20 // 1,048,576
 
-func runRecv(listen, dir, maxFileStr, maxDiskStr string, compress bool, redactFlag, redactPatterns string, bufSize int, headless bool, tlsCert, tlsKey string, webhookURLs []string, webhookEvents string, alertRulesPath string) error {
+func runRecv(listen, dir, maxFileStr, maxDiskStr string, compress bool, redactFlag, redactPatterns string, bufSize int, headless bool, tlsCert, tlsKey string, webhookURLs []string, webhookEvents, webhookAuth string, alertRulesPath string) error {
 	// Check for insecure direct IP mode without TLS
 	if tlsCert == "" && tlsKey == "" {
 		host, _, err := net.SplitHostPort(listen)
@@ -182,7 +184,10 @@ func runRecv(listen, dir, maxFileStr, maxDiskStr string, compress bool, redactFl
 	if webhookEvents != "" {
 		eventFilter = strings.Split(webhookEvents, ",")
 	}
-	dispatcher := recv.NewWebhookDispatcher(webhookURLs, eventFilter)
+	dispatcher, err := recv.NewWebhookDispatcher(webhookURLs, eventFilter, webhookAuth)
+	if err != nil {
+		return fmt.Errorf("invalid --webhook-auth: %w", err)
+	}
 
 	// metrics
 	reg := prometheus.DefaultRegisterer

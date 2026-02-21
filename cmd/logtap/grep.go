@@ -21,6 +21,7 @@ func newGrepCmd() *cobra.Command {
 		count      bool
 		sortFlag   bool
 		formatFlag string
+		ctxLines   int
 	)
 
 	cmd := &cobra.Command{
@@ -39,7 +40,7 @@ func newGrepCmd() *cobra.Command {
 				}
 			}
 
-			return runGrep(pattern, captureDir, fromStr, toStr, labels, count, sortFlag, formatFlag)
+			return runGrep(pattern, captureDir, fromStr, toStr, labels, count, sortFlag, formatFlag, ctxLines)
 		},
 	}
 
@@ -49,14 +50,18 @@ func newGrepCmd() *cobra.Command {
 	cmd.Flags().BoolVar(&count, "count", false, "show match counts per file instead of lines")
 	cmd.Flags().BoolVar(&sortFlag, "sort", false, "sort results by timestamp (chronological order)")
 	cmd.Flags().StringVar(&formatFlag, "format", "json", "output format: json or text (text implies --sort)")
+	cmd.Flags().IntVarP(&ctxLines, "context", "C", 0, "number of surrounding lines to include")
 
 	return cmd
 }
 
-func runGrep(pattern, src, fromStr, toStr string, labels []string, countMode, sortByTime bool, format string) error {
+func runGrep(pattern, src, fromStr, toStr string, labels []string, countMode, sortByTime bool, format string, ctxLines int) error {
 	textMode := format == "text"
 	if textMode {
 		sortByTime = true // text timeline requires chronological order
+	}
+	if ctxLines > 0 {
+		sortByTime = true // context needs chronological order
 	}
 
 	reader, err := archive.NewReader(src)
@@ -75,17 +80,31 @@ func runGrep(pattern, src, fromStr, toStr string, labels []string, countMode, so
 
 	cfg := archive.GrepConfig{
 		CountOnly: countMode,
+		Context:   ctxLines,
 	}
 
 	enc := json.NewEncoder(os.Stdout)
 
-	var collected []recv.LogEntry
+	type collectedEntry struct {
+		entry   recv.LogEntry
+		context string // "" for match, "before"/"after" for context
+		group   int    // context group ID for separator detection
+	}
+
+	var collected []collectedEntry
 	var totalMatches int64
 	onMatch := func(m archive.GrepMatch) {
 		if sortByTime {
-			collected = append(collected, m.Entry)
+			collected = append(collected, collectedEntry{entry: m.Entry, context: m.Context, group: m.Group})
 		} else {
-			_ = enc.Encode(m.Entry)
+			if m.Context != "" {
+				_ = enc.Encode(struct {
+					recv.LogEntry
+					Context string `json:"context"`
+				}{m.Entry, m.Context})
+			} else {
+				_ = enc.Encode(m.Entry)
+			}
 		}
 	}
 
@@ -93,38 +112,50 @@ func runGrep(pattern, src, fromStr, toStr string, labels []string, countMode, so
 		totalMatches = p.Matches
 		if p.Total > 0 {
 			pct := float64(p.Scanned) / float64(p.Total) * 100
-			fmt.Fprintf(os.Stderr, "\rSearching: %s / %s lines (%.1f%%)",
+			_, _ = fmt.Fprintf(os.Stderr, "\rSearching: %s / %s lines (%.1f%%)",
 				archive.FormatCount(p.Scanned), archive.FormatCount(p.Total), pct)
 		} else {
-			fmt.Fprintf(os.Stderr, "\rSearching: %s lines", archive.FormatCount(p.Scanned))
+			_, _ = fmt.Fprintf(os.Stderr, "\rSearching: %s lines", archive.FormatCount(p.Scanned))
 		}
 	}
 
 	counts, err := archive.Grep(src, filter, cfg, onMatch, progress)
 	if err != nil {
-		fmt.Fprintln(os.Stderr)
+		_, _ = fmt.Fprintln(os.Stderr)
 		return err
 	}
 
 	if sortByTime && len(collected) > 0 {
 		sort.Slice(collected, func(i, j int) bool {
-			return collected[i].Timestamp.Before(collected[j].Timestamp)
+			return collected[i].entry.Timestamp.Before(collected[j].entry.Timestamp)
 		})
 		if textMode {
-			// Find the longest label value for column alignment
 			maxLabel := 0
-			for _, e := range collected {
-				l := len(entryLabel(e))
+			for _, c := range collected {
+				l := len(entryLabel(c.entry))
 				if l > maxLabel {
 					maxLabel = l
 				}
 			}
-			for _, e := range collected {
-				printTextLine(e, maxLabel)
+			lastGroup := 0
+			for i, c := range collected {
+				// Print group separator between distinct context groups.
+				if ctxLines > 0 && i > 0 && c.group != lastGroup {
+					_, _ = fmt.Fprintln(os.Stdout, "--")
+				}
+				lastGroup = c.group
+				printTextLine(c.entry, maxLabel)
 			}
 		} else {
-			for _, e := range collected {
-				_ = enc.Encode(e)
+			for _, c := range collected {
+				if c.context != "" {
+					_ = enc.Encode(struct {
+						recv.LogEntry
+						Context string `json:"context"`
+					}{c.entry, c.context})
+				} else {
+					_ = enc.Encode(c.entry)
+				}
 			}
 		}
 	}
@@ -139,7 +170,7 @@ func runGrep(pattern, src, fromStr, toStr string, labels []string, countMode, so
 		}
 	}
 
-	fmt.Fprintf(os.Stderr, "\r%s matches across %d files\n",
+	_, _ = fmt.Fprintf(os.Stderr, "\r%s matches across %d files\n",
 		archive.FormatCount(totalMatches), len(counts))
 
 	return nil

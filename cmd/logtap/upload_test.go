@@ -67,7 +67,7 @@ func TestUploadCapture(t *testing.T) {
 	dir := makeMinimalCapture(t)
 
 	mock := &mockBackend{data: make(map[string][]byte)}
-	err := uploadCapture(context.Background(), dir, mock, "captures/test", 2)
+	_, err := uploadCapture(context.Background(), dir, mock, "captures/test", 2)
 	if err != nil {
 		t.Fatalf("uploadCapture error: %v", err)
 	}
@@ -92,7 +92,7 @@ func TestUploadCapture_NoPrefix(t *testing.T) {
 	dir := makeMinimalCapture(t)
 
 	mock := &mockBackend{data: make(map[string][]byte)}
-	err := uploadCapture(context.Background(), dir, mock, "", 1)
+	_, err := uploadCapture(context.Background(), dir, mock, "", 1)
 	if err != nil {
 		t.Fatalf("uploadCapture error: %v", err)
 	}
@@ -109,7 +109,7 @@ func TestUploadCapture_NoPrefix(t *testing.T) {
 func TestUploadCapture_NotCaptureDir(t *testing.T) {
 	dir := t.TempDir()
 	// No metadata.json — runUpload validates this
-	err := runUpload(context.Background(), dir, "s3://bucket/prefix", 1)
+	err := runUpload(context.Background(), dir, "s3://bucket/prefix", 1, false)
 	if err == nil {
 		t.Fatal("expected error for non-capture dir")
 	}
@@ -122,7 +122,7 @@ func TestUploadCapture_UploadError(t *testing.T) {
 		data:      make(map[string][]byte),
 		uploadErr: fmt.Errorf("connection refused"),
 	}
-	err := uploadCapture(context.Background(), dir, mock, "prefix", 1)
+	_, err := uploadCapture(context.Background(), dir, mock, "prefix", 1)
 	if err == nil {
 		t.Fatal("expected error on upload failure")
 	}
@@ -131,7 +131,7 @@ func TestUploadCapture_UploadError(t *testing.T) {
 func TestUploadCapture_EmptyDir(t *testing.T) {
 	dir := t.TempDir()
 	mock := &mockBackend{data: make(map[string][]byte)}
-	err := uploadCapture(context.Background(), dir, mock, "prefix", 1)
+	_, err := uploadCapture(context.Background(), dir, mock, "prefix", 1)
 	if err == nil {
 		t.Fatal("expected error for empty dir")
 	}
