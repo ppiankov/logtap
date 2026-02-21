@@ -299,3 +299,195 @@ func setupCaptureWithLabel(t *testing.T, dir string, started, stopped time.Time,
 	})
 	writeDataFile(t, dir, "data-001.jsonl", entries)
 }
+
+func TestBaselineDiff_Regression(t *testing.T) {
+	base := time.Date(2025, 1, 1, 10, 0, 0, 0, time.UTC)
+	stop := base.Add(time.Minute)
+
+	baselineDir := t.TempDir()
+	currentDir := t.TempDir()
+
+	// Baseline: 20 lines, 1 error (5% error rate)
+	baselineEntries := make([]recv.LogEntry, 20)
+	for i := range baselineEntries {
+		msg := fmt.Sprintf("normal line %d", i)
+		if i == 0 {
+			msg = "ERROR: connection refused"
+		}
+		baselineEntries[i] = recv.LogEntry{
+			Timestamp: base.Add(time.Duration(i) * time.Second),
+			Labels:    map[string]string{"app": "web"},
+			Message:   msg,
+		}
+	}
+
+	// Current: 20 lines, 10 errors (50% error rate) with new patterns
+	currentEntries := make([]recv.LogEntry, 20)
+	for i := range currentEntries {
+		msg := fmt.Sprintf("normal line %d", i)
+		if i < 5 {
+			msg = "ERROR: connection refused"
+		}
+		if i >= 5 && i < 10 {
+			msg = "FATAL: out of memory"
+		}
+		currentEntries[i] = recv.LogEntry{
+			Timestamp: base.Add(time.Duration(i) * time.Second),
+			Labels:    map[string]string{"app": "web"},
+			Message:   msg,
+		}
+	}
+
+	setupCapture(t, baselineDir, base, stop, baselineEntries, "web")
+	setupCapture(t, currentDir, base, stop, currentEntries, "web")
+
+	result, err := BaselineDiff(baselineDir, currentDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if result.Verdict != "regression" {
+		t.Errorf("Verdict = %q, want %q", result.Verdict, "regression")
+	}
+	if result.Confidence < 0.5 {
+		t.Errorf("Confidence = %.2f, want >= 0.5", result.Confidence)
+	}
+	if len(result.NewErrorPatterns) == 0 {
+		t.Error("expected new error patterns")
+	}
+
+	// Check that the FATAL pattern shows up as new
+	foundFatal := false
+	for _, p := range result.NewErrorPatterns {
+		if p.BaselineCount == 0 && p.Count > 0 {
+			foundFatal = true
+		}
+	}
+	if !foundFatal {
+		t.Error("expected at least one entirely new error pattern")
+	}
+
+	// Verify JSON round-trip
+	var buf bytes.Buffer
+	if err := result.WriteJSON(&buf); err != nil {
+		t.Fatal(err)
+	}
+	var decoded BaselineDiffResult
+	if err := json.Unmarshal(buf.Bytes(), &decoded); err != nil {
+		t.Fatalf("invalid JSON: %v", err)
+	}
+	if decoded.Verdict != "regression" {
+		t.Errorf("decoded Verdict = %q, want %q", decoded.Verdict, "regression")
+	}
+}
+
+func TestBaselineDiff_Stable(t *testing.T) {
+	base := time.Date(2025, 1, 1, 10, 0, 0, 0, time.UTC)
+	stop := base.Add(time.Minute)
+
+	baselineDir := t.TempDir()
+	currentDir := t.TempDir()
+
+	// Both captures: 20 lines, 1 error each with the same pattern
+	makeStableEntries := func() []recv.LogEntry {
+		entries := make([]recv.LogEntry, 20)
+		for i := range entries {
+			msg := fmt.Sprintf("normal line %d", i)
+			if i == 0 {
+				msg = "ERROR: connection refused"
+			}
+			entries[i] = recv.LogEntry{
+				Timestamp: base.Add(time.Duration(i) * time.Second),
+				Labels:    map[string]string{"app": "web"},
+				Message:   msg,
+			}
+		}
+		return entries
+	}
+
+	setupCapture(t, baselineDir, base, stop, makeStableEntries(), "web")
+	setupCapture(t, currentDir, base, stop, makeStableEntries(), "web")
+
+	result, err := BaselineDiff(baselineDir, currentDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if result.Verdict != "stable" {
+		t.Errorf("Verdict = %q, want %q", result.Verdict, "stable")
+	}
+	if result.Confidence < 0.7 {
+		t.Errorf("Confidence = %.2f, want >= 0.7", result.Confidence)
+	}
+	if len(result.NewErrorPatterns) != 0 {
+		t.Errorf("NewErrorPatterns = %d, want 0", len(result.NewErrorPatterns))
+	}
+	if len(result.MissingLabels) != 0 {
+		t.Errorf("MissingLabels = %v, want empty", result.MissingLabels)
+	}
+	if len(result.NewLabels) != 0 {
+		t.Errorf("NewLabels = %v, want empty", result.NewLabels)
+	}
+}
+
+func TestBaselineDiff_NewPatterns(t *testing.T) {
+	base := time.Date(2025, 1, 1, 10, 0, 0, 0, time.UTC)
+	stop := base.Add(time.Minute)
+
+	baselineDir := t.TempDir()
+	currentDir := t.TempDir()
+
+	// Baseline: 20 lines, no errors
+	baselineEntries := makeEntries(20, base, "web")
+
+	// Current: 20 lines, 5 new error patterns that didn't exist in baseline
+	currentEntries := make([]recv.LogEntry, 20)
+	for i := range currentEntries {
+		msg := fmt.Sprintf("normal line %d", i)
+		if i < 3 {
+			msg = "ERROR: database connection timeout"
+		}
+		if i >= 3 && i < 5 {
+			msg = "PANIC: nil pointer dereference"
+		}
+		currentEntries[i] = recv.LogEntry{
+			Timestamp: base.Add(time.Duration(i) * time.Second),
+			Labels:    map[string]string{"app": "web", "env": "staging"},
+			Message:   msg,
+		}
+	}
+
+	setupCapture(t, baselineDir, base, stop, baselineEntries, "web")
+	setupCaptureWithLabel(t, currentDir, base, stop, currentEntries, "app", "web")
+
+	result, err := BaselineDiff(baselineDir, currentDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if len(result.NewErrorPatterns) < 2 {
+		t.Errorf("NewErrorPatterns = %d, want >= 2", len(result.NewErrorPatterns))
+	}
+
+	// All new patterns should have BaselineCount == 0
+	for _, p := range result.NewErrorPatterns {
+		if p.BaselineCount != 0 {
+			t.Errorf("pattern %q BaselineCount = %d, want 0", p.Pattern, p.BaselineCount)
+		}
+		if p.Count == 0 {
+			t.Errorf("pattern %q Count = 0, want > 0", p.Pattern)
+		}
+	}
+
+	// Verify verdict is regression (error rate went from 0 to 25%, new patterns)
+	if result.Verdict != "regression" {
+		t.Errorf("Verdict = %q, want %q", result.Verdict, "regression")
+	}
+
+	// Verify text output doesn't panic
+	var buf bytes.Buffer
+	result.WriteText(&buf)
+	if buf.Len() == 0 {
+		t.Error("WriteText produced empty output")
+	}
+}

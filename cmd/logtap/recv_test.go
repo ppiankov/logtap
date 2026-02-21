@@ -36,7 +36,7 @@ func TestRunRecv_InvalidListen(t *testing.T) {
 	defer restore()
 
 	dir := t.TempDir()
-	err := runRecv("invalid", dir, "1KB", "1MB", false, "true", "", 8, true, "", "", nil, "", "")
+	err := runRecv("invalid", dir, "1KB", "1MB", false, "true", "", 8, true, "", "", nil, "", "", "")
 	if err == nil {
 		t.Fatal("expected error for invalid listen address")
 	}

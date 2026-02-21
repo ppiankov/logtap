@@ -32,7 +32,7 @@ func WriteMetadata(dir string, meta *Metadata) error {
 	if err != nil {
 		return fmt.Errorf("marshal metadata: %w", err)
 	}
-	return os.WriteFile(filepath.Join(dir, "metadata.json"), data, 0o644)
+	return os.WriteFile(filepath.Join(dir, "metadata.json"), data, 0o600)
 }
 
 // ReadMetadata reads metadata.json from the given directory.

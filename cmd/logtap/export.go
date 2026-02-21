@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 
@@ -11,12 +12,13 @@ import (
 
 func newExportCmd() *cobra.Command {
 	var (
-		formatStr string
-		fromStr   string
-		toStr     string
-		labels    []string
-		grepStr   string
-		outPath   string
+		formatStr  string
+		fromStr    string
+		toStr      string
+		labels     []string
+		grepStr    string
+		outPath    string
+		jsonOutput bool
 	)
 
 	cmd := &cobra.Command{
@@ -25,7 +27,7 @@ func newExportCmd() *cobra.Command {
 		Long:  "Convert capture data to external formats for ingestion into analytics systems (DuckDB, pandas, BigQuery, etc.).",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runExport(args[0], formatStr, fromStr, toStr, labels, grepStr, outPath)
+			return runExport(args[0], formatStr, fromStr, toStr, labels, grepStr, outPath, jsonOutput)
 		},
 	}
 
@@ -35,13 +37,14 @@ func newExportCmd() *cobra.Command {
 	cmd.Flags().StringSliceVar(&labels, "label", nil, "label filter (key=value, repeatable)")
 	cmd.Flags().StringVar(&grepStr, "grep", "", "regex filter on log message")
 	cmd.Flags().StringVar(&outPath, "out", "", "output file path (required)")
+	cmd.Flags().BoolVar(&jsonOutput, "json", false, "output summary as JSON")
 	_ = cmd.MarkFlagRequired("format")
 	_ = cmd.MarkFlagRequired("out")
 
 	return cmd
 }
 
-func runExport(src, formatStr, fromStr, toStr string, labels []string, grepStr, outPath string) error {
+func runExport(src, formatStr, fromStr, toStr string, labels []string, grepStr, outPath string, jsonOutput bool) error {
 	format, err := parseExportFormat(formatStr)
 	if err != nil {
 		return err
@@ -73,15 +76,24 @@ func runExport(src, formatStr, fromStr, toStr string, labels []string, grepStr, 
 		return err
 	}
 
-	// get output file size
 	info, err := os.Stat(outPath)
-	if err == nil {
-		fmt.Fprintf(os.Stderr, "\rExported: %s lines -> %s (%s)\n",
-			archive.FormatCount(reader.TotalLines()), outPath, archive.FormatBytes(info.Size()))
-	} else {
-		fmt.Fprintln(os.Stderr)
+	if err != nil {
+		_, _ = fmt.Fprintln(os.Stderr)
+		return nil
 	}
 
+	if jsonOutput {
+		return json.NewEncoder(os.Stdout).Encode(map[string]any{
+			"source": src,
+			"format": formatStr,
+			"output": outPath,
+			"lines":  reader.TotalLines(),
+			"bytes":  info.Size(),
+		})
+	}
+
+	_, _ = fmt.Fprintf(os.Stderr, "\rExported: %s lines -> %s (%s)\n",
+		archive.FormatCount(reader.TotalLines()), outPath, archive.FormatBytes(info.Size()))
 	return nil
 }
 

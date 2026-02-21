@@ -124,6 +124,33 @@ func TestRunTap_Validation(t *testing.T) {
 	}
 }
 
+func TestTapCmd_InvalidTarget(t *testing.T) {
+	tests := []struct {
+		name   string
+		target string
+	}{
+		{"newline injection", "host\n[OUTPUT]\n    Name null"},
+		{"space injection", "host port"},
+		{"semicolon", "host;rm -rf /"},
+		{"path traversal", "host:3100/path"},
+		{"empty", ""},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cmd := newTapCmd()
+			cmd.SetArgs([]string{"--target", tt.target, "--deployment", "foo"})
+			err := cmd.Execute()
+			if err == nil {
+				t.Fatal("expected error for invalid target")
+			}
+			if !containsString(err.Error(), "invalid --target") {
+				t.Errorf("error %q should mention invalid target", err.Error())
+			}
+		})
+	}
+}
+
 func TestCheckReceiver_MockTransport(t *testing.T) {
 	origTransport := http.DefaultTransport
 	defer func() { http.DefaultTransport = origTransport }()

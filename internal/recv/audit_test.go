@@ -63,6 +63,28 @@ func TestAuditLog_WriteAndRead(t *testing.T) {
 	}
 }
 
+func TestAuditLog_FilePermissions(t *testing.T) {
+	dir := t.TempDir()
+
+	a, err := NewAuditLogger(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	a.Log(AuditEntry{Event: "test"})
+	if err := a.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	info, err := os.Stat(filepath.Join(dir, "audit.jsonl"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	perm := info.Mode().Perm()
+	if perm != 0o600 {
+		t.Errorf("audit.jsonl permissions = %o, want 0600", perm)
+	}
+}
+
 func TestAuditLog_NilSafe(t *testing.T) {
 	var a *AuditLogger
 	// should not panic

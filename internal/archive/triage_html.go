@@ -94,6 +94,13 @@ func (r *TriageResult) buildHTMLData() htmlData {
 	}
 
 	// timeline SVG
+	//
+	// SECURITY: template.HTML() disables Go's auto-escaping. This is safe
+	// because buildTimelineSVG uses only numeric format verbs (%d, %f, %.1f)
+	// and internally-generated strings (FormatCount, Time.Format, computed
+	// coordinates). No user-controlled data (e.g. LogEntry.Labels) must ever
+	// be interpolated into the SVG. If label values are needed in the future,
+	// they must be escaped with template.HTMLEscapeString before inclusion.
 	if len(r.Timeline) >= 2 {
 		d.HasChart = true
 		d.Timeline = template.HTML(r.buildTimelineSVG())
@@ -178,6 +185,13 @@ func (r *TriageResult) buildHTMLData() htmlData {
 	return d
 }
 
+// buildTimelineSVG produces an inline SVG chart from numeric timeline data.
+//
+// SECURITY AUDIT (WO-69): all fmt verbs are numeric (%d, %f, %.1f) or use
+// FormatCount (int→string), Time.Format (deterministic), and float64
+// coordinates. No user-controlled strings (labels, messages) are interpolated.
+// This invariant must hold for the template.HTML cast in buildHTMLData to
+// remain safe. Adding %s with label data here would create an XSS vector.
 func (r *TriageResult) buildTimelineSVG() string {
 	if len(r.Timeline) < 2 {
 		return ""

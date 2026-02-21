@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 
@@ -11,8 +12,9 @@ import (
 
 func newSnapshotCmd() *cobra.Command {
 	var (
-		output  string
-		extract bool
+		output     string
+		extract    bool
+		jsonOutput bool
 	)
 
 	cmd := &cobra.Command{
@@ -24,22 +26,30 @@ func newSnapshotCmd() *cobra.Command {
 			if output == "" {
 				return fmt.Errorf("--output is required")
 			}
-			return runSnapshot(args[0], output, extract)
+			return runSnapshot(args[0], output, extract, jsonOutput)
 		},
 	}
 
 	cmd.Flags().StringVarP(&output, "output", "o", "", "output path (required)")
 	cmd.Flags().BoolVar(&extract, "extract", false, "extract archive to directory")
+	cmd.Flags().BoolVar(&jsonOutput, "json", false, "output summary as JSON")
 
 	return cmd
 }
 
-func runSnapshot(src, output string, extract bool) error {
+func runSnapshot(src, output string, extract, jsonOutput bool) error {
 	if extract {
 		if err := archive.Unpack(src, output); err != nil {
 			return err
 		}
-		fmt.Fprintf(os.Stderr, "Extracted to %s\n", output)
+		if jsonOutput {
+			return json.NewEncoder(os.Stdout).Encode(map[string]any{
+				"operation": "extract",
+				"source":    src,
+				"output":    output,
+			})
+		}
+		_, _ = fmt.Fprintf(os.Stderr, "Extracted to %s\n", output)
 		return nil
 	}
 
@@ -51,7 +61,17 @@ func runSnapshot(src, output string, extract bool) error {
 	if err != nil {
 		return nil
 	}
-	fmt.Fprintf(os.Stderr, "Snapshot saved to %s (%s)\n", output, formatBytes(info.Size()))
+
+	if jsonOutput {
+		return json.NewEncoder(os.Stdout).Encode(map[string]any{
+			"operation": "pack",
+			"source":    src,
+			"output":    output,
+			"bytes":     info.Size(),
+		})
+	}
+
+	_, _ = fmt.Fprintf(os.Stderr, "Snapshot saved to %s (%s)\n", output, formatBytes(info.Size()))
 	return nil
 }
 
