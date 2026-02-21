@@ -1,6 +1,9 @@
 package k8s
 
 import (
+	"io"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 
@@ -98,4 +101,47 @@ func TestPortForwardTunnel_StopAndReady(t *testing.T) {
 	default:
 		t.Fatal("stopCh should be closed after Stop()")
 	}
+}
+
+func TestPortForwardTunnel_ConnectionDrop(t *testing.T) {
+	// Start an HTTP server that accepts connections then immediately closes them,
+	// simulating a dropped port-forward connection (e.g. pod restart).
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Hijack the connection and close it immediately.
+		hj, ok := w.(http.Hijacker)
+		if !ok {
+			http.Error(w, "hijack not supported", http.StatusInternalServerError)
+			return
+		}
+		conn, _, err := hj.Hijack()
+		if err != nil {
+			return
+		}
+		_ = conn.Close()
+	}))
+	defer srv.Close()
+
+	cfg := &rest.Config{
+		Host: srv.URL,
+	}
+
+	spec := PortForwardSpec{
+		Namespace:  "test",
+		PodName:    "test-pod",
+		RemotePort: 3100,
+		LocalPort:  0,
+	}
+
+	tunnel, err := NewPortForwardTunnel(cfg, nil, spec, io.Discard, io.Discard)
+	if err != nil {
+		t.Fatalf("NewPortForwardTunnel: %v", err)
+	}
+
+	// Run should return an error when the server drops the connection,
+	// not panic or hang indefinitely.
+	err = tunnel.Run()
+	if err == nil {
+		t.Fatal("expected error from Run() when server drops connection")
+	}
+	t.Logf("Run() returned expected error: %v", err)
 }

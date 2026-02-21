@@ -2375,7 +2375,7 @@ logtap deploy --namespace my-team --cleanup
 
 ## Phase 8: Agent Workflow & Usability
 
-### WO-71: `logtap report` — single-command incident deliverable
+### WO-71: `logtap report` — single-command incident deliverable [DONE]
 
 **Goal:** One command produces a self-contained artifact an agent delivers to a human operator. Combines inspect + triage into a single output.
 
@@ -2462,7 +2462,7 @@ logtap report <capture-dir> --json
 
 ---
 
-### WO-72: Cross-service error correlation in triage
+### WO-72: Cross-service error correlation in triage [DONE]
 
 **Goal:** Detect temporal patterns across labels/services. When pod A fails, did pod B start erroring N seconds later?
 
@@ -2519,7 +2519,7 @@ logtap report <capture-dir> --json
 
 ---
 
-### WO-73: Structured JSON error output for agents
+### WO-73: Structured JSON error output for agents [DONE]
 
 **Goal:** When `--json` is set, output structured errors to stderr so agents can programmatically distinguish error types and decide whether to retry, fix config, or escalate.
 
@@ -2562,7 +2562,7 @@ logtap report <capture-dir> --json
 
 ---
 
-### WO-74: `logtap catalog` — discover and list captures
+### WO-74: `logtap catalog` — discover and list captures [DONE]
 
 **Goal:** An agent running autonomously needs to discover what captures exist on disk without knowing paths.
 
@@ -2623,7 +2623,7 @@ CAPTURE                     STARTED              STOPPED              FILES  ENT
 
 ---
 
-### WO-75: Baseline diff (`logtap diff --baseline`)
+### WO-75: Baseline diff (`logtap diff --baseline`) [DONE]
 
 **Goal:** Compare a capture against a "known good" baseline to answer: "is this different from normal?"
 
@@ -2672,7 +2672,7 @@ logtap diff --baseline ./baseline-capture ./incident-capture --json
 
 ---
 
-### WO-76: Webhook authentication (bearer + HMAC)
+### WO-76: Webhook authentication (bearer + HMAC) [DONE]
 
 **Goal:** Add authentication to webhook notifications so they're usable in real environments.
 
@@ -2712,7 +2712,7 @@ HMAC mode:
 
 ---
 
-### WO-77: `--json` flag for all remaining subcommands
+### WO-77: `--json` flag for all remaining subcommands [DONE]
 
 **Goal:** Every subcommand that produces output should support `--json` for agent consumption.
 
@@ -2743,7 +2743,7 @@ HMAC mode:
 
 ---
 
-### WO-78: Refined exit codes for agent retry logic
+### WO-78: Refined exit codes for agent retry logic [DONE]
 
 **Goal:** Agents need to programmatically decide: retry, fix config, or escalate.
 
@@ -2774,7 +2774,7 @@ HMAC mode:
 
 ---
 
-### WO-79: `logtap grep --context N` for surrounding lines
+### WO-79: `logtap grep --context N` for surrounding lines [DONE]
 
 **Goal:** When searching for a specific error, show N lines of context before and after each match — like `grep -C`.
 
