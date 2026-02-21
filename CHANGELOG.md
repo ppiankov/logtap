@@ -4,6 +4,18 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [1.2.1] - 2026-02-21
+
+### Fixed
+
+- Relax stress test throughput threshold for CI runners (flaky on shared infrastructure)
+- Add tunnel reconnection test and boost cmd/logtap coverage from 49.9% to 57.8%
+- Add Security and Safety section to README (trust model, PII, guardrails)
+- Complete README command table (9 missing commands) and key flags section
+- Fix SKILL.md exit codes to match implementation (0-6 structured codes)
+- Remove internal work-orders from published docs
+- Add `/logtap-forwarder` to .gitignore
+
 ## [1.2.0] - 2026-02-21
 
 ### Added
