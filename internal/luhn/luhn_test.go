@@ -56,7 +56,7 @@ func TestValidate(t *testing.T) {
 		{
 			name:       "Non-digit characters (should be cleaned before passed)",
 			cardNumber: "4992 7398 716", // Validate function assumes digits only, test for this.
-			wantValid:  false,            // As per current `Validate` logic, non-digits make it fail
+			wantValid:  false,           // As per current `Validate` logic, non-digits make it fail
 		},
 	}
 
