@@ -291,6 +291,14 @@ logtap is designed to be safe for production-adjacent use during load testing an
 | `5` | Network error (recoverable — agent can retry) |
 | `6` | Findings detected (triage anomalies or check failures) |
 
+## Project status
+
+logtap is **feature-complete and stable**. All planned work orders are implemented, tested, and released. There are no open TODOs or pending features.
+
+The project is in maintenance mode — bug fixes and security patches will be applied as needed. New features will be driven by user feedback and real-world usage.
+
+If you find a bug, have a feature request, or want to share how you use logtap, please [open an issue](https://github.com/ppiankov/logtap/issues).
+
 ## Known limitations
 
 - **Capture format** — capture directory structure is stable; compression codec may evolve
