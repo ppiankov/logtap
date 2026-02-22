@@ -291,13 +291,23 @@ logtap is designed to be safe for production-adjacent use during load testing an
 | `5` | Network error (recoverable — agent can retry) |
 | `6` | Findings detected (triage anomalies or check failures) |
 
-## Project status
+## Project Status
 
-logtap is **feature-complete and stable**. All planned work orders are implemented, tested, and released. There are no open TODOs or pending features.
+**Status: Stable** · **v1.2.1** · Maintenance mode
 
-The project is in maintenance mode — bug fixes and security patches will be applied as needed. New features will be driven by user feedback and real-world usage.
+| Milestone | Status |
+|-----------|--------|
+| Core functionality | Complete |
+| Test coverage >85% | Complete |
+| Security audit | Complete |
+| golangci-lint config | Complete |
+| CI pipeline (test/lint/scan) | Complete |
+| Homebrew distribution | Complete |
+| Safety model documented | Complete |
+| API stability guarantees | Complete |
+| v1.0 release | Complete |
 
-If you find a bug, have a feature request, or want to share how you use logtap, please [open an issue](https://github.com/ppiankov/logtap/issues).
+Feature-complete. Bug fixes and security patches only. New features driven by user feedback.
 
 ## Known limitations
 
