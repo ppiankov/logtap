@@ -316,6 +316,18 @@ Feature-complete. Bug fixes and security patches only. New features driven by us
 - **No browser UI** — TUI only, terminal required
 - **No CRDs or operators** — imperative CLI workflow
 - **No long-term retention** — bounded disk, oldest files deleted automatically
+- **Pod restart on tap** — sidecar injection triggers a pod restart (see below)
+
+### Image availability on tap
+
+`logtap tap` injects a forwarder sidecar into workloads, which triggers a pod restart. During restart, Kubernetes pulls both the application image and the forwarder image (`ghcr.io/ppiankov/logtap-forwarder`). If either image is unavailable — registry down, credentials expired, image deleted, air-gapped cluster — the pod will enter `ImagePullBackOff` and fail to start.
+
+**Before tapping in production-adjacent environments:**
+1. Use `--dry-run` first to preview changes without applying
+2. Verify the forwarder image is pullable: `kubectl run --rm -it --image ghcr.io/ppiankov/logtap-forwarder:latest --restart=Never test -- /bin/true`
+3. Verify the application image is still in your registry — long-running pods may reference images that have since been garbage-collected
+
+If your cluster has image availability risks (stale registries, harbor cleanup policies, air-gapped nodes), consider running [tote](https://github.com/ppiankov/tote) — an emergency operator that detects `ImagePullBackOff` and salvages cached images from other nodes via node-to-node transfer.
 
 ## License
 
