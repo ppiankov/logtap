@@ -210,13 +210,13 @@ Replay mode adds `space` (pause/resume) and `]`/`[` (speed up/down).
 ```
                           Kubernetes Cluster
                          ┌─────────────────────────────┐
-  logtap tap ──────────► │  workload + logtap-forwarder │
-                         │  (sidecar reads pod logs)    │
+  logtap tap ──────────► │  workload + logtap-forwarder│
+                         │  (sidecar reads pod logs)   │
                          └──────────┬──────────────────┘
                                     │ Loki push API
                                     ▼
   logtap recv ──► HTTP server ──► writer ──► rotator ──► capture/
-                   │                                      ├── metadata.json
+                   │                                       ├── metadata.json
                    ├── redactor (PII)                      ├── index.jsonl
                    ├── audit logger                        ├── *.jsonl.zst
                    └── TUI (stats + log pane)              └── audit.jsonl
