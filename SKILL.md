@@ -7,7 +7,7 @@ metadata: {"requires":{"bins":["logtap"]}}
 
 # logtap — Ephemeral Log Capture
 
-You have access to `logtap`, an ephemeral log capture and incident triage tool for Kubernetes. Install, capture, triage, uninstall. No permanent footprint.
+Ephemeral log capture and incident triage tool for Kubernetes. Install, capture, triage, uninstall. No permanent footprint.
 
 ## Install
 
@@ -15,127 +15,18 @@ You have access to `logtap`, an ephemeral log capture and incident triage tool f
 brew install ppiankov/tap/logtap
 ```
 
-Or download binary:
-
-```bash
-curl -LO https://github.com/ppiankov/logtap/releases/latest/download/logtap_$(uname -s | tr '[:upper:]' '[:lower:]')_$(uname -m).tar.gz
-tar -xzf logtap_*.tar.gz
-sudo mv logtap /usr/local/bin/
-```
-
 ## Commands
 
-| Command | What it does |
-|---------|-------------|
-| `logtap recv --dir <dir>` | Start log receiver (local or in-cluster) |
-| `logtap tap --deployment <name> --target <addr>` | Inject log-forwarding sidecar |
-| `logtap untap --deployment <name>` | Remove sidecar |
-| `logtap deploy --namespace <ns>` | Deploy receiver as in-cluster pod + service |
-| `logtap open <dir>` | Replay capture in TUI |
-| `logtap inspect <dir>` | Show capture summary |
-| `logtap inspect <dir> --json` | Machine-readable capture summary |
-| `logtap triage <dir>` | Scan for anomalies and produce report |
-| `logtap triage <dir> --json` | Machine-readable triage report |
-| `logtap grep <pattern> <dir>` | Search capture for matching entries |
-| `logtap grep <pattern> <dir> --format text` | Human-readable timeline (sorted) |
-| `logtap export <dir> --format jsonl --out <file>` | Export to parquet, CSV, or JSONL |
-| `logtap slice <dir> --out <dir>` | Extract time/label subset |
-| `logtap merge <dirs...>` | Merge captures |
-| `logtap diff <dir1> <dir2>` | Diff captures |
-| `logtap report <dir> --json` | Single-command incident report (inspect + triage) |
-| `logtap report <dir> --out <dir>` | Report with JSON + HTML artifacts |
-| `logtap catalog [dir] --json` | Discover and list capture directories |
-| `logtap watch <dir>` | Tail a live or completed capture |
-| `logtap upload <dir>` | Upload capture to S3/GCS |
-| `logtap download <url> --out <dir>` | Download capture from S3/GCS |
-| `logtap check` | Validate cluster readiness |
-| `logtap status` | Show tapped workloads and receiver stats |
-| `logtap version --json` | Print version as JSON |
+### logtap triage
 
-## Key Flags
+Scan captured logs for anomalies and produce report.
 
-| Flag | Applies to | Description |
-|------|-----------|-------------|
-| `--dir` | recv | Output directory for captured logs |
-| `--max-disk` | recv | Max total disk usage (e.g., 1GB) |
-| `--redact` | recv | Enable PII redaction |
-| `--in-cluster` | recv | Deploy receiver as in-cluster pod |
-| `--headless` | recv | Disable TUI, log to stderr |
-| `--deployment` | tap, untap | Target deployment name |
-| `--statefulset` | tap, untap | Target statefulset name |
-| `--daemonset` | tap, untap | Target daemonset name |
-| `--selector` | tap, untap | Label selector for multi-workload targeting |
-| `--target` | tap | Receiver address (supports `https://` for TLS) |
-| `--dry-run` | tap, deploy | Show diff without applying |
-| `--format` | grep, export | Output format: json, text, jsonl, parquet, csv |
-| `--sort` | grep | Sort output chronologically by timestamp |
-| `--count` | grep | Count matches per file instead of printing entries |
-| `--from`, `--to` | grep, export, slice, open | Time range filter |
-| `--label` | grep, export, slice, open | Label filter (repeatable) |
-| `--json` | inspect, triage, check, version, slice, export, merge, upload, download, snapshot, report, catalog | JSON output |
-| `--context`, `-C` | grep | Show N surrounding context lines around matches |
-| `--baseline` | diff | Deterministic regression/improvement verdict |
-| `--webhook-auth` | recv | Webhook auth (`bearer:<token>` or `hmac-sha256:<secret>`) |
-| `--recursive` | catalog | Recursively scan subdirectories for captures |
-| `--html` | triage | Generate HTML report |
-| `--jobs` | triage | Parallel scan workers |
-| `--namespace`, `-n` | tap, untap, check, deploy | Kubernetes namespace |
+**Flags:**
+- `--format json` — output as JSON (use --json flag)
+- `--html` — generate HTML report
+- `--jobs` — parallel scan workers
 
-## Agent Usage Pattern
-
-### Incident capture workflow
-
-```bash
-logtap check                                   # verify cluster readiness
-logtap recv --dir ./capture --max-disk 1GB --redact --headless &
-logtap tap --deployment api-gateway --target localhost:3100
-# ... wait for logs ...
-logtap untap --deployment api-gateway
-logtap report ./capture --json                 # one-command incident report
-```
-
-### Discover and analyze captures
-
-```bash
-logtap catalog --json                          # list all captures in current dir
-logtap catalog /data/captures --recursive --json
-logtap report ./capture --out ./incident       # JSON + HTML report artifacts
-```
-
-### Cross-service tracing
-
-```bash
-# Trace an item (order number, tracking ID) across all services — human-readable timeline
-logtap grep "ORD-12345" ./capture --format text
-
-# Same as JSONL sorted by timestamp
-logtap grep "tracking-id-abc123" ./capture --sort
-
-# Filter by label and time window
-logtap grep "error" ./capture --label app=gateway --from 10:30 --to 11:00 --sort
-```
-
-### JSON Output Structure
-
-#### inspect --json
-
-```json
-{
-  "dir": "./capture",
-  "files": 12,
-  "entries": 48230,
-  "bytes": 15728640,
-  "started": "2026-02-20T10:00:00Z",
-  "stopped": "2026-02-20T10:45:00Z",
-  "labels": {
-    "app": ["gateway", "cart-svc", "payment-svc"],
-    "namespace": ["default"]
-  }
-}
-```
-
-#### triage --json
-
+**JSON output:**
 ```json
 {
   "anomalies": [
@@ -155,50 +46,92 @@ logtap grep "error" ./capture --label app=gateway --from 10:30 --to 11:00 --sort
 }
 ```
 
-### Parsing Examples
+**Exit codes:**
+- 0: success
+- 1: internal error
+- 2: invalid arguments
+- 3: not found (missing capture)
+- 6: findings (anomalies found)
 
-```bash
-# Capture summary
-logtap inspect ./capture --json | jq '{files, entries, labels}'
+### logtap report
 
-# Triage — high severity anomalies only
-logtap triage ./capture --json | jq '.anomalies[] | select(.severity == "high")'
+Single-command incident report (inspect + triage).
 
-# Search logs
-logtap grep "error|panic" ./capture --sort | jq '.message'
+**Flags:**
+- `--format json` — JSON output
+- `--out` — output directory for JSON + HTML artifacts
 
-# Count errors per file
-logtap grep "error" ./capture --count
+### logtap recv
 
-# Export for external analysis
-logtap export ./capture --format parquet --out capture.parquet
+Start log receiver (local or in-cluster).
 
-# Manual sort with jq (alternative to --sort)
-logtap grep "tracking-id" ./capture | jq -s 'sort_by(.ts)[]' -c
-```
+**Flags:**
+- `--dir` — output directory for captured logs
+- `--max-disk` — max total disk usage
+- `--redact` — enable PII redaction
+- `--headless` — disable TUI
 
-## Cross-Tool Integration
+### logtap tap
 
-logtap captures can be wrapped with [chainwatch](https://github.com/ppiankov/chainwatch) for policy enforcement on cluster operations:
+Inject log-forwarding sidecar.
 
-```bash
-chainwatch exec --profile ops -- logtap tap --deployment api-gateway --target host:3100
-```
+**Flags:**
+- `--deployment` — target deployment name
+- `--target` — receiver address
+- `--dry-run` — show diff without applying
+- `--namespace` — Kubernetes namespace
 
-## Exit Codes
+### logtap untap
 
-- `0` — success
-- `1` — internal error
-- `2` — invalid arguments
-- `3` — not found (missing capture, file, or resource)
-- `4` — permission denied
-- `5` — network error (recoverable)
-- `6` — findings (triage anomalies found, or check failures)
+Remove sidecar.
 
-## What logtap Does NOT Do
+**Flags:**
+- `--deployment` — target deployment name
+
+### logtap grep
+
+Search capture for matching entries.
+
+**Flags:**
+- `--format json` — output format: json, text
+- `--sort` — sort output chronologically
+
+### logtap inspect
+
+Show capture summary.
+
+**Flags:**
+- `--format json` — JSON output
+
+### logtap version
+
+Print version.
+
+### logtap init
+
+Not implemented. No config file required — ephemeral by design.
+
+## What this does NOT do
 
 - Does not persist after use — ephemeral by design
 - Does not stream to external services — captures locally
 - Does not use ML — deterministic anomaly pattern matching
 - Does not require persistent cluster access — tap in, capture, tap out
-- Does not replace Loki/OpenSearch/ELK — disposable capture only
+
+## Parsing examples
+
+```bash
+# Incident capture workflow
+logtap recv --dir ./capture --max-disk 1GB --redact --headless &
+logtap tap --deployment api-gateway --target localhost:3100
+logtap report ./capture --format json
+
+# Triage — high severity only
+logtap triage ./capture --format json | jq '.anomalies[] | select(.severity == "high")'
+
+# Search logs
+logtap grep "error|panic" ./capture --sort | jq '.message'
+
+# Capture summary
+logtap inspect ./capture --format json | jq '{files, entries, labels}'
+```
