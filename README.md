@@ -90,6 +90,7 @@ Key patterns for agents:
 - `logtap triage <dir> --json` — anomaly scan results with severity
 - `logtap grep <pattern> <dir> --format text` — human-readable cross-service timeline
 - `logtap check --json` — cluster readiness and orphan detection
+- `logtap upload <dir> --to s3://... --share --json` — upload and return presigned URLs
 
 ### Kubernetes workflow
 
@@ -293,7 +294,7 @@ logtap is designed to be safe for production-adjacent use during load testing an
 
 ## Project Status
 
-**Status: Stable** · **v1.2.2** · Maintenance mode
+**Status: Stable** · **v1.3.0** · Maintenance mode
 
 | Milestone | Status |
 |-----------|--------|
