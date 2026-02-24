@@ -7,6 +7,7 @@ import (
 	"io"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	s3types "github.com/aws/aws-sdk-go-v2/service/s3/types"
@@ -58,6 +59,9 @@ func newTestS3Backend(client s3API, pag s3Paginator) *s3Backend {
 		bucket: "test-bucket",
 		newPaginator: func(_ s3API, _, _ string) s3Paginator {
 			return pag
+		},
+		presignURL: func(_ context.Context, _, _ string, _ time.Duration) (string, error) {
+			return "https://test-presigned-url", nil
 		},
 	}
 }
@@ -319,5 +323,37 @@ func TestS3List_EmptyResult(t *testing.T) {
 	}
 	if len(objects) != 0 {
 		t.Fatalf("got %d objects, want 0", len(objects))
+	}
+}
+
+func TestS3ShareURL_Success(t *testing.T) {
+	b := &s3Backend{
+		bucket: "test-bucket",
+		presignURL: func(_ context.Context, _, _ string, _ time.Duration) (string, error) {
+			return "https://bucket.s3.amazonaws.com/key?X-Amz-Signature=abc", nil
+		},
+	}
+	url, err := b.ShareURL(context.Background(), "key.txt", 24*time.Hour)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !strings.Contains(url, "X-Amz-Signature") {
+		t.Errorf("url = %q, want to contain presign signature", url)
+	}
+}
+
+func TestS3ShareURL_Error(t *testing.T) {
+	b := &s3Backend{
+		bucket: "test-bucket",
+		presignURL: func(_ context.Context, _, _ string, _ time.Duration) (string, error) {
+			return "", errors.New("access denied")
+		},
+	}
+	_, err := b.ShareURL(context.Background(), "key.txt", 24*time.Hour)
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	if !strings.Contains(err.Error(), "s3 presign") {
+		t.Errorf("error = %q, want to contain 's3 presign'", err)
 	}
 }
