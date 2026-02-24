@@ -310,10 +310,12 @@ func TestWriteText(t *testing.T) {
 			Started: base,
 			Stopped: stop,
 		},
-		Files:      23,
-		TotalLines: 14832901,
-		TotalBytes: 9 * (1 << 30),
-		DiskSize:   8*1<<30 + 400*(1<<20),
+		Files:       23,
+		TotalLines:  14832901,
+		TotalBytes:  9 * (1 << 30),
+		DiskSize:    8*1<<30 + 400*(1<<20),
+		LinesPerSec: 1863.7,
+		BucketWidth: "1-min buckets",
 		Labels: map[string][]LabelVal{
 			"app": {
 				{Value: "api-service", Lines: 8412001, Bytes: 4*1<<30 + 200*(1<<20)},
@@ -339,7 +341,9 @@ func TestWriteText(t *testing.T) {
 		"2h 13m",
 		"Size:",
 		"23 files",
+		"Data:    9.0 GB (uncompressed)",
 		"Lines:   14,832,901",
+		"Rate:    ~1,863 lines/sec",
 		"Labels:",
 		"app:",
 		"api-service",
@@ -350,6 +354,100 @@ func TestWriteText(t *testing.T) {
 		if !strings.Contains(out, check) {
 			t.Errorf("text output missing %q\noutput:\n%s", check, out)
 		}
+	}
+}
+
+func TestWriteTextPeriodFallback(t *testing.T) {
+	base := time.Date(2024, 1, 15, 10, 0, 0, 0, time.UTC)
+	dataEnd := base.Add(3*time.Hour + 30*time.Minute)
+
+	s := &Summary{
+		Dir: "./capture",
+		Meta: &recv.Metadata{
+			Version: 1,
+			Format:  "jsonl",
+			Started: base,
+			// Stopped is zero — unclean shutdown
+		},
+		Files:      5,
+		TotalLines: 1000,
+		TotalBytes: 50000,
+		DiskSize:   50000,
+		DataFrom:   base,
+		DataTo:     dataEnd,
+	}
+
+	var buf bytes.Buffer
+	s.WriteText(&buf)
+	out := buf.String()
+
+	// should show period with both times from data range fallback
+	if !strings.Contains(out, "Period:") {
+		t.Errorf("expected Period line\noutput:\n%s", out)
+	}
+	if !strings.Contains(out, "3h 30m") {
+		t.Errorf("expected duration '3h 30m' in output\noutput:\n%s", out)
+	}
+}
+
+func TestWriteTextMultiDayPeriod(t *testing.T) {
+	start := time.Date(2024, 1, 15, 10, 0, 0, 0, time.UTC)
+	stop := time.Date(2024, 1, 18, 8, 30, 0, 0, time.UTC)
+
+	s := &Summary{
+		Dir: "./capture",
+		Meta: &recv.Metadata{
+			Version: 1,
+			Format:  "jsonl",
+			Started: start,
+			Stopped: stop,
+		},
+		Files:      100,
+		TotalLines: 5000000,
+		TotalBytes: 5000000,
+		DiskSize:   5000000,
+	}
+
+	var buf bytes.Buffer
+	s.WriteText(&buf)
+	out := buf.String()
+
+	// stop should show full date since it's a different day
+	if !strings.Contains(out, "2024-01-18 08:30:00") {
+		t.Errorf("expected full stop date for multi-day capture\noutput:\n%s", out)
+	}
+	if !strings.Contains(out, "2d 22h") {
+		t.Errorf("expected '2d 22h' duration\noutput:\n%s", out)
+	}
+}
+
+func TestWriteTextTinyPercentage(t *testing.T) {
+	s := &Summary{
+		Dir: "./capture",
+		Meta: &recv.Metadata{
+			Version: 1,
+			Format:  "jsonl",
+			Started: time.Date(2024, 1, 15, 10, 0, 0, 0, time.UTC),
+		},
+		Files:      1,
+		TotalLines: 1000000,
+		TotalBytes: 1000000,
+		DiskSize:   1000000,
+		Labels: map[string][]LabelVal{
+			"app": {
+				{Value: "big", Lines: 999950, Bytes: 999950},
+				{Value: "tiny", Lines: 50, Bytes: 50},
+			},
+		},
+	}
+
+	var buf bytes.Buffer
+	s.WriteText(&buf)
+	out := buf.String()
+
+	// tiny (50/1000000 = 0.005%) should show "< 0.1%"
+	if !strings.Contains(out, "< 0.1%") {
+		t.Errorf("expected '< 0.1%%' for tiny percentage\noutput:\n%s", out)
 	}
 }
 
@@ -435,12 +533,136 @@ func TestFormatHumanDuration(t *testing.T) {
 		{30 * time.Second, "30s"},
 		{5*time.Minute + 30*time.Second, "5m 30s"},
 		{2*time.Hour + 13*time.Minute, "2h 13m"},
+		{24 * time.Hour, "1d 00h"},
+		{3*24*time.Hour + 22*time.Hour, "3d 22h"},
+		{7 * 24 * time.Hour, "7d 00h"},
 	}
 	for _, tt := range tests {
 		got := formatHumanDuration(tt.input)
 		if got != tt.want {
 			t.Errorf("formatHumanDuration(%v) = %q, want %q", tt.input, got, tt.want)
 		}
+	}
+}
+
+func TestTimelineBucketWidth(t *testing.T) {
+	tests := []struct {
+		dur       time.Duration
+		wantWidth time.Duration
+		wantLabel string
+	}{
+		{30 * time.Minute, time.Minute, "1-min buckets"},
+		{1*time.Hour + 59*time.Minute, time.Minute, "1-min buckets"},
+		{2 * time.Hour, 5 * time.Minute, "5-min buckets"},
+		{6 * time.Hour, 5 * time.Minute, "5-min buckets"},
+		{12 * time.Hour, 15 * time.Minute, "15-min buckets"},
+		{2 * 24 * time.Hour, 15 * time.Minute, "15-min buckets"},
+		{3 * 24 * time.Hour, time.Hour, "1-hour buckets"},
+		{5 * 24 * time.Hour, time.Hour, "1-hour buckets"},
+		{7 * 24 * time.Hour, 4 * time.Hour, "4-hour buckets"},
+		{30 * 24 * time.Hour, 4 * time.Hour, "4-hour buckets"},
+	}
+	for _, tt := range tests {
+		width, label := timelineBucketWidth(tt.dur)
+		if width != tt.wantWidth {
+			t.Errorf("timelineBucketWidth(%v) width = %v, want %v", tt.dur, width, tt.wantWidth)
+		}
+		if label != tt.wantLabel {
+			t.Errorf("timelineBucketWidth(%v) label = %q, want %q", tt.dur, label, tt.wantLabel)
+		}
+	}
+}
+
+func TestInspectAdaptiveBuckets(t *testing.T) {
+	dir := t.TempDir()
+	base := time.Date(2024, 1, 15, 10, 0, 0, 0, time.UTC)
+	stop := base.Add(6 * time.Hour)
+
+	writeMetadata(t, dir, base, stop, 3600)
+	writeIndex(t, dir, []rotate.IndexEntry{{
+		File:  "2024-01-15T100000-000.jsonl.zst",
+		From:  base,
+		To:    stop,
+		Lines: 3600,
+		Bytes: 180000,
+	}})
+	writeFile(t, filepath.Join(dir, "2024-01-15T100000-000.jsonl.zst"), 90000)
+
+	s, err := Inspect(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// 6h capture → 5-min buckets → 72 buckets (not 360 1-min buckets)
+	if s.BucketWidth != "5-min buckets" {
+		t.Errorf("BucketWidth = %q, want %q", s.BucketWidth, "5-min buckets")
+	}
+	// 6h / 5min = 72, +1 = 73 buckets
+	if len(s.Timeline) < 70 || len(s.Timeline) > 75 {
+		t.Errorf("timeline buckets = %d, want ~73", len(s.Timeline))
+	}
+}
+
+func TestInspectLinesPerSec(t *testing.T) {
+	dir := t.TempDir()
+	base := time.Date(2024, 1, 15, 10, 0, 0, 0, time.UTC)
+	stop := base.Add(100 * time.Second)
+
+	writeMetadata(t, dir, base, stop, 5000)
+	writeIndex(t, dir, []rotate.IndexEntry{{
+		File:  "2024-01-15T100000-000.jsonl",
+		From:  base,
+		To:    stop,
+		Lines: 5000,
+		Bytes: 250000,
+	}})
+	writeFile(t, filepath.Join(dir, "2024-01-15T100000-000.jsonl"), 250000)
+
+	s, err := Inspect(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// 5000 lines / 100 seconds = 50 lines/sec
+	if s.LinesPerSec < 49 || s.LinesPerSec > 51 {
+		t.Errorf("LinesPerSec = %.1f, want ~50", s.LinesPerSec)
+	}
+}
+
+func TestInspectDataFromTo(t *testing.T) {
+	dir := t.TempDir()
+	base := time.Date(2024, 1, 15, 10, 0, 0, 0, time.UTC)
+
+	writeMetadata(t, dir, base, time.Time{}, 0)
+	writeIndex(t, dir, []rotate.IndexEntry{
+		{
+			File:  "a.jsonl.zst",
+			From:  base.Add(5 * time.Minute),
+			To:    base.Add(30 * time.Minute),
+			Lines: 100,
+			Bytes: 5000,
+		},
+		{
+			File:  "b.jsonl.zst",
+			From:  base.Add(30 * time.Minute),
+			To:    base.Add(60 * time.Minute),
+			Lines: 100,
+			Bytes: 5000,
+		},
+	})
+	writeFile(t, filepath.Join(dir, "a.jsonl.zst"), 2500)
+	writeFile(t, filepath.Join(dir, "b.jsonl.zst"), 2500)
+
+	s, err := Inspect(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if !s.DataFrom.Equal(base.Add(5 * time.Minute)) {
+		t.Errorf("DataFrom = %v, want %v", s.DataFrom, base.Add(5*time.Minute))
+	}
+	if !s.DataTo.Equal(base.Add(60 * time.Minute)) {
+		t.Errorf("DataTo = %v, want %v", s.DataTo, base.Add(60*time.Minute))
 	}
 }
 
