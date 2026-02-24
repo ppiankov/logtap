@@ -7,6 +7,7 @@ import (
 	"io"
 	"strings"
 	"testing"
+	"time"
 
 	gstorage "cloud.google.com/go/storage"
 	"google.golang.org/api/iterator"
@@ -68,6 +69,9 @@ func newTestGCSBackend(
 		},
 		newIterator: func(_ context.Context, _, _ string) gcsObjectIterator {
 			return iter
+		},
+		signURL: func(_ string, _ *gstorage.SignedURLOptions) (string, error) {
+			return "https://storage.googleapis.com/test-signed-url", nil
 		},
 	}
 }
@@ -237,5 +241,37 @@ func TestGCSList_PrefixWithTrailingSlash(t *testing.T) {
 	}
 	if len(objects) != 1 {
 		t.Fatalf("got %d objects, want 1", len(objects))
+	}
+}
+
+func TestGCSShareURL_Success(t *testing.T) {
+	b := &gcsBackend{
+		bucket: "test-bucket",
+		signURL: func(_ string, _ *gstorage.SignedURLOptions) (string, error) {
+			return "https://storage.googleapis.com/test-bucket/key.txt?X-Goog-Signature=abc", nil
+		},
+	}
+	url, err := b.ShareURL(context.Background(), "key.txt", 24*time.Hour)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !strings.Contains(url, "storage.googleapis.com") {
+		t.Errorf("url = %q, want to contain GCS host", url)
+	}
+}
+
+func TestGCSShareURL_Error(t *testing.T) {
+	b := &gcsBackend{
+		bucket: "test-bucket",
+		signURL: func(_ string, _ *gstorage.SignedURLOptions) (string, error) {
+			return "", errors.New("no credentials")
+		},
+	}
+	_, err := b.ShareURL(context.Background(), "key.txt", 24*time.Hour)
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	if !strings.Contains(err.Error(), "gcs sign") {
+		t.Errorf("error = %q, want to contain 'gcs sign'", err)
 	}
 }

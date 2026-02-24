@@ -4,6 +4,16 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [1.3.0] - 2026-02-24
+
+### Added
+
+- `upload --share` generates presigned URLs for uploaded captures (S3 and GCS)
+- `upload --expiry` controls presigned URL lifetime (default 24h, max 168h)
+- `upload --force` allows sharing unredacted captures with explicit consent
+- Safety gate refuses `--share` on unredacted captures without `--force` to prevent accidental PII exposure
+- `ShareURL` method on cloud Backend interface for presigned/signed URL generation
+
 ## [1.2.2] - 2026-02-24
 
 ### Improved

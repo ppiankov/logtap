@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"github.com/spf13/cobra"
 
@@ -21,6 +22,9 @@ func newUploadCmd() *cobra.Command {
 		to          string
 		concurrency int
 		jsonOutput  bool
+		share       bool
+		expiry      time.Duration
+		force       bool
 	)
 
 	cmd := &cobra.Command{
@@ -32,20 +36,33 @@ func newUploadCmd() *cobra.Command {
 			if to == "" {
 				return fmt.Errorf("--to is required")
 			}
-			return runUpload(cmd.Context(), args[0], to, concurrency, jsonOutput)
+			return runUpload(cmd.Context(), args[0], to, concurrency, jsonOutput, share, expiry, force)
 		},
 	}
 
 	cmd.Flags().StringVar(&to, "to", "", "destination URL (s3://bucket/prefix or gs://bucket/prefix)")
 	cmd.Flags().IntVar(&concurrency, "concurrency", 4, "number of parallel uploads")
 	cmd.Flags().BoolVar(&jsonOutput, "json", false, "output summary as JSON")
+	cmd.Flags().BoolVar(&share, "share", false, "generate presigned URLs after upload")
+	cmd.Flags().DurationVar(&expiry, "expiry", 24*time.Hour, "presigned URL expiry (max 168h)")
+	cmd.Flags().BoolVar(&force, "force", false, "allow sharing unredacted captures")
 
 	return cmd
 }
 
-func runUpload(ctx context.Context, dir, toURL string, concurrency int, jsonOutput bool) error {
-	if _, err := recv.ReadMetadata(dir); err != nil {
+func runUpload(ctx context.Context, dir, toURL string, concurrency int, jsonOutput, share bool, expiry time.Duration, force bool) error {
+	meta, err := recv.ReadMetadata(dir)
+	if err != nil {
 		return fmt.Errorf("not a valid capture directory: %w", err)
+	}
+
+	// safety gate: refuse to share unredacted captures without --force
+	if share && meta.Redaction == nil && !force {
+		return fmt.Errorf("capture not redacted — use --force to share unredacted logs")
+	}
+
+	if share && expiry > 168*time.Hour {
+		return fmt.Errorf("--expiry exceeds maximum of 168h (7 days)")
 	}
 
 	scheme, bucket, prefix, err := cloud.ParseURL(toURL)
@@ -63,6 +80,13 @@ func runUpload(ctx context.Context, dir, toURL string, concurrency int, jsonOutp
 		return err
 	}
 
+	if share {
+		if meta.Redaction == nil {
+			_, _ = fmt.Fprintln(os.Stderr, "WARNING: sharing unredacted capture — PII may be exposed")
+		}
+		return generateShareURLs(ctx, backend, prefix, stats, toURL, expiry, jsonOutput)
+	}
+
 	if jsonOutput {
 		return json.NewEncoder(os.Stdout).Encode(map[string]any{
 			"source":      dir,
@@ -73,6 +97,42 @@ func runUpload(ctx context.Context, dir, toURL string, concurrency int, jsonOutp
 	}
 
 	_, _ = fmt.Fprintf(os.Stderr, "Destination: %s\n", toURL)
+	return nil
+}
+
+func generateShareURLs(ctx context.Context, backend cloud.Backend, prefix string, stats uploadStats, toURL string, expiry time.Duration, jsonOutput bool) error {
+	objects, err := backend.List(ctx, prefix)
+	if err != nil {
+		return fmt.Errorf("list uploaded files: %w", err)
+	}
+
+	urls := make(map[string]string, len(objects))
+	for _, obj := range objects {
+		u, err := backend.ShareURL(ctx, obj.Key, expiry)
+		if err != nil {
+			return fmt.Errorf("generate share URL for %s: %w", obj.Key, err)
+		}
+		urls[obj.Key] = u
+	}
+
+	if jsonOutput {
+		return json.NewEncoder(os.Stdout).Encode(map[string]any{
+			"destination": toURL,
+			"files":       stats.files,
+			"bytes":       stats.bytes,
+			"expires":     time.Now().Add(expiry).UTC().Format(time.RFC3339),
+			"share_urls":  urls,
+		})
+	}
+
+	_, _ = fmt.Fprintf(os.Stderr, "Shared %d files (expires in %s)\n", len(urls), expiry)
+	// print metadata.json URL if present, otherwise first URL
+	for key, u := range urls {
+		if filepath.Base(key) == "metadata.json" {
+			_, _ = fmt.Fprintf(os.Stderr, "Metadata: %s\n", u)
+			break
+		}
+	}
 	return nil
 }
 
