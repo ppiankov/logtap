@@ -19,14 +19,18 @@ import (
 
 // Summary holds aggregated information about a capture directory.
 type Summary struct {
-	Dir        string                `json:"dir"`
-	Meta       *recv.Metadata        `json:"metadata"`
-	Files      int                   `json:"files"`
-	TotalLines int64                 `json:"total_lines"`
-	TotalBytes int64                 `json:"total_bytes"`
-	DiskSize   int64                 `json:"disk_size"`
-	Labels     map[string][]LabelVal `json:"labels,omitempty"`
-	Timeline   []Bucket              `json:"timeline,omitempty"`
+	Dir         string                `json:"dir"`
+	Meta        *recv.Metadata        `json:"metadata"`
+	Files       int                   `json:"files"`
+	TotalLines  int64                 `json:"total_lines"`
+	TotalBytes  int64                 `json:"total_bytes"`
+	DiskSize    int64                 `json:"disk_size"`
+	DataFrom    time.Time             `json:"data_from,omitempty"`
+	DataTo      time.Time             `json:"data_to,omitempty"`
+	LinesPerSec float64               `json:"lines_per_sec,omitempty"`
+	BucketWidth string                `json:"bucket_width,omitempty"`
+	Labels      map[string][]LabelVal `json:"labels,omitempty"`
+	Timeline    []Bucket              `json:"timeline,omitempty"`
 }
 
 // LabelVal summarizes one label value's contribution.
@@ -124,28 +128,74 @@ func Inspect(dir string) (*Summary, error) {
 		}
 	}
 
-	// build timeline
-	s.Timeline = buildTimeline(index, minTime, maxTime)
+	// expose index time range
+	s.DataFrom = minTime
+	s.DataTo = maxTime
+
+	// compute average rate
+	start, stop := s.effectivePeriod()
+	if !start.IsZero() && !stop.IsZero() && s.TotalLines > 0 {
+		dur := stop.Sub(start).Seconds()
+		if dur > 0 {
+			s.LinesPerSec = float64(s.TotalLines) / dur
+		}
+	}
+
+	// build timeline with adaptive bucket width
+	if !minTime.IsZero() && !maxTime.IsZero() {
+		bw, label := timelineBucketWidth(maxTime.Sub(minTime))
+		s.BucketWidth = label
+		s.Timeline = buildTimeline(index, minTime, maxTime, bw)
+	}
 
 	return s, nil
 }
 
-// buildTimeline distributes index entry lines across 1-minute buckets.
-func buildTimeline(index []rotate.IndexEntry, minTime, maxTime time.Time) []Bucket {
+// effectivePeriod returns the best available start/stop times.
+// Prefers metadata values, falls back to index data range.
+func (s *Summary) effectivePeriod() (start, stop time.Time) {
+	start = s.Meta.Started
+	if start.IsZero() {
+		start = s.DataFrom
+	}
+	stop = s.Meta.Stopped
+	if stop.IsZero() {
+		stop = s.DataTo
+	}
+	return start, stop
+}
+
+// timelineBucketWidth chooses an adaptive bucket width based on capture duration.
+func timelineBucketWidth(d time.Duration) (width time.Duration, label string) {
+	switch {
+	case d < 2*time.Hour:
+		return time.Minute, "1-min buckets"
+	case d < 12*time.Hour:
+		return 5 * time.Minute, "5-min buckets"
+	case d < 3*24*time.Hour:
+		return 15 * time.Minute, "15-min buckets"
+	case d < 7*24*time.Hour:
+		return time.Hour, "1-hour buckets"
+	default:
+		return 4 * time.Hour, "4-hour buckets"
+	}
+}
+
+// buildTimeline distributes index entry lines across adaptive-width buckets.
+func buildTimeline(index []rotate.IndexEntry, minTime, maxTime time.Time, bucketWidth time.Duration) []Bucket {
 	if len(index) == 0 || minTime.IsZero() {
 		return nil
 	}
 
-	// truncate to minute boundaries
-	start := minTime.Truncate(time.Minute)
-	end := maxTime.Truncate(time.Minute)
+	start := minTime.Truncate(bucketWidth)
+	end := maxTime.Truncate(bucketWidth)
 
-	nBuckets := int(end.Sub(start)/time.Minute) + 1
+	nBuckets := int(end.Sub(start)/bucketWidth) + 1
 	if nBuckets <= 0 {
 		nBuckets = 1
 	}
-	// safety cap — extremely long captures
-	if nBuckets > 10080 { // 1 week of minutes
+	// safety cap
+	if nBuckets > 10080 {
 		nBuckets = 10080
 	}
 
@@ -155,11 +205,11 @@ func buildTimeline(index []rotate.IndexEntry, minTime, maxTime time.Time) []Buck
 		if entry.Lines == 0 {
 			continue
 		}
-		entryStart := entry.From.Truncate(time.Minute)
-		entryEnd := entry.To.Truncate(time.Minute)
+		entryStart := entry.From.Truncate(bucketWidth)
+		entryEnd := entry.To.Truncate(bucketWidth)
 
-		startIdx := int(entryStart.Sub(start) / time.Minute)
-		endIdx := int(entryEnd.Sub(start) / time.Minute)
+		startIdx := int(entryStart.Sub(start) / bucketWidth)
+		endIdx := int(entryEnd.Sub(start) / bucketWidth)
 
 		if startIdx < 0 {
 			startIdx = 0
@@ -183,7 +233,7 @@ func buildTimeline(index []rotate.IndexEntry, minTime, maxTime time.Time) []Buck
 	result := make([]Bucket, nBuckets)
 	for i := range result {
 		result[i] = Bucket{
-			Time:  start.Add(time.Duration(i) * time.Minute),
+			Time:  start.Add(time.Duration(i) * bucketWidth),
 			Lines: buckets[i],
 		}
 	}
@@ -277,19 +327,37 @@ func (s *Summary) WriteText(w io.Writer) {
 	tw.printf("Capture: %s\n", s.Dir)
 	tw.printf("Format:  %s (v%d)\n", s.Meta.Format, s.Meta.Version)
 
-	if !s.Meta.Started.IsZero() {
-		start := s.Meta.Started.Format("2006-01-02 15:04:05")
-		if !s.Meta.Stopped.IsZero() {
-			stop := s.Meta.Stopped.Format("15:04:05")
-			dur := s.Meta.Stopped.Sub(s.Meta.Started)
-			tw.printf("Period:  %s — %s (%s)\n", start, stop, formatHumanDuration(dur))
+	// period — prefer metadata, fall back to index data range
+	start, stop := s.effectivePeriod()
+	if !start.IsZero() {
+		startStr := start.Format("2006-01-02 15:04:05")
+		if !stop.IsZero() && stop.After(start) {
+			var stopStr string
+			if start.YearDay() == stop.YearDay() && start.Year() == stop.Year() {
+				stopStr = stop.Format("15:04:05")
+			} else {
+				stopStr = stop.Format("2006-01-02 15:04:05")
+			}
+			dur := stop.Sub(start)
+			tw.printf("Period:  %s — %s (%s)\n", startStr, stopStr, formatHumanDuration(dur))
 		} else {
-			tw.printf("Period:  %s\n", start)
+			tw.printf("Period:  %s\n", startStr)
 		}
 	}
 
 	tw.printf("Size:    %s (%d files)\n", FormatBytes(s.DiskSize), s.Files)
+
+	// uncompressed data size (only when different from disk size)
+	if s.TotalBytes > 0 && s.TotalBytes != s.DiskSize {
+		tw.printf("Data:    %s (uncompressed)\n", FormatBytes(s.TotalBytes))
+	}
+
 	tw.printf("Lines:   %s\n", FormatCount(s.TotalLines))
+
+	// average rate
+	if s.LinesPerSec > 0 {
+		tw.printf("Rate:    ~%s lines/sec\n", FormatCount(int64(s.LinesPerSec)))
+	}
 
 	// labels
 	if len(s.Labels) > 0 {
@@ -310,8 +378,13 @@ func (s *Summary) WriteText(w io.Writer) {
 				if s.TotalLines > 0 {
 					pct = float64(v.Lines) / float64(s.TotalLines) * 100
 				}
-				tw.printf("    %-20s %s lines   %s   (%.1f%%)\n",
-					v.Value, FormatCount(v.Lines), FormatBytes(v.Bytes), pct)
+				if pct > 0 && pct < 0.05 {
+					tw.printf("    %-20s %s lines   %s   (< 0.1%%)\n",
+						v.Value, FormatCount(v.Lines), FormatBytes(v.Bytes))
+				} else {
+					tw.printf("    %-20s %s lines   %s   (%.1f%%)\n",
+						v.Value, FormatCount(v.Lines), FormatBytes(v.Bytes), pct)
+				}
 			}
 			tw.println()
 		}
@@ -319,7 +392,11 @@ func (s *Summary) WriteText(w io.Writer) {
 
 	// timeline
 	if len(s.Timeline) > 0 {
-		tw.println("Timeline (1-min buckets):")
+		label := s.BucketWidth
+		if label == "" {
+			label = "1-min buckets"
+		}
+		tw.printf("Timeline (%s):\n", label)
 		writeSparkline(tw, s.Timeline)
 	}
 }
@@ -412,14 +489,19 @@ func FormatCount(n int64) string {
 	return result.String()
 }
 
-// formatHumanDuration formats a duration as "Xh Ym" or "Xm Ys".
+// formatHumanDuration formats a duration as "Xd Yh", "Xh Ym", or "Xm Ys".
 func formatHumanDuration(d time.Duration) string {
-	h := int(d.Hours())
+	totalH := int(d.Hours())
+	days := totalH / 24
+	h := totalH % 24
 	m := int(d.Minutes()) % 60
 	s := int(d.Seconds()) % 60
 
-	if h > 0 {
-		return fmt.Sprintf("%dh %02dm", h, m)
+	if days > 0 {
+		return fmt.Sprintf("%dd %02dh", days, h)
+	}
+	if totalH > 0 {
+		return fmt.Sprintf("%dh %02dm", totalH, m)
 	}
 	if m > 0 {
 		return fmt.Sprintf("%dm %02ds", m, s)
