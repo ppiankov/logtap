@@ -323,6 +323,25 @@ func TestTriageMultipleFiles(t *testing.T) {
 	}
 }
 
+func TestTriageSkipsRotatedFile(t *testing.T) {
+	src, _ := setupTriageSource(t)
+
+	// Delete the data file to simulate rotation during scan.
+	dataFile := filepath.Join(src, "2024-01-15T100000-000.jsonl")
+	if err := os.Remove(dataFile); err != nil {
+		t.Fatal(err)
+	}
+
+	// Triage should succeed despite the missing file.
+	result, err := Triage(src, TriageConfig{Jobs: 1}, nil)
+	if err != nil {
+		t.Fatalf("triage should not fail on rotated file: %v", err)
+	}
+	if result == nil {
+		t.Fatal("expected non-nil result")
+	}
+}
+
 func TestTriageSummaryContainsKey(t *testing.T) {
 	src, _ := setupTriageSource(t)
 

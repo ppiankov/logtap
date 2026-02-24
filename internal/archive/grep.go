@@ -88,6 +88,9 @@ func Grep(src string, filter *Filter, cfg GrepConfig,
 func grepFile(f FileInfo, filter *Filter, cfg GrepConfig, onMatch func(GrepMatch)) (int64, int64, error) {
 	file, err := os.Open(f.Path)
 	if err != nil {
+		if os.IsNotExist(err) {
+			return 0, 0, nil // file rotated away during scan
+		}
 		return 0, 0, err
 	}
 	defer func() { _ = file.Close() }()

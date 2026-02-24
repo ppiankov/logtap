@@ -98,6 +98,9 @@ func Correlate(dir string, windowSize time.Duration) ([]Correlation, error) {
 func scanFileForCorrelation(f FileInfo, windowSize time.Duration, services map[string]*serviceErrors) error {
 	file, err := os.Open(f.Path)
 	if err != nil {
+		if os.IsNotExist(err) {
+			return nil // file rotated away during scan
+		}
 		return err
 	}
 	defer func() { _ = file.Close() }()
