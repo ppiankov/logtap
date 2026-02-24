@@ -134,10 +134,31 @@ func Triage(src string, cfg TriageConfig, progress func(TriageProgress)) (*Triag
 	files := reader.Files()
 	totalLines := reader.TotalLines()
 
-	// pass 1: parallel scan
+	// pass 1: parallel scan (skips rotated files gracefully)
 	results, err := parallelScan(files, cfg.Jobs, totalLines, progress)
 	if err != nil {
 		return nil, fmt.Errorf("scan: %w", err)
+	}
+
+	// catch-up: re-read index to pick up files added during scan
+	scannedSet := make(map[string]bool, len(files))
+	for _, f := range files {
+		scannedSet[f.Name] = true
+	}
+	if catchupReader, err := NewReader(src); err == nil {
+		var newFiles []FileInfo
+		for _, f := range catchupReader.Files() {
+			if !scannedSet[f.Name] {
+				newFiles = append(newFiles, f)
+			}
+		}
+		if len(newFiles) > 0 {
+			_, _ = fmt.Fprintf(os.Stderr, "\nCatch-up: scanning %d new files added during triage\n", len(newFiles))
+			catchupResults, err := parallelScan(newFiles, cfg.Jobs, 0, nil)
+			if err == nil {
+				results = append(results, catchupResults...)
+			}
+		}
 	}
 
 	// merge file results
@@ -237,6 +258,11 @@ func parallelScan(files []FileInfo, jobs int, totalLines int64, progress func(Tr
 func scanFileForTriage(f FileInfo) (*fileResult, error) {
 	file, err := os.Open(f.Path)
 	if err != nil {
+		if os.IsNotExist(err) {
+			// File was rotated away during scan — skip gracefully.
+			_, _ = fmt.Fprintf(os.Stderr, "\nSkipping rotated file: %s\n", f.Name)
+			return newFileResult(), nil
+		}
 		return nil, err
 	}
 	defer func() { _ = file.Close() }()
