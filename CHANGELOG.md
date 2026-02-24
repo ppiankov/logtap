@@ -4,6 +4,18 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [1.2.2] - 2026-02-24
+
+### Improved
+
+- `inspect` Period line now shows both start and end times, with fallback to index data range when metadata lacks stop time
+- `inspect` shows full date for stop time on multi-day captures
+- `inspect` duration format handles days (e.g., "3d 22h" instead of "94h 22m")
+- `inspect` timeline auto-scales bucket width based on capture duration (1min/5min/15min/1hr/4hr)
+- `inspect` shows `< 0.1%` instead of `0.0%` for tiny non-zero label percentages
+- `inspect` shows average log rate (`Rate: ~X lines/sec`)
+- `inspect` shows uncompressed data size when different from disk size
+
 ## [1.2.1] - 2026-02-21
 
 ### Fixed
