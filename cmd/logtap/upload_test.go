@@ -7,8 +7,10 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/ppiankov/logtap/internal/cloud"
 	"github.com/ppiankov/logtap/internal/recv"
@@ -22,6 +24,7 @@ type mockBackend struct {
 	uploadErr   error
 	downloadErr error
 	listErr     error
+	shareURLErr error
 }
 
 type mockUpload struct {
@@ -61,6 +64,13 @@ func (m *mockBackend) List(_ context.Context, _ string) ([]cloud.ObjectInfo, err
 		return nil, m.listErr
 	}
 	return m.objects, nil
+}
+
+func (m *mockBackend) ShareURL(_ context.Context, key string, _ time.Duration) (string, error) {
+	if m.shareURLErr != nil {
+		return "", m.shareURLErr
+	}
+	return "https://presigned.example.com/" + key, nil
 }
 
 func TestUploadCapture(t *testing.T) {
@@ -109,7 +119,7 @@ func TestUploadCapture_NoPrefix(t *testing.T) {
 func TestUploadCapture_NotCaptureDir(t *testing.T) {
 	dir := t.TempDir()
 	// No metadata.json — runUpload validates this
-	err := runUpload(context.Background(), dir, "s3://bucket/prefix", 1, false)
+	err := runUpload(context.Background(), dir, "s3://bucket/prefix", 1, false, false, 24*time.Hour, false)
 	if err == nil {
 		t.Fatal("expected error for non-capture dir")
 	}
@@ -137,6 +147,46 @@ func TestUploadCapture_EmptyDir(t *testing.T) {
 	}
 }
 
+func TestUploadShare_UnredactedRefused(t *testing.T) {
+	dir := makeMinimalCapture(t) // no redaction in metadata
+
+	// runUpload should refuse --share without --force on unredacted capture
+	err := runUpload(context.Background(), dir, "s3://bucket/prefix", 1, false, true, 24*time.Hour, false)
+	if err == nil {
+		t.Fatal("expected error for unredacted share without --force")
+	}
+	if !strings.Contains(err.Error(), "not redacted") {
+		t.Errorf("error = %q, want to contain 'not redacted'", err)
+	}
+}
+
+func TestUploadShare_RedactedAllowed(t *testing.T) {
+	dir := makeRedactedCapture(t)
+
+	// runUpload with --share on redacted capture should NOT error on safety gate
+	// (will fail on cloud connect, which is fine — we're testing the safety gate only)
+	err := runUpload(context.Background(), dir, "s3://bucket/prefix", 1, false, true, 24*time.Hour, false)
+	if err == nil {
+		t.Skip("unexpected success — cloud connect might have worked")
+	}
+	// should NOT be the redaction error
+	if strings.Contains(err.Error(), "not redacted") {
+		t.Errorf("redacted capture should pass safety gate, got: %v", err)
+	}
+}
+
+func TestUploadShare_ExpiryTooLong(t *testing.T) {
+	dir := makeRedactedCapture(t)
+
+	err := runUpload(context.Background(), dir, "s3://bucket/prefix", 1, false, true, 200*time.Hour, false)
+	if err == nil {
+		t.Fatal("expected error for expiry > 168h")
+	}
+	if !strings.Contains(err.Error(), "exceeds maximum") {
+		t.Errorf("error = %q, want to contain 'exceeds maximum'", err)
+	}
+}
+
 func makeMinimalCapture(t *testing.T) string {
 	t.Helper()
 	dir := t.TempDir()
@@ -157,6 +207,32 @@ func makeMinimalCapture(t *testing.T) string {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(filepath.Join(dir, "data-000.jsonl"), []byte(`{"msg":"test"}`+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	return dir
+}
+
+func makeRedactedCapture(t *testing.T) string {
+	t.Helper()
+	dir := t.TempDir()
+
+	meta := recv.Metadata{
+		Version:    1,
+		Format:     "jsonl",
+		TotalLines: 10,
+		Redaction: &recv.RedactionInfo{
+			Enabled:  true,
+			Patterns: []string{"email", "credit_card"},
+		},
+	}
+	data, err := json.MarshalIndent(meta, "", "  ")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "metadata.json"), data, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "index.jsonl"), []byte("{}\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	return dir

@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"time"
 
 	gstorage "cloud.google.com/go/storage"
 	"google.golang.org/api/iterator"
@@ -19,6 +20,7 @@ type gcsBackend struct {
 	newWriter   func(ctx context.Context, bucket, key string) io.WriteCloser
 	newReader   func(ctx context.Context, bucket, key string) (io.ReadCloser, error)
 	newIterator func(ctx context.Context, bucket, prefix string) gcsObjectIterator
+	signURL     func(object string, opts *gstorage.SignedURLOptions) (string, error)
 }
 
 func newGCSBackend(ctx context.Context, bucket string) (*gcsBackend, error) {
@@ -26,6 +28,7 @@ func newGCSBackend(ctx context.Context, bucket string) (*gcsBackend, error) {
 	if err != nil {
 		return nil, fmt.Errorf("create GCS client: %w", err)
 	}
+	bkt := client.Bucket(bucket)
 	return &gcsBackend{
 		bucket: bucket,
 		newWriter: func(ctx context.Context, b, key string) io.WriteCloser {
@@ -36,6 +39,9 @@ func newGCSBackend(ctx context.Context, bucket string) (*gcsBackend, error) {
 		},
 		newIterator: func(ctx context.Context, b, prefix string) gcsObjectIterator {
 			return client.Bucket(b).Objects(ctx, &gstorage.Query{Prefix: prefix})
+		},
+		signURL: func(object string, opts *gstorage.SignedURLOptions) (string, error) {
+			return bkt.SignedURL(object, opts)
 		},
 	}, nil
 }
@@ -84,4 +90,15 @@ func (b *gcsBackend) List(ctx context.Context, prefix string) ([]ObjectInfo, err
 	}
 
 	return objects, nil
+}
+
+func (b *gcsBackend) ShareURL(_ context.Context, key string, expiry time.Duration) (string, error) {
+	url, err := b.signURL(key, &gstorage.SignedURLOptions{
+		Method:  "GET",
+		Expires: time.Now().Add(expiry),
+	})
+	if err != nil {
+		return "", fmt.Errorf("gcs sign %s: %w", key, err)
+	}
+	return url, nil
 }

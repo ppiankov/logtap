@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"strings"
+	"time"
 
 	"github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
@@ -26,6 +27,7 @@ type s3Backend struct {
 	client       s3API
 	bucket       string
 	newPaginator func(client s3API, bucket, prefix string) s3Paginator
+	presignURL   func(ctx context.Context, bucket, key string, expiry time.Duration) (string, error)
 }
 
 func newS3Backend(ctx context.Context, bucket string) (*s3Backend, error) {
@@ -34,6 +36,7 @@ func newS3Backend(ctx context.Context, bucket string) (*s3Backend, error) {
 		return nil, fmt.Errorf("load AWS config: %w", err)
 	}
 	client := s3.NewFromConfig(cfg)
+	presigner := s3.NewPresignClient(client)
 	return &s3Backend{
 		client: client,
 		bucket: bucket,
@@ -42,6 +45,16 @@ func newS3Backend(ctx context.Context, bucket string) (*s3Backend, error) {
 				Bucket: &b,
 				Prefix: &p,
 			})
+		},
+		presignURL: func(ctx context.Context, b, key string, expiry time.Duration) (string, error) {
+			result, err := presigner.PresignGetObject(ctx, &s3.GetObjectInput{
+				Bucket: &b,
+				Key:    &key,
+			}, s3.WithPresignExpires(expiry))
+			if err != nil {
+				return "", err
+			}
+			return result.URL, nil
 		},
 	}, nil
 }
@@ -101,4 +114,12 @@ func (b *s3Backend) List(ctx context.Context, prefix string) ([]ObjectInfo, erro
 	}
 
 	return objects, nil
+}
+
+func (b *s3Backend) ShareURL(ctx context.Context, key string, expiry time.Duration) (string, error) {
+	url, err := b.presignURL(ctx, b.bucket, key, expiry)
+	if err != nil {
+		return "", fmt.Errorf("s3 presign %s: %w", key, err)
+	}
+	return url, nil
 }
