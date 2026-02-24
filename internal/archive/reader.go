@@ -119,6 +119,9 @@ func (r *Reader) Scan(filter *Filter, fn func(recv.LogEntry) bool) (int64, error
 func (r *Reader) scanFile(f FileInfo, filter *Filter, fn func(recv.LogEntry) bool) (int64, bool, error) {
 	file, err := os.Open(f.Path)
 	if err != nil {
+		if os.IsNotExist(err) {
+			return 0, false, nil // file rotated away during scan
+		}
 		return 0, false, err
 	}
 	defer func() { _ = file.Close() }()

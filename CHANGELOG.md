@@ -4,6 +4,13 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [1.3.1] - 2026-02-24
+
+### Fixed
+
+- Skip rotated files gracefully during triage, grep, slice, and export instead of crashing with "no such file or directory"
+- Add catch-up pass in triage to scan files added by rotation during long-running scans
+
 ## [1.3.0] - 2026-02-24
 
 ### Added
