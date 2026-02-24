@@ -319,6 +319,10 @@ Feature-complete. Bug fixes and security patches only. New features driven by us
 - **No long-term retention** — bounded disk, oldest files deleted automatically
 - **Pod restart on tap** — sidecar injection triggers a pod restart (see below)
 
+### Scanning a live capture
+
+`logtap triage`, `grep`, `slice`, and `export` can safely run against a capture directory that is still receiving logs. File rotation may delete old data files during a long-running scan — these are skipped gracefully. Triage additionally performs a catch-up pass after the main scan to pick up files that were created by rotation during the initial scan. Line counts may differ slightly from the final capture since rotation is concurrent.
+
 ### Image availability on tap
 
 `logtap tap` injects a forwarder sidecar into workloads, which triggers a pod restart. During restart, Kubernetes pulls both the application image and the forwarder image (`ghcr.io/ppiankov/logtap-forwarder`). If either image is unavailable — registry down, credentials expired, image deleted, air-gapped cluster — the pod will enter `ImagePullBackOff` and fail to start.
