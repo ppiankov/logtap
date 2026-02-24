@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"strings"
+	"time"
 )
 
 // Backend abstracts cloud object storage operations.
@@ -17,6 +18,9 @@ type Backend interface {
 
 	// List returns all object keys under the given prefix.
 	List(ctx context.Context, prefix string) ([]ObjectInfo, error)
+
+	// ShareURL generates a time-limited presigned URL for downloading the given key.
+	ShareURL(ctx context.Context, key string, expiry time.Duration) (string, error)
 }
 
 // ObjectInfo describes a remote object.
