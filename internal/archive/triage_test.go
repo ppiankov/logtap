@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/csv"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -339,6 +340,43 @@ func TestTriageSkipsRotatedFile(t *testing.T) {
 	}
 	if result == nil {
 		t.Fatal("expected non-nil result")
+	}
+}
+
+func TestTriageMaxSignatures(t *testing.T) {
+	dir := t.TempDir()
+	base := time.Date(2024, 1, 15, 10, 0, 0, 0, time.UTC)
+
+	// Generate entries with many unique error signatures.
+	var entries []recv.LogEntry
+	for i := range 20 {
+		entries = append(entries, recv.LogEntry{
+			Timestamp: base.Add(time.Duration(i) * time.Second),
+			Labels:    map[string]string{"app": "api"},
+			Message:   fmt.Sprintf("error: unique failure #%d", i),
+		})
+	}
+
+	writeMetadata(t, dir, base, base.Add(19*time.Second), int64(len(entries)))
+	writeDataFile(t, dir, "2024-01-15T100000-000.jsonl", entries)
+	writeIndex(t, dir, []rotate.IndexEntry{{
+		File:  "2024-01-15T100000-000.jsonl",
+		From:  base,
+		To:    base.Add(19 * time.Second),
+		Lines: int64(len(entries)),
+		Bytes: 2000,
+		Labels: map[string]map[string]int64{
+			"app": {"api": int64(len(entries))},
+		},
+	}})
+
+	result, err := Triage(dir, TriageConfig{Jobs: 1, MaxSignatures: 3}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if len(result.Errors) > 3 {
+		t.Errorf("Errors = %d, want <= 3 (MaxSignatures cap)", len(result.Errors))
 	}
 }
 

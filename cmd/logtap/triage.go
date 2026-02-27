@@ -14,12 +14,13 @@ import (
 
 func newTriageCmd() *cobra.Command {
 	var (
-		outDir     string
-		jobs       int
-		windowStr  string
-		top        int
-		jsonOutput bool
-		htmlOutput bool
+		outDir        string
+		jobs          int
+		windowStr     string
+		top           int
+		maxSignatures int
+		jsonOutput    bool
+		htmlOutput    bool
 	)
 
 	cmd := &cobra.Command{
@@ -32,7 +33,7 @@ func newTriageCmd() *cobra.Command {
 			if err != nil {
 				return fmt.Errorf("invalid --window: %w", err)
 			}
-			return runTriage(args[0], outDir, jobs, window, top, jsonOutput, htmlOutput)
+			return runTriage(args[0], outDir, jobs, window, top, maxSignatures, jsonOutput, htmlOutput)
 		},
 	}
 
@@ -40,17 +41,19 @@ func newTriageCmd() *cobra.Command {
 	cmd.Flags().IntVar(&jobs, "jobs", runtime.NumCPU(), "parallel scan workers")
 	cmd.Flags().StringVar(&windowStr, "window", "1m", "histogram bucket width")
 	cmd.Flags().IntVar(&top, "top", 50, "number of top error signatures")
+	cmd.Flags().IntVar(&maxSignatures, "max-signatures", 10000, "cap on unique error signatures kept in memory")
 	cmd.Flags().BoolVar(&jsonOutput, "json", false, "output as JSON to stdout")
 	cmd.Flags().BoolVar(&htmlOutput, "html", false, "generate self-contained HTML report")
 
 	return cmd
 }
 
-func runTriage(src, outDir string, jobs int, window time.Duration, top int, jsonOutput, htmlOutput bool) error {
+func runTriage(src, outDir string, jobs int, window time.Duration, top, maxSignatures int, jsonOutput, htmlOutput bool) error {
 	triageCfg := archive.TriageConfig{
-		Jobs:   jobs,
-		Window: window,
-		Top:    top,
+		Jobs:          jobs,
+		Window:        window,
+		Top:           top,
+		MaxSignatures: maxSignatures,
 	}
 
 	progress := func(p archive.TriageProgress) {

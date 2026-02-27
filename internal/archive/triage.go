@@ -21,9 +21,10 @@ import (
 
 // TriageConfig controls triage behavior.
 type TriageConfig struct {
-	Jobs   int           // parallel workers (default runtime.NumCPU())
-	Window time.Duration // histogram bucket width (default 1m)
-	Top    int           // top error signatures (default 50)
+	Jobs          int           // parallel workers (default runtime.NumCPU())
+	Window        time.Duration // histogram bucket width (default 1m)
+	Top           int           // top error signatures (default 50)
+	MaxSignatures int           // cap on unique signatures kept in memory (default 10000)
 }
 
 // TriageProgress reports progress during triage scanning.
@@ -125,6 +126,9 @@ func Triage(src string, cfg TriageConfig, progress func(TriageProgress)) (*Triag
 	if cfg.Top <= 0 {
 		cfg.Top = 50
 	}
+	if cfg.MaxSignatures <= 0 {
+		cfg.MaxSignatures = 10000
+	}
 
 	reader, err := NewReader(src)
 	if err != nil {
@@ -163,6 +167,12 @@ func Triage(src string, cfg TriageConfig, progress func(TriageProgress)) (*Triag
 
 	// merge file results
 	merged := mergeResults(results)
+
+	// cap signatures to bound memory on large captures
+	if len(merged.signatures) > cfg.MaxSignatures {
+		_, _ = fmt.Fprintf(os.Stderr, "\nSignatures capped at %d (had %d unique)\n", cfg.MaxSignatures, len(merged.signatures))
+		merged.signatures = truncateSignatures(merged.signatures, cfg.MaxSignatures)
+	}
 
 	// build sorted timeline
 	timeline := buildTriageTimeline(merged.buckets, cfg.Window)
@@ -393,6 +403,23 @@ func mergeResults(results []*fileResult) *fileResult {
 		}
 	}
 	return merged
+}
+
+func truncateSignatures(sigs map[string]*sigAccum, max int) map[string]*sigAccum {
+	type kv struct {
+		key string
+		sa  *sigAccum
+	}
+	all := make([]kv, 0, len(sigs))
+	for k, v := range sigs {
+		all = append(all, kv{k, v})
+	}
+	sort.Slice(all, func(i, j int) bool { return all[i].sa.count > all[j].sa.count })
+	result := make(map[string]*sigAccum, max)
+	for i := 0; i < max && i < len(all); i++ {
+		result[all[i].key] = all[i].sa
+	}
+	return result
 }
 
 func buildTriageTimeline(buckets map[int64]*bucketCount, _ time.Duration) []TriageBucket {
