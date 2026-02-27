@@ -1,11 +1,14 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 	"testing"
 	"time"
 
@@ -300,7 +303,7 @@ func TestRunTriage_Success(t *testing.T) {
 		restore := redirectOutput(t)
 		defer restore()
 
-		if err := runTriage(dir, "", 1, time.Minute, 5, true, false); err != nil {
+		if err := runTriage(dir, "", 1, time.Minute, 5, 10000, true, false); err != nil {
 			t.Fatalf("runTriage json: %v", err)
 		}
 	})
@@ -310,7 +313,7 @@ func TestRunTriage_Success(t *testing.T) {
 		defer restore()
 
 		outDir := filepath.Join(t.TempDir(), "triage")
-		if err := runTriage(dir, outDir, 1, time.Minute, 5, false, false); err != nil {
+		if err := runTriage(dir, outDir, 1, time.Minute, 5, 10000, false, false); err != nil {
 			t.Fatalf("runTriage files: %v", err)
 		}
 		if _, err := os.Stat(filepath.Join(outDir, "summary.md")); err != nil {
@@ -326,7 +329,7 @@ func TestRunTriage_HTML(t *testing.T) {
 	restore := redirectOutput(t)
 	defer restore()
 
-	if err := runTriage(dir, outDir, 1, time.Minute, 5, false, true); err != nil {
+	if err := runTriage(dir, outDir, 1, time.Minute, 5, 10000, false, true); err != nil {
 		t.Fatalf("runTriage html: %v", err)
 	}
 	if _, err := os.Stat(filepath.Join(outDir, "report.html")); err != nil {
@@ -421,5 +424,181 @@ func TestCompletionCommand_RunE(t *testing.T) {
 				t.Fatalf("completion %s: %v", shell, err)
 			}
 		})
+	}
+}
+
+// captureStdout runs fn with stdout redirected to a pipe and returns what was written.
+func captureStdout(t *testing.T, fn func()) string {
+	t.Helper()
+
+	origStdout := os.Stdout
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("os.Pipe: %v", err)
+	}
+	os.Stdout = w
+
+	// also silence stderr
+	origStderr := os.Stderr
+	os.Stderr, _ = os.Open(os.DevNull)
+
+	fn()
+
+	_ = w.Close()
+	os.Stdout = origStdout
+	os.Stderr = origStderr
+
+	var buf bytes.Buffer
+	_, _ = io.Copy(&buf, r)
+	_ = r.Close()
+	return buf.String()
+}
+
+// --- JSON contract tests ---
+
+func TestInspectJSON_Contract(t *testing.T) {
+	dir := makeCaptureDir(t, sampleEntries(time.Date(2025, 1, 15, 10, 0, 0, 0, time.UTC)))
+	out := captureStdout(t, func() {
+		if err := runInspect(dir, true); err != nil {
+			t.Fatalf("runInspect: %v", err)
+		}
+	})
+
+	var obj map[string]any
+	if err := json.Unmarshal([]byte(out), &obj); err != nil {
+		t.Fatalf("invalid JSON: %v\nraw: %s", err, out)
+	}
+	for _, key := range []string{"dir", "metadata", "files", "total_lines", "total_bytes"} {
+		if _, ok := obj[key]; !ok {
+			t.Errorf("missing key %q in inspect JSON", key)
+		}
+	}
+}
+
+func TestDiffJSON_Contract(t *testing.T) {
+	base := time.Date(2025, 1, 15, 10, 0, 0, 0, time.UTC)
+	dirA := makeCaptureDir(t, sampleEntries(base))
+	dirB := makeCaptureDir(t, sampleEntries(base.Add(5*time.Second)))
+
+	out := captureStdout(t, func() {
+		if err := runDiff(dirA, dirB, true); err != nil {
+			t.Fatalf("runDiff: %v", err)
+		}
+	})
+
+	var obj map[string]any
+	if err := json.Unmarshal([]byte(out), &obj); err != nil {
+		t.Fatalf("invalid JSON: %v\nraw: %s", err, out)
+	}
+	for _, key := range []string{"a", "b"} {
+		v, ok := obj[key]
+		if !ok {
+			t.Errorf("missing key %q in diff JSON", key)
+			continue
+		}
+		capture, ok := v.(map[string]any)
+		if !ok {
+			t.Errorf("key %q is not an object", key)
+			continue
+		}
+		for _, ck := range []string{"dir", "lines"} {
+			if _, ok := capture[ck]; !ok {
+				t.Errorf("missing key %q.%q in diff JSON", key, ck)
+			}
+		}
+	}
+}
+
+func TestGrepJSON_Contract(t *testing.T) {
+	dir := makeCaptureDir(t, sampleEntries(time.Date(2025, 1, 15, 10, 0, 0, 0, time.UTC)))
+
+	out := captureStdout(t, func() {
+		if err := runGrep("error", dir, "", "", nil, false, false, "json", 0); err != nil {
+			t.Fatalf("runGrep: %v", err)
+		}
+	})
+
+	// grep outputs JSONL — one LogEntry per line
+	lines := strings.Split(strings.TrimSpace(out), "\n")
+	if len(lines) == 0 || lines[0] == "" {
+		t.Fatal("grep JSON returned no output")
+	}
+	for i, line := range lines {
+		var obj map[string]any
+		if err := json.Unmarshal([]byte(line), &obj); err != nil {
+			t.Fatalf("line %d invalid JSON: %v\nraw: %s", i, err, line)
+		}
+		for _, key := range []string{"ts", "msg"} {
+			if _, ok := obj[key]; !ok {
+				t.Errorf("line %d: missing key %q in grep JSON", i, key)
+			}
+		}
+	}
+}
+
+func TestTriageJSON_Contract(t *testing.T) {
+	dir := makeCaptureDir(t, sampleEntries(time.Date(2025, 1, 15, 10, 0, 0, 0, time.UTC)))
+
+	out := captureStdout(t, func() {
+		if err := runTriage(dir, "", 1, time.Minute, 5, 10000, true, false); err != nil {
+			t.Fatalf("runTriage: %v", err)
+		}
+	})
+
+	var obj map[string]any
+	if err := json.Unmarshal([]byte(out), &obj); err != nil {
+		t.Fatalf("invalid JSON: %v\nraw: %s", err, out)
+	}
+	for _, key := range []string{"dir", "timeline", "errors", "windows", "total_lines", "error_lines"} {
+		if _, ok := obj[key]; !ok {
+			t.Errorf("missing key %q in triage JSON", key)
+		}
+	}
+}
+
+func TestSnapshotJSON_Contract(t *testing.T) {
+	dir := makeCaptureDir(t, sampleEntries(time.Date(2025, 1, 15, 10, 0, 0, 0, time.UTC)))
+	archivePath := filepath.Join(t.TempDir(), "capture.tar.zst")
+
+	out := captureStdout(t, func() {
+		if err := runSnapshot(dir, archivePath, false, true); err != nil {
+			t.Fatalf("runSnapshot pack: %v", err)
+		}
+	})
+
+	var obj map[string]any
+	if err := json.Unmarshal([]byte(out), &obj); err != nil {
+		t.Fatalf("invalid JSON: %v\nraw: %s", err, out)
+	}
+	for _, key := range []string{"operation", "source", "output", "bytes"} {
+		if _, ok := obj[key]; !ok {
+			t.Errorf("missing key %q in snapshot JSON", key)
+		}
+	}
+	if obj["operation"] != "pack" {
+		t.Errorf("operation = %v, want %q", obj["operation"], "pack")
+	}
+}
+
+func TestMergeJSON_Contract(t *testing.T) {
+	base := time.Date(2025, 1, 15, 10, 0, 0, 0, time.UTC)
+	dirA := makeCaptureDir(t, sampleEntries(base))
+	dirB := makeCaptureDir(t, sampleEntries(base.Add(10*time.Second)))
+	outDir := filepath.Join(t.TempDir(), "merged")
+
+	out := captureStdout(t, func() {
+		if err := runMerge([]string{dirA, dirB}, outDir, true); err != nil {
+			t.Fatalf("runMerge: %v", err)
+		}
+	})
+
+	var obj map[string]any
+	if err := json.Unmarshal([]byte(out), &obj); err != nil {
+		t.Fatalf("invalid JSON: %v\nraw: %s", err, out)
+	}
+	for _, key := range []string{"sources", "output", "entries", "files"} {
+		if _, ok := obj[key]; !ok {
+			t.Errorf("missing key %q in merge JSON", key)
+		}
 	}
 }

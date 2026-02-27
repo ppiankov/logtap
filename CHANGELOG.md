@@ -4,6 +4,14 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [1.3.2] - 2026-02-27
+
+### Added
+
+- `triage --max-signatures` caps unique error signatures in memory (default 10000) to prevent OOM on large captures
+- JSON contract tests for inspect, diff, grep, triage, snapshot, and merge commands
+- SKILL.md now documents all 20+ commands with flags, JSON schemas, and filter patterns
+
 ## [1.3.1] - 2026-02-24
 
 ### Fixed

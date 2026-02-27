@@ -464,7 +464,7 @@ func TestRunTriage_MissingOut(t *testing.T) {
 	restore := redirectOutput(t)
 	defer restore()
 
-	err := runTriage(dir, "", 1, time.Minute, 5, false, false)
+	err := runTriage(dir, "", 1, time.Minute, 5, 10000, false, false)
 	if err == nil {
 		t.Fatal("expected error when --out not set and --json not used")
 	}
