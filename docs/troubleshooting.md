@@ -124,14 +124,14 @@ This guide documents common failure modes and solutions for operators using `log
     - For a robust solution, avoid manual modification of capture directories.
 - **Incomplete capture**:
     - Always ensure `logtap recv` is gracefully shut down (Ctrl+C) to allow for buffer flushing and metadata updates.
-    - For corrupted captures, try `logtap open --force` (if available and supported for recovery), but data integrity cannot be guaranteed.
+    - For corrupted captures, data integrity cannot be guaranteed. Use `logtap inspect` to assess what is recoverable.
 - **Manual tampering**:
     - Restore the capture directory from a backup if available.
     - Avoid direct manipulation of files within `logtap` capture directories.
 
 ### Port-Forward Drops / Tunnel Instability
 
-**Symptom**: When using `logtap recv --tunnel`, the connection between the in-cluster forwarder and your local receiver frequently disconnects or logs stop flowing.
+**Symptom**: When using `logtap recv --in-cluster`, the connection between the in-cluster forwarder and your local receiver frequently disconnects or logs stop flowing.
 
 **Cause**:
 - **Local network instability**: Your machine's network connection is unreliable.
