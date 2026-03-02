@@ -4,6 +4,15 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [1.4.0] - 2026-03-02
+
+### Added
+
+- `logtap sign` command for capture signing and verification with SHA256 manifest and root hash
+- Fault injection on `logtap open` with `--inject`, `--at`, `--duration`, `--inject-out` flags
+- CI diff mode with `--ci` and `--fail-on` flags on diff command (exit code 0=pass, 6=fail)
+- Log-derived sequence diagrams from triage correlations (`sequence.txt` in triage output)
+
 ## [1.3.2] - 2026-02-27
 
 ### Added
