@@ -367,7 +367,7 @@ func TestRunSnapshot_ExtractInvalidFile(t *testing.T) {
 }
 
 func TestRunOpen_InvalidDir(t *testing.T) {
-	err := runOpen("/nonexistent/dir", "1", "", "", nil, "")
+	err := runOpen("/nonexistent/dir", "1", "", "", nil, "", nil, "", "1m", "", false)
 	if err == nil {
 		t.Error("expected error for nonexistent dir")
 	}

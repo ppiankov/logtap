@@ -116,8 +116,8 @@ func TestVerify_TamperedFile(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	f.WriteString("tampered\n")
-	f.Close()
+	_, _ = f.WriteString("tampered\n")
+	_ = f.Close()
 
 	result, err := Verify(dir)
 	if err != nil {
@@ -148,7 +148,7 @@ func TestVerify_MissingFile(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	os.Remove(filepath.Join(dir, "2024-01-15T100000-000.jsonl"))
+	_ = os.Remove(filepath.Join(dir, "2024-01-15T100000-000.jsonl"))
 
 	result, err := Verify(dir)
 	if err != nil {
@@ -172,7 +172,7 @@ func TestVerify_ExtraFile(t *testing.T) {
 	}
 
 	// Add an extra file after signing
-	os.WriteFile(filepath.Join(dir, "extra.jsonl"), []byte("extra data\n"), 0o600)
+	_ = os.WriteFile(filepath.Join(dir, "extra.jsonl"), []byte("extra data\n"), 0o600)
 
 	result, err := Verify(dir)
 	if err != nil {

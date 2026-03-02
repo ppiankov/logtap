@@ -9,7 +9,7 @@ import (
 func TestRunOpen_InvalidSpeed(t *testing.T) {
 	dir := makeCaptureDir(t, sampleEntries(time.Date(2025, 1, 15, 10, 0, 0, 0, time.UTC)))
 
-	err := runOpen(dir, "not-a-speed", "", "", nil, "")
+	err := runOpen(dir, "not-a-speed", "", "", nil, "", nil, "", "1m", "", false)
 	if err == nil {
 		t.Fatal("expected error for invalid speed")
 	}
