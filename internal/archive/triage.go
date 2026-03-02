@@ -767,6 +767,16 @@ func (r *TriageResult) WriteJSON(w io.Writer) error {
 	return enc.Encode(r)
 }
 
+// WriteSequence writes an ASCII sequence diagram of cross-service correlations.
+func (r *TriageResult) WriteSequence(w io.Writer) {
+	if len(r.Correlations) == 0 {
+		_, _ = fmt.Fprintln(w, "No cross-service correlations detected.")
+		return
+	}
+	seq := BuildSequence(r.Correlations)
+	seq.WriteASCII(w)
+}
+
 // WriteWindows writes recommended time windows as JSON.
 func (r *TriageResult) WriteWindows(w io.Writer) error {
 	data, err := json.MarshalIndent(r.Windows, "", "  ")

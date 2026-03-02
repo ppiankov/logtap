@@ -96,6 +96,7 @@ func runTriage(src, outDir string, jobs int, window time.Duration, top, maxSigna
 		{"top_errors.txt", func(f *os.File) { result.WriteTopErrors(f) }},
 		{"top_talkers.txt", func(f *os.File) { result.WriteTopTalkers(f) }},
 		{"windows.json", func(f *os.File) { _ = result.WriteWindows(f) }},
+		{"sequence.txt", func(f *os.File) { result.WriteSequence(f) }},
 	}
 
 	if htmlOutput {
