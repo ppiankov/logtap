@@ -115,6 +115,7 @@ func execute() error {
 	root.AddCommand(newWatchCmd())
 	root.AddCommand(newCatalogCmd())
 	root.AddCommand(newReportCmd())
+	root.AddCommand(newSignCmd())
 	return root.Execute()
 }
 
