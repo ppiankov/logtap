@@ -631,6 +631,41 @@ func TestSignVerifyJSON_Contract(t *testing.T) {
 	}
 }
 
+func TestInjectOutJSON_Contract(t *testing.T) {
+	base := time.Date(2025, 1, 15, 10, 0, 0, 0, time.UTC)
+	dir := makeCaptureDir(t, sampleEntries(base))
+	outDir := filepath.Join(t.TempDir(), "injected")
+
+	out := captureStdout(t, func() {
+		if err := runOpen(dir, "0", "", "", nil, "",
+			[]string{"error-spike"}, base.Format(time.RFC3339), "1m", outDir, true); err != nil {
+			t.Fatalf("runOpen inject-out: %v", err)
+		}
+	})
+
+	var obj map[string]any
+	if err := json.Unmarshal([]byte(out), &obj); err != nil {
+		t.Fatalf("invalid JSON: %v\nraw: %s", err, out)
+	}
+	for _, key := range []string{"source", "output", "original_lines", "injected_lines", "total_lines", "faults_applied"} {
+		if _, ok := obj[key]; !ok {
+			t.Errorf("missing key %q in inject-out JSON", key)
+		}
+	}
+	if obj["faults_applied"].(float64) != 1 {
+		t.Errorf("faults_applied = %v, want 1", obj["faults_applied"])
+	}
+	// verify injected lines > original
+	if obj["injected_lines"].(float64) <= 0 {
+		t.Errorf("expected injected_lines > 0, got %v", obj["injected_lines"])
+	}
+
+	// verify the output directory has metadata.json
+	if _, err := os.Stat(filepath.Join(outDir, "metadata.json")); err != nil {
+		t.Fatalf("injected metadata missing: %v", err)
+	}
+}
+
 func TestMergeJSON_Contract(t *testing.T) {
 	base := time.Date(2025, 1, 15, 10, 0, 0, 0, time.UTC)
 	dirA := makeCaptureDir(t, sampleEntries(base))

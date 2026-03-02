@@ -163,7 +163,7 @@ func hashFile(path string) (string, int64, error) {
 	if err != nil {
 		return "", 0, err
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 
 	h := sha256.New()
 	n, err := io.Copy(h, f)
@@ -177,7 +177,7 @@ func hashFile(path string) (string, int64, error) {
 func computeRootHash(digests []FileDigest) string {
 	h := sha256.New()
 	for _, d := range digests {
-		fmt.Fprintf(h, "%s  %s\n", d.SHA256, d.File)
+		_, _ = fmt.Fprintf(h, "%s  %s\n", d.SHA256, d.File)
 	}
 	return hex.EncodeToString(h.Sum(nil))
 }
@@ -189,7 +189,7 @@ func writeManifest(dir string, digests []FileDigest) error {
 	if err != nil {
 		return err
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 
 	for _, d := range digests {
 		if _, err := fmt.Fprintf(f, "%s  %s\n", d.SHA256, d.File); err != nil {
@@ -205,7 +205,7 @@ func readManifest(path string) ([]FileDigest, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 
 	var digests []FileDigest
 	scanner := bufio.NewScanner(f)
@@ -239,11 +239,11 @@ func (r *SignResult) WriteJSON(w io.Writer) error {
 
 // WriteText writes a human-readable signing summary.
 func (r *SignResult) WriteText(w io.Writer) {
-	fmt.Fprintf(w, "Signed %s (%d files)\n", r.Dir, len(r.Files))
-	fmt.Fprintf(w, "Root hash: %s\n", r.RootHash)
-	fmt.Fprintf(w, "Manifest:  %s\n", manifestFile)
+	_, _ = fmt.Fprintf(w, "Signed %s (%d files)\n", r.Dir, len(r.Files))
+	_, _ = fmt.Fprintf(w, "Root hash: %s\n", r.RootHash)
+	_, _ = fmt.Fprintf(w, "Manifest:  %s\n", manifestFile)
 	for _, f := range r.Files {
-		fmt.Fprintf(w, "  %s  %s (%d bytes)\n", f.SHA256[:12], f.File, f.Bytes)
+		_, _ = fmt.Fprintf(w, "  %s  %s (%d bytes)\n", f.SHA256[:12], f.File, f.Bytes)
 	}
 }
 
@@ -264,19 +264,19 @@ func (r *VerifyResult) WriteJSON(w io.Writer) error {
 // WriteText writes a human-readable verification summary.
 func (r *VerifyResult) WriteText(w io.Writer) {
 	if r.Valid {
-		fmt.Fprintf(w, "OK: %s integrity verified\n", r.Dir)
+		_, _ = fmt.Fprintf(w, "OK: %s integrity verified\n", r.Dir)
 		return
 	}
-	fmt.Fprintf(w, "FAIL: %s integrity check failed\n", r.Dir)
+	_, _ = fmt.Fprintf(w, "FAIL: %s integrity check failed\n", r.Dir)
 	for _, m := range r.Mismatches {
-		fmt.Fprintf(w, "  MISMATCH  %s\n", m.File)
-		fmt.Fprintf(w, "    expected: %s\n", m.Expected)
-		fmt.Fprintf(w, "    actual:   %s\n", m.Actual)
+		_, _ = fmt.Fprintf(w, "  MISMATCH  %s\n", m.File)
+		_, _ = fmt.Fprintf(w, "    expected: %s\n", m.Expected)
+		_, _ = fmt.Fprintf(w, "    actual:   %s\n", m.Actual)
 	}
 	for _, name := range r.Missing {
-		fmt.Fprintf(w, "  MISSING   %s\n", name)
+		_, _ = fmt.Fprintf(w, "  MISSING   %s\n", name)
 	}
 	for _, name := range r.Extra {
-		fmt.Fprintf(w, "  EXTRA     %s\n", name)
+		_, _ = fmt.Fprintf(w, "  EXTRA     %s\n", name)
 	}
 }
