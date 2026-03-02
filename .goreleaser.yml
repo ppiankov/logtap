@@ -1,0 +1,148 @@
+version: 2
+
+project_name: logtap
+
+before:
+  hooks:
+    - go mod download
+    - go mod verify
+
+builds:
+  # logtap CLI — all platforms, versioned
+  - id: logtap
+    main: ./cmd/logtap/
+    binary: logtap
+    env:
+      - CGO_ENABLED=0
+    flags:
+      - -trimpath
+    ldflags:
+      - -s -w
+      - -X main.version={{.Version}}
+      - -X main.commit={{.ShortCommit}}
+      - -X main.date={{.Date}}
+    goos:
+      - linux
+      - darwin
+      - windows
+    goarch:
+      - amd64
+      - arm64
+
+  # logtap-forwarder — linux only, container-only, no version injection
+  - id: logtap-forwarder
+    main: ./cmd/logtap-forwarder/
+    binary: logtap-forwarder
+    env:
+      - CGO_ENABLED=0
+    flags:
+      - -trimpath
+    ldflags:
+      - -s -w
+    goos:
+      - linux
+    goarch:
+      - amd64
+      - arm64
+
+archives:
+  - id: logtap-archive
+    ids:
+      - logtap
+    formats:
+      - tar.gz
+    name_template: >-
+      {{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}
+    format_overrides:
+      - goos: windows
+        formats:
+          - zip
+
+checksum:
+  name_template: checksums.txt
+
+changelog:
+  disable: true
+
+dockers:
+  - id: logtap-amd64
+    ids:
+      - logtap
+    image_templates:
+      - "ghcr.io/ppiankov/logtap:{{ .Version }}-amd64"
+    dockerfile: Dockerfile.goreleaser.receiver
+    use: buildx
+    build_flag_templates:
+      - "--platform=linux/amd64"
+    goarch: amd64
+
+  - id: logtap-arm64
+    ids:
+      - logtap
+    image_templates:
+      - "ghcr.io/ppiankov/logtap:{{ .Version }}-arm64"
+    dockerfile: Dockerfile.goreleaser.receiver
+    use: buildx
+    build_flag_templates:
+      - "--platform=linux/arm64"
+    goarch: arm64
+
+  - id: logtap-forwarder-amd64
+    ids:
+      - logtap-forwarder
+    image_templates:
+      - "ghcr.io/ppiankov/logtap-forwarder:{{ .Version }}-amd64"
+    dockerfile: Dockerfile.goreleaser.forwarder
+    use: buildx
+    build_flag_templates:
+      - "--platform=linux/amd64"
+    goarch: amd64
+
+  - id: logtap-forwarder-arm64
+    ids:
+      - logtap-forwarder
+    image_templates:
+      - "ghcr.io/ppiankov/logtap-forwarder:{{ .Version }}-arm64"
+    dockerfile: Dockerfile.goreleaser.forwarder
+    use: buildx
+    build_flag_templates:
+      - "--platform=linux/arm64"
+    goarch: arm64
+
+docker_manifests:
+  - name_template: "ghcr.io/ppiankov/logtap:{{ .Version }}"
+    image_templates:
+      - "ghcr.io/ppiankov/logtap:{{ .Version }}-amd64"
+      - "ghcr.io/ppiankov/logtap:{{ .Version }}-arm64"
+
+  - name_template: "ghcr.io/ppiankov/logtap:latest"
+    image_templates:
+      - "ghcr.io/ppiankov/logtap:{{ .Version }}-amd64"
+      - "ghcr.io/ppiankov/logtap:{{ .Version }}-arm64"
+
+  - name_template: "ghcr.io/ppiankov/logtap-forwarder:{{ .Version }}"
+    image_templates:
+      - "ghcr.io/ppiankov/logtap-forwarder:{{ .Version }}-amd64"
+      - "ghcr.io/ppiankov/logtap-forwarder:{{ .Version }}-arm64"
+
+  - name_template: "ghcr.io/ppiankov/logtap-forwarder:latest"
+    image_templates:
+      - "ghcr.io/ppiankov/logtap-forwarder:{{ .Version }}-amd64"
+      - "ghcr.io/ppiankov/logtap-forwarder:{{ .Version }}-arm64"
+
+brews:
+  - ids:
+      - logtap-archive
+    repository:
+      owner: ppiankov
+      name: homebrew-tap
+      token: "{{ .Env.HOMEBREW_TAP_TOKEN }}"
+    directory: Formula
+    homepage: "https://github.com/ppiankov/logtap"
+    description: "Ephemeral log mirror for load testing"
+    license: MIT
+    install: |
+      bin.install "logtap"
+      generate_completions_from_executable(bin/"logtap", "completion")
+    test: |
+      assert_match version.to_s, shell_output("#{bin}/logtap version")

@@ -9,7 +9,7 @@
 # logtap
 [![CI](https://github.com/ppiankov/logtap/actions/workflows/ci.yml/badge.svg)](https://github.com/ppiankov/logtap/actions/workflows/ci.yml)
 [![Go Report Card](https://goreportcard.com/badge/github.com/ppiankov/logtap)](https://goreportcard.com/report/github.com/ppiankov/logtap)
-[![Go 1.22+](https://img.shields.io/badge/Go-1.22+-00ADD8?logo=go&logoColor=white)](https://go.dev/)
+[![Go 1.25+](https://img.shields.io/badge/Go-1.25+-00ADD8?logo=go&logoColor=white)](https://go.dev/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![ANCC](https://img.shields.io/badge/ANCC-compliant-brightgreen)](https://ancc.dev)
 
@@ -172,8 +172,8 @@ logtap upload ./capture s3://bucket/prefix
 logtap download s3://bucket/prefix --out ./capture
 
 # Webhook auth
-logtap recv --dir ./capture --webhook-url http://hook --webhook-auth bearer:my-token
-logtap recv --dir ./capture --webhook-url http://hook --webhook-auth hmac-sha256:secret
+logtap recv --dir ./capture --webhook http://hook --webhook-auth bearer:my-token
+logtap recv --dir ./capture --webhook http://hook --webhook-auth hmac-sha256:secret
 
 # JSON output (available on most commands)
 logtap slice ./capture --label app=web --out ./slice --json

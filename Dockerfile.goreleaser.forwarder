@@ -1,0 +1,3 @@
+FROM scratch
+COPY logtap-forwarder /logtap-forwarder
+ENTRYPOINT ["/logtap-forwarder"]

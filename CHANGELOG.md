@@ -10,7 +10,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 - `triage --max-signatures` caps unique error signatures in memory (default 10000) to prevent OOM on large captures
 - JSON contract tests for inspect, diff, grep, triage, snapshot, and merge commands
-- SKILL.md now documents all 20+ commands with flags, JSON schemas, and filter patterns
+- docs/SKILL.md now documents all 20+ commands with flags, JSON schemas, and filter patterns
 
 ## [1.3.1] - 2026-02-24
 
@@ -49,7 +49,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Add tunnel reconnection test and boost cmd/logtap coverage from 49.9% to 57.8%
 - Add Security and Safety section to README (trust model, PII, guardrails)
 - Complete README command table (9 missing commands) and key flags section
-- Fix SKILL.md exit codes to match implementation (0-6 structured codes)
+- Fix docs/SKILL.md exit codes to match implementation (0-6 structured codes)
 - Remove internal work-orders from published docs
 - Add `/logtap-forwarder` to .gitignore
 
@@ -234,7 +234,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Snapshot pack/extract (`snapshot`) for portable tar+zstd capture archives
 - Fluent Bit sidecar forwarder variant (`tap --forwarder fluent-bit`) with ConfigMap-based config
 - Shell completion command (`completion`) for bash, zsh, fish, powershell
-- Configuration file support (`~/.config/logtap/config.yaml`) with env var override
+- Configuration file support (`~/.logtap/config.yaml`) with env var override
 - Health endpoints (`/healthz`, `/readyz`) for receiver with writer backpressure detection
 - Health endpoint for forwarder sidecar on port 9091
 - PreStop lifecycle hooks on both logtap and Fluent Bit sidecar containers
