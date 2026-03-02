@@ -294,7 +294,7 @@ logtap is designed to be safe for production-adjacent use during load testing an
 
 ## Project Status
 
-**Status: Stable** · **v1.3.2** · Maintenance mode
+**Status: Stable** · **v1.4.0** · Maintenance mode
 
 | Milestone | Status |
 |-----------|--------|
