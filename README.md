@@ -75,7 +75,7 @@ logtap open ./capture
 
 ### Agent Integration
 
-logtap is designed to be used by autonomous agents without plugins or SDKs. Single binary, deterministic output, structured JSON, bounded jobs.
+logtap follows the [ANCC convention](https://ancc.dev) — single binary, deterministic output, structured JSON, bounded jobs. No plugins or SDKs required.
 
 ```bash
 # Agent install (no brew needed)
@@ -83,7 +83,7 @@ curl -LO https://github.com/ppiankov/logtap/releases/latest/download/logtap_linu
 tar -xzf logtap_linux_amd64.tar.gz && sudo mv logtap /usr/local/bin/
 ```
 
-Agents: read [`SKILL.md`](SKILL.md) for commands, flags, JSON output structure, and incident workflow.
+Agents: read [`docs/SKILL.md`](docs/SKILL.md) for commands, flags, JSON output schemas, exit codes, and parsing examples.
 
 Key patterns for agents:
 - `logtap inspect <dir> --json` — capture summary (files, entries, labels, timeline)
@@ -294,7 +294,7 @@ logtap is designed to be safe for production-adjacent use during load testing an
 
 ## Project Status
 
-**Status: Stable** · **v1.3.0** · Maintenance mode
+**Status: Stable** · **v1.3.2** · Maintenance mode
 
 | Milestone | Status |
 |-----------|--------|
