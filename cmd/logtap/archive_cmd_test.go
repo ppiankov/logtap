@@ -580,6 +580,57 @@ func TestSnapshotJSON_Contract(t *testing.T) {
 	}
 }
 
+func TestSignJSON_Contract(t *testing.T) {
+	dir := makeCaptureDir(t, sampleEntries(time.Date(2025, 1, 15, 10, 0, 0, 0, time.UTC)))
+
+	out := captureStdout(t, func() {
+		if err := runSign(dir, false, true); err != nil {
+			t.Fatalf("runSign: %v", err)
+		}
+	})
+
+	var obj map[string]any
+	if err := json.Unmarshal([]byte(out), &obj); err != nil {
+		t.Fatalf("invalid JSON: %v\nraw: %s", err, out)
+	}
+	for _, key := range []string{"dir", "root_hash", "files", "signed_at"} {
+		if _, ok := obj[key]; !ok {
+			t.Errorf("missing key %q in sign JSON", key)
+		}
+	}
+}
+
+func TestSignVerifyJSON_Contract(t *testing.T) {
+	dir := makeCaptureDir(t, sampleEntries(time.Date(2025, 1, 15, 10, 0, 0, 0, time.UTC)))
+
+	// Sign first
+	restore := redirectOutput(t)
+	if err := runSign(dir, false, false); err != nil {
+		t.Fatalf("runSign: %v", err)
+	}
+	restore()
+
+	// Verify
+	out := captureStdout(t, func() {
+		if err := runSign(dir, true, true); err != nil {
+			t.Fatalf("runSign verify: %v", err)
+		}
+	})
+
+	var obj map[string]any
+	if err := json.Unmarshal([]byte(out), &obj); err != nil {
+		t.Fatalf("invalid JSON: %v\nraw: %s", err, out)
+	}
+	for _, key := range []string{"dir", "root_hash", "valid"} {
+		if _, ok := obj[key]; !ok {
+			t.Errorf("missing key %q in verify JSON", key)
+		}
+	}
+	if obj["valid"] != true {
+		t.Errorf("expected valid=true, got %v", obj["valid"])
+	}
+}
+
 func TestMergeJSON_Contract(t *testing.T) {
 	base := time.Date(2025, 1, 15, 10, 0, 0, 0, time.UTC)
 	dirA := makeCaptureDir(t, sampleEntries(base))
