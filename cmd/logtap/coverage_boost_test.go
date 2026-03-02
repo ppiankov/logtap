@@ -291,7 +291,7 @@ func TestRunReport_WithOut(t *testing.T) {
 }
 
 func TestRunBaselineDiff_InvalidDirs(t *testing.T) {
-	err := runBaselineDiff("/nonexistent/a", "/nonexistent/b", false)
+	err := runBaselineDiff("/nonexistent/a", "/nonexistent/b", false, false, nil)
 	if err == nil {
 		t.Error("expected error for nonexistent dirs")
 	}
@@ -305,7 +305,7 @@ func TestRunBaselineDiff_Success(t *testing.T) {
 	restore := redirectOutput(t)
 	defer restore()
 
-	if err := runBaselineDiff(dirA, dirB, false); err != nil {
+	if err := runBaselineDiff(dirA, dirB, false, false, nil); err != nil {
 		t.Fatalf("runBaselineDiff text: %v", err)
 	}
 }
@@ -318,7 +318,7 @@ func TestRunBaselineDiff_JSON(t *testing.T) {
 	restore := redirectOutput(t)
 	defer restore()
 
-	if err := runBaselineDiff(dirA, dirB, true); err != nil {
+	if err := runBaselineDiff(dirA, dirB, true, false, nil); err != nil {
 		t.Fatalf("runBaselineDiff json: %v", err)
 	}
 }

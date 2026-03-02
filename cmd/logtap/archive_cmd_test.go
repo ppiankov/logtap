@@ -509,6 +509,28 @@ func TestDiffJSON_Contract(t *testing.T) {
 	}
 }
 
+func TestDiffCIJSON_Contract(t *testing.T) {
+	base := time.Date(2025, 1, 15, 10, 0, 0, 0, time.UTC)
+	dirA := makeCaptureDir(t, sampleEntries(base))
+	dirB := makeCaptureDir(t, sampleEntries(base))
+
+	out := captureStdout(t, func() {
+		if err := runBaselineDiff(dirA, dirB, true, true, []string{"regression"}); err != nil {
+			t.Fatalf("runBaselineDiff CI: %v", err)
+		}
+	})
+
+	var obj map[string]any
+	if err := json.Unmarshal([]byte(out), &obj); err != nil {
+		t.Fatalf("invalid JSON: %v\nraw: %s", err, out)
+	}
+	for _, key := range []string{"baseline", "current", "verdict", "confidence", "error_rate_change"} {
+		if _, ok := obj[key]; !ok {
+			t.Errorf("missing key %q in CI diff JSON", key)
+		}
+	}
+}
+
 func TestGrepJSON_Contract(t *testing.T) {
 	dir := makeCaptureDir(t, sampleEntries(time.Date(2025, 1, 15, 10, 0, 0, 0, time.UTC)))
 
