@@ -688,6 +688,31 @@ func TestInjectOutJSON_Contract(t *testing.T) {
 	}
 }
 
+func TestTriageSequence_Contract(t *testing.T) {
+	dir := makeCaptureDir(t, sampleEntries(time.Date(2025, 1, 15, 10, 0, 0, 0, time.UTC)))
+	outDir := filepath.Join(t.TempDir(), "triage-seq")
+
+	restore := redirectOutput(t)
+	defer restore()
+
+	if err := runTriage(dir, outDir, 1, time.Minute, 5, 10000, false, false); err != nil {
+		t.Fatalf("runTriage: %v", err)
+	}
+
+	seqPath := filepath.Join(outDir, "sequence.txt")
+	data, err := os.ReadFile(seqPath)
+	if err != nil {
+		t.Fatalf("sequence.txt missing: %v", err)
+	}
+	if len(data) == 0 {
+		t.Fatal("sequence.txt is empty")
+	}
+	// single-service capture should have the no-correlations message
+	if !strings.Contains(string(data), "No cross-service correlations detected") {
+		t.Errorf("expected no-correlations message, got: %s", string(data))
+	}
+}
+
 func TestMergeJSON_Contract(t *testing.T) {
 	base := time.Date(2025, 1, 15, 10, 0, 0, 0, time.UTC)
 	dirA := makeCaptureDir(t, sampleEntries(base))
