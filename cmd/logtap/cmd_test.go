@@ -346,7 +346,7 @@ func TestRunGrep_InvalidDir(t *testing.T) {
 }
 
 func TestRunMerge_InvalidDirs(t *testing.T) {
-	err := runMerge([]string{"/nonexistent/a", "/nonexistent/b"}, "/tmp/out", false)
+	err := runMerge([]string{"/nonexistent/a", "/nonexistent/b"}, "/tmp/out", false, false)
 	if err == nil {
 		t.Error("expected error for nonexistent source dirs")
 	}

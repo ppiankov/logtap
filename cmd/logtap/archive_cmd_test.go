@@ -269,7 +269,7 @@ func TestRunMerge_Success(t *testing.T) {
 	restore := redirectOutput(t)
 	defer restore()
 
-	if err := runMerge([]string{dirA, dirB}, outDir, false); err != nil {
+	if err := runMerge([]string{dirA, dirB}, outDir, false, false); err != nil {
 		t.Fatalf("runMerge: %v", err)
 	}
 	if _, err := os.Stat(filepath.Join(outDir, "metadata.json")); err != nil {
@@ -403,7 +403,7 @@ func TestRunMerge_SingleDir(t *testing.T) {
 	dir := makeCaptureDir(t, sampleEntries(time.Date(2025, 1, 15, 10, 0, 0, 0, time.UTC)))
 	outDir := filepath.Join(t.TempDir(), "merged")
 
-	err := runMerge([]string{dir}, outDir, false)
+	err := runMerge([]string{dir}, outDir, false, false)
 	if err == nil {
 		t.Fatal("expected error for single capture merge")
 	}
@@ -720,7 +720,7 @@ func TestMergeJSON_Contract(t *testing.T) {
 	outDir := filepath.Join(t.TempDir(), "merged")
 
 	out := captureStdout(t, func() {
-		if err := runMerge([]string{dirA, dirB}, outDir, true); err != nil {
+		if err := runMerge([]string{dirA, dirB}, outDir, true, false); err != nil {
 			t.Fatalf("runMerge: %v", err)
 		}
 	})
@@ -732,6 +732,43 @@ func TestMergeJSON_Contract(t *testing.T) {
 	for _, key := range []string{"sources", "output", "entries", "files"} {
 		if _, ok := obj[key]; !ok {
 			t.Errorf("missing key %q in merge JSON", key)
+		}
+	}
+}
+
+func TestMergeClockCorrect_Contract(t *testing.T) {
+	base := time.Date(2025, 1, 15, 10, 0, 0, 0, time.UTC)
+
+	// Create two captures with shared error and 3s skew
+	entriesA := []recv.LogEntry{
+		{Timestamp: base, Labels: map[string]string{"app": "api"}, Message: "info: start"},
+		{Timestamp: base.Add(time.Second), Labels: map[string]string{"app": "api"}, Message: "ERROR: connection refused"},
+		{Timestamp: base.Add(2 * time.Second), Labels: map[string]string{"app": "api"}, Message: "info: retry"},
+		{Timestamp: base.Add(3 * time.Second), Labels: map[string]string{"app": "api"}, Message: "info: ok"},
+	}
+	entriesB := []recv.LogEntry{
+		{Timestamp: base.Add(3 * time.Second), Labels: map[string]string{"app": "web"}, Message: "info: start"},
+		{Timestamp: base.Add(4 * time.Second), Labels: map[string]string{"app": "web"}, Message: "ERROR: connection refused"},
+		{Timestamp: base.Add(5 * time.Second), Labels: map[string]string{"app": "web"}, Message: "info: ok"},
+	}
+
+	dirA := makeCaptureDir(t, entriesA)
+	dirB := makeCaptureDir(t, entriesB)
+	outDir := filepath.Join(t.TempDir(), "merged-corrected")
+
+	out := captureStdout(t, func() {
+		if err := runMerge([]string{dirA, dirB}, outDir, true, true); err != nil {
+			t.Fatalf("runMerge clock-correct: %v", err)
+		}
+	})
+
+	var obj map[string]any
+	if err := json.Unmarshal([]byte(out), &obj); err != nil {
+		t.Fatalf("invalid JSON: %v\nraw: %s", err, out)
+	}
+	for _, key := range []string{"sources", "output", "entries", "files"} {
+		if _, ok := obj[key]; !ok {
+			t.Errorf("missing key %q in merge clock-correct JSON", key)
 		}
 	}
 }
