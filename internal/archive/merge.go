@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/ppiankov/logtap/internal/recv"
 	"github.com/ppiankov/logtap/internal/rotate"
@@ -100,6 +101,53 @@ func Merge(sources []string, dst string, progress func(MergeProgress)) error {
 	}
 
 	return nil
+}
+
+// MergeWithCorrection detects clock skew between sources, rewrites skewed
+// captures with adjusted timestamps, then merges everything into dst.
+func MergeWithCorrection(sources []string, dst string, progress func(MergeProgress)) ([]ClockCorrection, error) {
+	corrections, err := DetectSkew(sources)
+	if err != nil {
+		return nil, fmt.Errorf("detect clock skew: %w", err)
+	}
+
+	adjustedSources := make([]string, len(sources))
+	copy(adjustedSources, sources)
+
+	var tmpDirs []string
+	defer func() {
+		for _, d := range tmpDirs {
+			_ = os.RemoveAll(d)
+		}
+	}()
+
+	for _, cc := range corrections {
+		if cc.OffsetMs == 0 {
+			continue
+		}
+		tmpDir, err := os.MkdirTemp("", "logtap-skew-*")
+		if err != nil {
+			return nil, fmt.Errorf("create temp dir: %w", err)
+		}
+		tmpDirs = append(tmpDirs, tmpDir)
+
+		offset := time.Duration(cc.OffsetMs) * time.Millisecond
+		if _, err := RewriteWithOffset(cc.Source, tmpDir, offset); err != nil {
+			return nil, fmt.Errorf("rewrite %s: %w", cc.Source, err)
+		}
+
+		for i, s := range adjustedSources {
+			if s == cc.Source {
+				adjustedSources[i] = tmpDir
+				break
+			}
+		}
+	}
+
+	if err := Merge(adjustedSources, dst, progress); err != nil {
+		return nil, err
+	}
+	return corrections, nil
 }
 
 type mergeFile struct {

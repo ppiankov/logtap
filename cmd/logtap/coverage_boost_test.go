@@ -453,7 +453,7 @@ func TestRunMerge_JSONOutput(t *testing.T) {
 	restore := redirectOutput(t)
 	defer restore()
 
-	if err := runMerge([]string{dirA, dirB}, outDir, true); err != nil {
+	if err := runMerge([]string{dirA, dirB}, outDir, true, false); err != nil {
 		t.Fatalf("runMerge json: %v", err)
 	}
 }
