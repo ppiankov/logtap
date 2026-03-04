@@ -4,6 +4,13 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [1.5.0] - 2026-03-04
+
+### Improved
+
+- Friendly error message when no Kubernetes cluster is configured — replaces cryptic client-go error across all cluster commands (check, tap, untap, status, deploy, recv)
+- Exported `k8s.ErrNoCluster` sentinel for programmatic detection
+
 ## [1.4.0] - 2026-03-02
 
 ### Added

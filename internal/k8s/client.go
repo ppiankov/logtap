@@ -2,12 +2,17 @@ package k8s
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"strings"
 
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
 )
+
+// ErrNoCluster is returned when no kubeconfig is available.
+var ErrNoCluster = errors.New("no Kubernetes cluster configured — set KUBECONFIG or ensure ~/.kube/config exists")
 
 // Client wraps a Kubernetes clientset and namespace.
 type Client struct {
@@ -31,12 +36,18 @@ func NewClient(namespace string) (*Client, error) {
 		var err error
 		ns, _, err = config.Namespace()
 		if err != nil {
+			if isNoConfig(err) {
+				return nil, ErrNoCluster
+			}
 			return nil, fmt.Errorf("resolve namespace: %w", err)
 		}
 	}
 
 	restConfig, err := config.ClientConfig()
 	if err != nil {
+		if isNoConfig(err) {
+			return nil, ErrNoCluster
+		}
 		return nil, fmt.Errorf("build kubeconfig: %w", err)
 	}
 
@@ -57,6 +68,11 @@ func NewClientFromInterface(cs kubernetes.Interface, ns string) *Client {
 type ClusterInfo struct {
 	Version   string `json:"version"`
 	Namespace string `json:"namespace"`
+}
+
+// isNoConfig returns true when the error indicates no kubeconfig was found.
+func isNoConfig(err error) bool {
+	return err != nil && strings.Contains(err.Error(), "no configuration has been provided")
 }
 
 // GetClusterInfo retrieves the cluster version and current namespace.
