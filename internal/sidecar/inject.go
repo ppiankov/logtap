@@ -74,6 +74,7 @@ func Inject(ctx context.Context, c *k8s.Client, w *k8s.Workload, cfg SidecarConf
 		Container:   container,
 		Volumes:     volumes,
 		Annotations: annotations,
+		PinImages:   cfg.PinImages,
 	}
 
 	diff, err := k8s.ApplyPatch(ctx, c, w, ps, dryRun)

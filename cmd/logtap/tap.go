@@ -31,6 +31,7 @@ func newTapCmd() *cobra.Command {
 		sidecarMemory string
 		sidecarCPU    string
 		noRollback    bool
+		pinImages     bool
 	)
 
 	cmd := &cobra.Command{
@@ -67,6 +68,7 @@ func newTapCmd() *cobra.Command {
 				sidecarMemory: sidecarMemory,
 				sidecarCPU:    sidecarCPU,
 				noRollback:    noRollback,
+				pinImages:     pinImages,
 			})
 		},
 	}
@@ -86,6 +88,7 @@ func newTapCmd() *cobra.Command {
 	cmd.Flags().StringVar(&sidecarMemory, "sidecar-memory", sidecar.DefaultMemReq, "sidecar memory request (limit = 2x)")
 	cmd.Flags().StringVar(&sidecarCPU, "sidecar-cpu", sidecar.DefaultCPUReq, "sidecar CPU request (limit = 2x)")
 	cmd.Flags().BoolVar(&noRollback, "no-rollback", false, "disable auto-rollback on partial failure")
+	cmd.Flags().BoolVar(&pinImages, "pin-images", false, "change imagePullPolicy from Always to IfNotPresent on existing containers")
 	_ = cmd.MarkFlagRequired("target")
 
 	return cmd
@@ -107,6 +110,7 @@ type tapOpts struct {
 	sidecarMemory string
 	sidecarCPU    string
 	noRollback    bool
+	pinImages     bool
 }
 
 func runTap(opts tapOpts) error {
@@ -264,6 +268,21 @@ func runTap(opts tapOpts) error {
 		MemLimit:   memLimit,
 		CPURequest: opts.sidecarCPU,
 		CPULimit:   cpuLimit,
+		PinImages:  opts.pinImages,
+	}
+
+	// Warn about imagePullPolicy: Always
+	for _, w := range workloads {
+		alwaysPull := k8s.ContainersWithAlwaysPull(w)
+		if len(alwaysPull) > 0 {
+			fmt.Fprintf(os.Stderr, "Warning: %s/%s has imagePullPolicy: Always on %v\n", w.Kind, w.Name, alwaysPull)
+			if !opts.pinImages {
+				fmt.Fprintf(os.Stderr, "  Rollout may fail if the image registry is unreachable from the new node.\n")
+				fmt.Fprintf(os.Stderr, "  Use --pin-images to set IfNotPresent during tap.\n")
+			} else {
+				fmt.Fprintf(os.Stderr, "  --pin-images: will set IfNotPresent during tap.\n")
+			}
+		}
 	}
 
 	// Inject into each workload with progress and rollback

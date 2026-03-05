@@ -17,6 +17,7 @@ type PatchSpec struct {
 	Container   corev1.Container
 	Volumes     []corev1.Volume
 	Annotations map[string]string
+	PinImages   bool // change imagePullPolicy Always → IfNotPresent on existing containers
 }
 
 // ApplyPatch adds a sidecar container and annotations to a workload.
@@ -38,6 +39,9 @@ func applyDeploymentPatch(ctx context.Context, c *Client, d *appsv1.Deployment, 
 	before, _ := marshalYAMLSpec(d)
 
 	updated := d.DeepCopy()
+	if ps.PinImages {
+		pinImagePolicies(updated.Spec.Template.Spec.Containers)
+	}
 	updated.Spec.Template.Spec.Containers = append(updated.Spec.Template.Spec.Containers, ps.Container)
 	updated.Spec.Template.Spec.Volumes = append(updated.Spec.Template.Spec.Volumes, ps.Volumes...)
 	if updated.Spec.Template.Annotations == nil {
@@ -65,6 +69,9 @@ func applyStatefulSetPatch(ctx context.Context, c *Client, s *appsv1.StatefulSet
 	before, _ := marshalYAMLSpec(s)
 
 	updated := s.DeepCopy()
+	if ps.PinImages {
+		pinImagePolicies(updated.Spec.Template.Spec.Containers)
+	}
 	updated.Spec.Template.Spec.Containers = append(updated.Spec.Template.Spec.Containers, ps.Container)
 	updated.Spec.Template.Spec.Volumes = append(updated.Spec.Template.Spec.Volumes, ps.Volumes...)
 	if updated.Spec.Template.Annotations == nil {
@@ -92,6 +99,9 @@ func applyDaemonSetPatch(ctx context.Context, c *Client, d *appsv1.DaemonSet, ps
 	before, _ := marshalYAMLSpec(d)
 
 	updated := d.DeepCopy()
+	if ps.PinImages {
+		pinImagePolicies(updated.Spec.Template.Spec.Containers)
+	}
 	updated.Spec.Template.Spec.Containers = append(updated.Spec.Template.Spec.Containers, ps.Container)
 	updated.Spec.Template.Spec.Volumes = append(updated.Spec.Template.Spec.Volumes, ps.Volumes...)
 	if updated.Spec.Template.Annotations == nil {
@@ -242,6 +252,37 @@ func applyAnnotationChanges(annotations map[string]string, set map[string]string
 	for _, k := range del {
 		delete(annotations, k)
 	}
+}
+
+// pinImagePolicies changes imagePullPolicy from Always to IfNotPresent
+// on the given containers so that a rollout doesn't force a re-pull.
+func pinImagePolicies(containers []corev1.Container) {
+	for i := range containers {
+		if containers[i].ImagePullPolicy == corev1.PullAlways {
+			containers[i].ImagePullPolicy = corev1.PullIfNotPresent
+		}
+	}
+}
+
+// ContainersWithAlwaysPull returns the names of containers that have
+// imagePullPolicy set to Always. Works across all workload kinds.
+func ContainersWithAlwaysPull(w *Workload) []string {
+	var containers []corev1.Container
+	switch obj := w.Raw.(type) {
+	case *appsv1.Deployment:
+		containers = obj.Spec.Template.Spec.Containers
+	case *appsv1.StatefulSet:
+		containers = obj.Spec.Template.Spec.Containers
+	case *appsv1.DaemonSet:
+		containers = obj.Spec.Template.Spec.Containers
+	}
+	var names []string
+	for _, c := range containers {
+		if c.ImagePullPolicy == corev1.PullAlways {
+			names = append(names, c.Name)
+		}
+	}
+	return names
 }
 
 func marshalYAMLSpec(obj any) (string, error) {
