@@ -30,6 +30,7 @@ type SidecarConfig struct {
 	MemLimit   string
 	CPURequest string
 	CPULimit   string
+	PinImages  bool // change imagePullPolicy Always → IfNotPresent on existing containers
 }
 
 // ContainerName returns the sidecar container name for this session.
