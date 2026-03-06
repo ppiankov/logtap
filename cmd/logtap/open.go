@@ -67,6 +67,9 @@ func runOpen(dir, speedStr, fromStr, toStr string, labels []string, grepStr stri
 		return fmt.Errorf("invalid --speed: %w", err)
 	}
 
+	// service summary for picker
+	services := reader.ServiceSummary()
+
 	// parse filters
 	filter, err := buildFilter(fromStr, toStr, labels, grepStr, meta)
 	if err != nil {
@@ -98,7 +101,7 @@ func runOpen(dir, speedStr, fromStr, toStr string, labels []string, grepStr stri
 		totalLines := reader.TotalLines()
 		feeder := archive.NewFeeder(reader, ring, filter, speed)
 		feeder.SetTransform(archive.NewInjector(faults))
-		model := archive.NewReplayModel(feeder, ring, meta, dir, totalLines)
+		model := archive.NewReplayModel(feeder, ring, meta, dir, totalLines, services)
 		p := tea.NewProgram(model, tea.WithAltScreen())
 		if _, err := p.Run(); err != nil {
 			return fmt.Errorf("TUI: %w", err)
@@ -109,7 +112,7 @@ func runOpen(dir, speedStr, fromStr, toStr string, labels []string, grepStr stri
 	ring := recv.NewLogRing(0)
 	totalLines := reader.TotalLines()
 	feeder := archive.NewFeeder(reader, ring, filter, speed)
-	model := archive.NewReplayModel(feeder, ring, meta, dir, totalLines)
+	model := archive.NewReplayModel(feeder, ring, meta, dir, totalLines, services)
 	p := tea.NewProgram(model, tea.WithAltScreen())
 
 	if _, err := p.Run(); err != nil {

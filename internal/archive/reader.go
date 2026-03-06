@@ -95,6 +95,56 @@ func (r *Reader) TotalLines() int64 {
 	return total
 }
 
+// ServiceEntry describes one label value and its total line count.
+type ServiceEntry struct {
+	Label string
+	Value string
+	Lines int64
+}
+
+// ServiceSummary aggregates label values and line counts across all indexed files.
+// It picks the label key with the most distinct values (usually "app" or "container").
+// Returns nil if no label data is available.
+func (r *Reader) ServiceSummary() []ServiceEntry {
+	// aggregate: key -> value -> total lines
+	agg := make(map[string]map[string]int64)
+	for _, f := range r.files {
+		if f.Index == nil {
+			continue
+		}
+		for key, vals := range f.Index.Labels {
+			if agg[key] == nil {
+				agg[key] = make(map[string]int64)
+			}
+			for val, count := range vals {
+				agg[key][val] += count
+			}
+		}
+	}
+	if len(agg) == 0 {
+		return nil
+	}
+
+	// pick the key with most distinct values
+	bestKey := ""
+	bestCount := 0
+	for key, vals := range agg {
+		if len(vals) > bestCount {
+			bestKey = key
+			bestCount = len(vals)
+		}
+	}
+
+	var entries []ServiceEntry
+	for val, lines := range agg[bestKey] {
+		entries = append(entries, ServiceEntry{Label: bestKey, Value: val, Lines: lines})
+	}
+	sort.Slice(entries, func(i, j int) bool {
+		return entries[i].Lines > entries[j].Lines // descending by volume
+	})
+	return entries
+}
+
 // Scan iterates all files in order, applying the filter and calling fn for each matching entry.
 // If fn returns false, scanning stops early. Returns total lines scanned and any error.
 func (r *Reader) Scan(filter *Filter, fn func(recv.LogEntry) bool) (int64, error) {

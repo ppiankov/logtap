@@ -18,10 +18,11 @@ const (
 
 // Feeder pushes entries from a Reader into a LogRing at controlled speed.
 type Feeder struct {
-	reader    *Reader
-	ring      *recv.LogRing
-	filter    *Filter
-	transform func(recv.LogEntry) []recv.LogEntry
+	reader      *Reader
+	ring        *recv.LogRing
+	filter      *Filter
+	transform   func(recv.LogEntry) []recv.LogEntry
+	labelFilter func(recv.LogEntry) bool
 
 	mu          sync.Mutex
 	speed       Speed
@@ -57,6 +58,12 @@ func NewFeeder(reader *Reader, ring *recv.LogRing, filter *Filter, speed Speed) 
 // The transform may return zero, one, or many entries per input entry.
 func (f *Feeder) SetTransform(fn func(recv.LogEntry) []recv.LogEntry) {
 	f.transform = fn
+}
+
+// SetLabelFilter sets a predicate that entries must pass before being pushed.
+// Must be called before Start.
+func (f *Feeder) SetLabelFilter(fn func(recv.LogEntry) bool) {
+	f.labelFilter = fn
 }
 
 // Start launches the feeder goroutine.
@@ -228,6 +235,12 @@ func (f *Feeder) run() {
 				case <-timer.C:
 				}
 			}
+		}
+
+		// label filter — skip non-matching entries
+		if f.labelFilter != nil && !f.labelFilter(e) {
+			f.linesEmitted.Add(1)
+			return true
 		}
 
 		entries := []recv.LogEntry{e}
