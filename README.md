@@ -51,10 +51,53 @@ cd logtap
 make build
 ```
 
-### Usage
+### Kubernetes workflow
 
-```sh
-logtap tap deploy/my-app && logtap recv --port 3100
+```bash
+logtap check                                     # verify cluster readiness
+logtap recv --in-cluster --image ghcr.io/ppiankov/logtap-forwarder:latest --redact
+logtap tap --deployment api-gateway              # inject sidecar
+# ... watch TUI, investigate ...
+logtap untap --deployment api-gateway            # remove sidecar
+# Ctrl+C receiver
+logtap inspect ./capture                         # see what you got
+logtap triage ./capture --out ./triage           # scan for anomalies
+```
+
+### Key flags
+
+```bash
+# Receiver
+logtap recv --dir ./capture --max-disk 50GB --redact
+logtap recv --headless                           # no TUI, log to stderr
+logtap recv --tls-cert cert.pem --tls-key key.pem
+
+# Sidecar injection
+logtap tap --deployment api-gateway --target host:3100
+logtap tap --namespace payments --allow-prod --target host:3100
+logtap untap --deployment api-gateway
+
+# Replay with filters
+logtap open ./capture --speed 10x
+logtap open ./capture --from 10:32 --to 10:45 --label app=gateway
+
+# Export and search
+logtap export ./capture --format parquet --out capture.parquet
+logtap grep "error|timeout" ./capture --format text
+logtap diff ./baseline ./current --baseline --json
+```
+
+## Architecture
+
+```
+  logtap tap ──► workload + logtap-forwarder (sidecar reads pod logs)
+                         │ Loki push API
+                         ▼
+  logtap recv ──► HTTP server ──► writer ──► rotator ──► capture/
+                   │                                       ├── metadata.json
+                   ├── redactor (PII)                      ├── index.jsonl
+                   ├── audit logger                        ├── *.jsonl.zst
+                   └── TUI (stats + log pane)              └── audit.jsonl
 ```
 
 ## CLI commands
