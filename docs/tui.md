@@ -55,6 +55,7 @@ Label filter and search/grep can be combined — label filter applies first.
 
 | Key | Action |
 |-----|--------|
+| `?` | Toggle help overlay |
 | `q` | Quit |
 | `Ctrl+C` | Quit |
 
