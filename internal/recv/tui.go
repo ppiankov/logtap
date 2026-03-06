@@ -141,6 +141,7 @@ func (m TUIModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.lines = m.ring.Snapshot()
 			}
 			m.ringVersion = newVersion
+			m.applySearchFilter()
 			m.updateSearchMatches()
 			if m.follow {
 				m.scrollToBottom()
@@ -283,9 +284,15 @@ func (m TUIModel) updateSearch(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		re, err := regexp.Compile(input)
 		if err == nil {
 			m.searchRegex = re
+			m.applySearchFilter()
 			m.updateSearchMatches()
 			m.searchIdx = 0
-			if len(m.matches) > 0 {
+			if m.searchNegate {
+				// negated search filters lines — scroll to bottom
+				if m.follow {
+					m.scrollToBottom()
+				}
+			} else if len(m.matches) > 0 {
 				m.follow = false
 				m.scrollOff = clamp(m.matches[0]-m.logPaneHeight()/2, 0, m.maxScroll())
 			}
@@ -297,6 +304,8 @@ func (m TUIModel) updateSearch(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.searchRegex = nil
 		m.searchNegate = false
 		m.matches = nil
+		// restore unfiltered lines
+		m.ringVersion = -1
 
 	case "backspace":
 		if len(m.searchInput) > 0 {
@@ -312,22 +321,43 @@ func (m TUIModel) updateSearch(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
+// applySearchFilter removes lines matching a negated search from the display.
+// For normal (non-negated) search, lines are not filtered.
+func (m *TUIModel) applySearchFilter() {
+	if m.searchRegex == nil || !m.searchNegate {
+		return
+	}
+	filtered := make([]LogEntry, 0, len(m.lines))
+	for _, entry := range m.lines {
+		if !m.entryMatchesSearch(entry) {
+			filtered = append(filtered, entry)
+		}
+	}
+	m.lines = filtered
+}
+
+func (m *TUIModel) entryMatchesSearch(entry LogEntry) bool {
+	if m.searchRegex == nil {
+		return false
+	}
+	if m.searchRegex.MatchString(entry.Message) {
+		return true
+	}
+	for _, v := range entry.Labels {
+		if m.searchRegex.MatchString(v) {
+			return true
+		}
+	}
+	return false
+}
+
 func (m *TUIModel) updateSearchMatches() {
 	m.matches = nil
-	if m.searchRegex == nil {
+	if m.searchRegex == nil || m.searchNegate {
 		return
 	}
 	for i, entry := range m.lines {
-		hit := m.searchRegex.MatchString(entry.Message)
-		if !hit {
-			for _, v := range entry.Labels {
-				if m.searchRegex.MatchString(v) {
-					hit = true
-					break
-				}
-			}
-		}
-		if hit != m.searchNegate {
+		if m.entryMatchesSearch(entry) {
 			m.matches = append(m.matches, i)
 		}
 	}
@@ -482,7 +512,11 @@ func (m TUIModel) View() string {
 		if status.Len() > 0 {
 			status.WriteString(" ")
 		}
-		status.WriteString(searchBadge.Render(fmt.Sprintf("[%d/%d] /%s", m.searchIdx+1, len(m.matches), m.searchRegex.String())))
+		if m.searchNegate {
+			status.WriteString(filterBadge.Render(fmt.Sprintf("HIDE: /%s", m.searchRegex.String())))
+		} else {
+			status.WriteString(searchBadge.Render(fmt.Sprintf("[%d/%d] /%s", m.searchIdx+1, len(m.matches), m.searchRegex.String())))
+		}
 	}
 	if m.follow {
 		if status.Len() > 0 {
