@@ -31,6 +31,12 @@ type ReplayModel struct {
 	totalLines int64
 	startTime  time.Time
 
+	// service picker
+	picker       bool // true while picker is shown
+	services     []ServiceEntry
+	pickerSel    []bool // selection state per service
+	pickerCursor int
+
 	// log display
 	lines       []recv.LogEntry
 	scrollOff   int
@@ -67,8 +73,15 @@ type ReplayModel struct {
 }
 
 // NewReplayModel creates a replay TUI model.
-func NewReplayModel(feeder *Feeder, ring *recv.LogRing, meta *recv.Metadata, dir string, totalLines int64) ReplayModel {
+// If services has >1 entry, a picker is shown before replay starts.
+func NewReplayModel(feeder *Feeder, ring *recv.LogRing, meta *recv.Metadata, dir string, totalLines int64, services []ServiceEntry) ReplayModel {
 	lipgloss.SetColorProfile(termenv.ANSI256)
+
+	showPicker := len(services) > 1
+	sel := make([]bool, len(services))
+	for i := range sel {
+		sel[i] = true // default: all selected
+	}
 
 	return ReplayModel{
 		feeder:     feeder,
@@ -76,15 +89,18 @@ func NewReplayModel(feeder *Feeder, ring *recv.LogRing, meta *recv.Metadata, dir
 		meta:       meta,
 		dir:        dir,
 		totalLines: totalLines,
+		picker:     showPicker,
+		services:   services,
+		pickerSel:  sel,
 		follow:     true,
 		width:      80,
 		height:     24,
 	}
 }
 
-// Init starts the tick timer and the feeder.
+// Init starts the tick timer and the feeder (unless picker is shown first).
 func (m ReplayModel) Init() tea.Cmd {
-	if m.feeder != nil {
+	if !m.picker && m.feeder != nil {
 		m.feeder.Start()
 	}
 	return replayTickCmd()
@@ -121,6 +137,9 @@ func (m ReplayModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, replayTickCmd()
 
 	case tea.KeyMsg:
+		if m.picker {
+			return m.updatePicker(msg)
+		}
 		if m.showHelp {
 			if msg.String() == "?" || msg.String() == "esc" || msg.String() == "q" {
 				m.showHelp = false
@@ -245,6 +264,67 @@ func (m ReplayModel) updateNormal(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				}
 				m.feeder.SetSpeed(newSpeed)
 			}
+		}
+	}
+
+	return m, nil
+}
+
+func (m ReplayModel) updatePicker(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch msg.String() {
+	case "q", "ctrl+c":
+		m.quitting = true
+		return m, tea.Quit
+
+	case "j", "down":
+		if m.pickerCursor < len(m.services)-1 {
+			m.pickerCursor++
+		}
+
+	case "k", "up":
+		if m.pickerCursor > 0 {
+			m.pickerCursor--
+		}
+
+	case " ":
+		if m.pickerCursor < len(m.pickerSel) {
+			m.pickerSel[m.pickerCursor] = !m.pickerSel[m.pickerCursor]
+		}
+
+	case "a":
+		// toggle all
+		allSelected := true
+		for _, s := range m.pickerSel {
+			if !s {
+				allSelected = false
+				break
+			}
+		}
+		for i := range m.pickerSel {
+			m.pickerSel[i] = !allSelected
+		}
+
+	case "enter":
+		// build label filter from selection
+		selected := make(map[string]bool)
+		for i, svc := range m.services {
+			if m.pickerSel[i] {
+				selected[svc.Value] = true
+			}
+		}
+		if len(selected) > 0 && len(selected) < len(m.services) {
+			// set label predicate on feeder
+			labelKey := m.services[0].Label
+			if m.feeder != nil {
+				m.feeder.SetLabelFilter(func(e recv.LogEntry) bool {
+					v, ok := e.Labels[labelKey]
+					return ok && selected[v]
+				})
+			}
+		}
+		m.picker = false
+		if m.feeder != nil {
+			m.feeder.Start()
 		}
 	}
 
@@ -420,6 +500,58 @@ func (m ReplayModel) renderHelp() []string {
 	}
 }
 
+func (m ReplayModel) renderPicker() string {
+	var b strings.Builder
+
+	b.WriteString(rBoldStyle.Render("  Select services to load"))
+	b.WriteString("\n\n")
+	b.WriteString(rLabelStyle.Render(fmt.Sprintf("  Capture: %s", m.dir)))
+	b.WriteString("\n")
+
+	timeRange := ""
+	if !m.meta.Started.IsZero() {
+		start := m.meta.Started.Format("2006-01-15 15:04")
+		if !m.meta.Stopped.IsZero() {
+			stop := m.meta.Stopped.Format("15:04")
+			timeRange = fmt.Sprintf("%s — %s", start, stop)
+		} else {
+			timeRange = start
+		}
+	}
+	if timeRange != "" {
+		b.WriteString(rLabelStyle.Render(fmt.Sprintf("  Time:    %s", timeRange)))
+		b.WriteString("\n")
+	}
+	b.WriteString(rLabelStyle.Render(fmt.Sprintf("  Total:   %s lines", formatRate(float64(m.totalLines)))))
+	b.WriteString("\n\n")
+
+	for i, svc := range m.services {
+		cursor := "  "
+		if i == m.pickerCursor {
+			cursor = "> "
+		}
+		check := "[ ]"
+		if m.pickerSel[i] {
+			check = "[x]"
+		}
+		line := fmt.Sprintf("%s%s %s (%s lines)", cursor, check, svc.Value, formatRate(float64(svc.Lines)))
+		if i == m.pickerCursor {
+			b.WriteString(rPickerCursorStyle.Render(line))
+		} else if m.pickerSel[i] {
+			b.WriteString(rPickerSelStyle.Render(line))
+		} else {
+			b.WriteString(line)
+		}
+		b.WriteString("\n")
+	}
+
+	b.WriteString("\n")
+	b.WriteString(rLabelStyle.Render("  Space: toggle  |  a: toggle all  |  Enter: confirm  |  q: quit"))
+	b.WriteString("\n")
+
+	return b.String()
+}
+
 func (m *ReplayModel) nextMatch(dir int) {
 	if len(m.matches) == 0 {
 		return
@@ -455,6 +587,10 @@ func (m ReplayModel) maxScroll() int {
 func (m ReplayModel) View() string {
 	if m.quitting {
 		return ""
+	}
+
+	if m.picker {
+		return m.renderPicker()
 	}
 
 	var b strings.Builder
@@ -651,21 +787,23 @@ func (m ReplayModel) View() string {
 
 // styles
 var (
-	rHeaderStyle   = lipgloss.NewStyle().Bold(true)
-	rLabelStyle    = lipgloss.NewStyle().Faint(true)
-	rBoldStyle     = lipgloss.NewStyle().Bold(true)
-	rSepStyle      = lipgloss.NewStyle().Faint(true)
-	rLogLineStyle  = lipgloss.NewStyle()
-	rMatchStyle    = lipgloss.NewStyle().Background(lipgloss.Color("226")).Foreground(lipgloss.Color("0"))
-	rSearchBadge   = lipgloss.NewStyle().Background(lipgloss.Color("226")).Foreground(lipgloss.Color("0")).Padding(0, 1)
-	rFollowBadge   = lipgloss.NewStyle().Background(lipgloss.Color("34")).Foreground(lipgloss.Color("15")).Padding(0, 1)
-	rFilterBadge   = lipgloss.NewStyle().Background(lipgloss.Color("63")).Foreground(lipgloss.Color("15")).Padding(0, 1)
-	rGrepBadge     = lipgloss.NewStyle().Background(lipgloss.Color("28")).Foreground(lipgloss.Color("15")).Padding(0, 1)
-	rSpeedBadge    = lipgloss.NewStyle().Background(lipgloss.Color("33")).Foreground(lipgloss.Color("15")).Padding(0, 1)
-	rPauseBadge    = lipgloss.NewStyle().Background(lipgloss.Color("208")).Foreground(lipgloss.Color("0")).Padding(0, 1)
-	rDoneBadge     = lipgloss.NewStyle().Background(lipgloss.Color("34")).Foreground(lipgloss.Color("15")).Padding(0, 1)
-	rHelpKeyStyle  = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("75"))
-	rHelpDescStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("250"))
+	rHeaderStyle       = lipgloss.NewStyle().Bold(true)
+	rLabelStyle        = lipgloss.NewStyle().Faint(true)
+	rBoldStyle         = lipgloss.NewStyle().Bold(true)
+	rSepStyle          = lipgloss.NewStyle().Faint(true)
+	rLogLineStyle      = lipgloss.NewStyle()
+	rMatchStyle        = lipgloss.NewStyle().Background(lipgloss.Color("226")).Foreground(lipgloss.Color("0"))
+	rSearchBadge       = lipgloss.NewStyle().Background(lipgloss.Color("226")).Foreground(lipgloss.Color("0")).Padding(0, 1)
+	rFollowBadge       = lipgloss.NewStyle().Background(lipgloss.Color("34")).Foreground(lipgloss.Color("15")).Padding(0, 1)
+	rFilterBadge       = lipgloss.NewStyle().Background(lipgloss.Color("63")).Foreground(lipgloss.Color("15")).Padding(0, 1)
+	rGrepBadge         = lipgloss.NewStyle().Background(lipgloss.Color("28")).Foreground(lipgloss.Color("15")).Padding(0, 1)
+	rSpeedBadge        = lipgloss.NewStyle().Background(lipgloss.Color("33")).Foreground(lipgloss.Color("15")).Padding(0, 1)
+	rPauseBadge        = lipgloss.NewStyle().Background(lipgloss.Color("208")).Foreground(lipgloss.Color("0")).Padding(0, 1)
+	rDoneBadge         = lipgloss.NewStyle().Background(lipgloss.Color("34")).Foreground(lipgloss.Color("15")).Padding(0, 1)
+	rHelpKeyStyle      = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("75"))
+	rHelpDescStyle     = lipgloss.NewStyle().Foreground(lipgloss.Color("250"))
+	rPickerCursorStyle = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("75"))
+	rPickerSelStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("34"))
 )
 
 // helpers (redeclared from recv/tui.go — acceptable for two consumers)

@@ -18,7 +18,7 @@ func newTestReplayModel() ReplayModel {
 		Started: time.Date(2024, 1, 15, 10, 0, 0, 0, time.UTC),
 		Stopped: time.Date(2024, 1, 15, 10, 45, 0, 0, time.UTC),
 	}
-	m := NewReplayModel(nil, ring, meta, "/tmp/capture", 1200000)
+	m := NewReplayModel(nil, ring, meta, "/tmp/capture", 1200000, nil)
 	m.width = 120
 	m.height = 30
 	m.startTime = time.Now()
@@ -249,7 +249,7 @@ func TestReplaySpacePause(t *testing.T) {
 	feeder := NewFeeder(reader, ring, nil, SpeedRealtime)
 
 	meta := &recv.Metadata{Version: 1, Format: "jsonl"}
-	m := NewReplayModel(feeder, ring, meta, "/tmp/test", 100)
+	m := NewReplayModel(feeder, ring, meta, "/tmp/test", 100, nil)
 	m.width = 120
 	m.height = 30
 	m.startTime = time.Now()
@@ -272,7 +272,7 @@ func TestReplaySpeedBrackets(t *testing.T) {
 	feeder := NewFeeder(reader, ring, nil, SpeedRealtime)
 
 	meta := &recv.Metadata{Version: 1, Format: "jsonl"}
-	m := NewReplayModel(feeder, ring, meta, "/tmp/test", 100)
+	m := NewReplayModel(feeder, ring, meta, "/tmp/test", 100, nil)
 	m.width = 120
 	m.height = 30
 	m.startTime = time.Now()
@@ -409,6 +409,89 @@ func TestFormatDuration(t *testing.T) {
 	}
 }
 
+func TestReplayPickerShown(t *testing.T) {
+	ring := recv.NewLogRing(100)
+	meta := &recv.Metadata{Version: 1, Format: "jsonl"}
+	services := []ServiceEntry{
+		{Label: "app", Value: "api", Lines: 5000},
+		{Label: "app", Value: "worker", Lines: 3000},
+		{Label: "app", Value: "redis", Lines: 1000},
+	}
+	m := NewReplayModel(nil, ring, meta, "/tmp/capture", 9000, services)
+	m.width = 120
+	m.height = 30
+
+	if !m.picker {
+		t.Error("expected picker shown with >1 service")
+	}
+
+	view := m.View()
+	if !strings.Contains(view, "api") || !strings.Contains(view, "worker") {
+		t.Error("expected service names in picker view")
+	}
+	if !strings.Contains(view, "Select services") {
+		t.Error("expected picker title")
+	}
+}
+
+func TestReplayPickerSingleService(t *testing.T) {
+	ring := recv.NewLogRing(100)
+	meta := &recv.Metadata{Version: 1, Format: "jsonl"}
+	services := []ServiceEntry{
+		{Label: "app", Value: "api", Lines: 5000},
+	}
+	m := NewReplayModel(nil, ring, meta, "/tmp/capture", 5000, services)
+	if m.picker {
+		t.Error("expected no picker with single service")
+	}
+}
+
+func TestReplayPickerToggleAndConfirm(t *testing.T) {
+	ring := recv.NewLogRing(100)
+	meta := &recv.Metadata{Version: 1, Format: "jsonl"}
+	services := []ServiceEntry{
+		{Label: "app", Value: "api", Lines: 5000},
+		{Label: "app", Value: "worker", Lines: 3000},
+	}
+	m := NewReplayModel(nil, ring, meta, "/tmp/capture", 8000, services)
+	m.width = 120
+	m.height = 30
+
+	// deselect first (api)
+	m = sendReplayKey(m, " ")
+	if m.pickerSel[0] {
+		t.Error("expected api deselected after space")
+	}
+
+	// move down, deselect worker
+	m = sendReplayKey(m, "j")
+	m = sendReplayKey(m, " ")
+	if m.pickerSel[1] {
+		t.Error("expected worker deselected after space")
+	}
+
+	// select all with 'a'
+	m = sendReplayKey(m, "a")
+	if !m.pickerSel[0] || !m.pickerSel[1] {
+		t.Error("expected all selected after 'a'")
+	}
+
+	// deselect api, confirm with enter — only worker selected
+	m = sendReplayKey(m, "k") // back to api
+	m = sendReplayKey(m, " ") // deselect api
+	m = sendReplaySpecialKey(m, tea.KeyEnter)
+	if m.picker {
+		t.Error("expected picker dismissed after enter")
+	}
+}
+
+func TestReplayPickerNil(t *testing.T) {
+	m := newTestReplayModel()
+	if m.picker {
+		t.Error("expected no picker with nil services")
+	}
+}
+
 func TestReplayViewDoneBadge(t *testing.T) {
 	ring := recv.NewLogRing(100)
 	meta := &recv.Metadata{Version: 1, Format: "jsonl"}
@@ -428,7 +511,7 @@ func TestReplayViewDoneBadge(t *testing.T) {
 		time.Sleep(10 * time.Millisecond)
 	}
 
-	m := NewReplayModel(feeder, ring, meta, dir, 0)
+	m := NewReplayModel(feeder, ring, meta, dir, 0, nil)
 	m.width = 120
 	m.height = 30
 	m.startTime = time.Now()
