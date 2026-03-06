@@ -46,7 +46,8 @@ type TUIModel struct {
 	searching    bool
 	searchInput  string
 	searchRegex  *regexp.Regexp
-	searchNegate bool
+	searchNegate bool  // !prefix — hide matching lines
+	searchGrep   bool  // =prefix — show only matching lines
 	searchIdx    int   // current match index in filtered results
 	matches      []int // indices into lines
 
@@ -277,8 +278,13 @@ func (m TUIModel) updateSearch(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "enter":
 		m.searching = false
 		input := m.searchInput
-		m.searchNegate = strings.HasPrefix(input, "!")
-		if m.searchNegate {
+		m.searchNegate = false
+		m.searchGrep = false
+		if strings.HasPrefix(input, "!") {
+			m.searchNegate = true
+			input = input[1:]
+		} else if strings.HasPrefix(input, "=") {
+			m.searchGrep = true
 			input = input[1:]
 		}
 		re, err := regexp.Compile(input)
@@ -287,8 +293,9 @@ func (m TUIModel) updateSearch(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.applySearchFilter()
 			m.updateSearchMatches()
 			m.searchIdx = 0
-			if m.searchNegate {
-				// negated search filters lines — scroll to bottom
+			if m.searchNegate || m.searchGrep {
+				// filtered view — reset scroll
+				m.scrollOff = 0
 				if m.follow {
 					m.scrollToBottom()
 				}
@@ -303,6 +310,7 @@ func (m TUIModel) updateSearch(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.searchInput = ""
 		m.searchRegex = nil
 		m.searchNegate = false
+		m.searchGrep = false
 		m.matches = nil
 		// restore unfiltered lines
 		m.ringVersion = -1
@@ -321,19 +329,29 @@ func (m TUIModel) updateSearch(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-// applySearchFilter removes lines matching a negated search from the display.
-// For normal (non-negated) search, lines are not filtered.
+// applySearchFilter removes or keeps lines based on search mode.
+// Negated (!): removes matching lines. Grep (=): keeps only matching lines.
 func (m *TUIModel) applySearchFilter() {
-	if m.searchRegex == nil || !m.searchNegate {
+	if m.searchRegex == nil {
 		return
 	}
-	filtered := make([]LogEntry, 0, len(m.lines))
-	for _, entry := range m.lines {
-		if !m.entryMatchesSearch(entry) {
-			filtered = append(filtered, entry)
+	if m.searchGrep {
+		filtered := make([]LogEntry, 0)
+		for _, entry := range m.lines {
+			if m.entryMatchesSearch(entry) {
+				filtered = append(filtered, entry)
+			}
 		}
+		m.lines = filtered
+	} else if m.searchNegate {
+		filtered := make([]LogEntry, 0, len(m.lines))
+		for _, entry := range m.lines {
+			if !m.entryMatchesSearch(entry) {
+				filtered = append(filtered, entry)
+			}
+		}
+		m.lines = filtered
 	}
-	m.lines = filtered
 }
 
 func (m *TUIModel) entryMatchesSearch(entry LogEntry) bool {
@@ -353,7 +371,7 @@ func (m *TUIModel) entryMatchesSearch(entry LogEntry) bool {
 
 func (m *TUIModel) updateSearchMatches() {
 	m.matches = nil
-	if m.searchRegex == nil || m.searchNegate {
+	if m.searchRegex == nil || m.searchNegate || m.searchGrep {
 		return
 	}
 	for i, entry := range m.lines {
@@ -512,8 +530,10 @@ func (m TUIModel) View() string {
 		if status.Len() > 0 {
 			status.WriteString(" ")
 		}
-		if m.searchNegate {
-			status.WriteString(filterBadge.Render(fmt.Sprintf("HIDE: /%s", m.searchRegex.String())))
+		if m.searchGrep {
+			status.WriteString(grepBadge.Render(fmt.Sprintf("GREP: /%s [%d lines]", m.searchRegex.String(), len(m.lines))))
+		} else if m.searchNegate {
+			status.WriteString(filterBadge.Render(fmt.Sprintf("HIDE: /%s [%d lines]", m.searchRegex.String(), len(m.lines))))
 		} else {
 			status.WriteString(searchBadge.Render(fmt.Sprintf("[%d/%d] /%s", m.searchIdx+1, len(m.matches), m.searchRegex.String())))
 		}
@@ -604,6 +624,7 @@ var (
 	searchBadge  = lipgloss.NewStyle().Background(lipgloss.Color("226")).Foreground(lipgloss.Color("0")).Padding(0, 1)
 	followBadge  = lipgloss.NewStyle().Background(lipgloss.Color("34")).Foreground(lipgloss.Color("15")).Padding(0, 1)
 	filterBadge  = lipgloss.NewStyle().Background(lipgloss.Color("63")).Foreground(lipgloss.Color("15")).Padding(0, 1)
+	grepBadge    = lipgloss.NewStyle().Background(lipgloss.Color("28")).Foreground(lipgloss.Color("15")).Padding(0, 1)
 )
 
 // helpers
