@@ -58,6 +58,10 @@ type ReplayModel struct {
 	filterVal    string
 	filterActive bool
 
+	// time jump
+	timeJumping   bool
+	timeJumpInput string
+
 	// gg detection
 	lastGPress time.Time
 
@@ -139,6 +143,9 @@ func (m ReplayModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.KeyMsg:
 		if m.picker {
 			return m.updatePicker(msg)
+		}
+		if m.timeJumping {
+			return m.updateTimeJump(msg)
 		}
 		if m.showHelp {
 			if msg.String() == "?" || msg.String() == "esc" || msg.String() == "q" {
@@ -228,6 +235,10 @@ func (m ReplayModel) updateNormal(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "l":
 		m.filtering = true
 		m.filterInput = ""
+
+	case "t":
+		m.timeJumping = true
+		m.timeJumpInput = ""
 
 	case "?":
 		m.showHelp = !m.showHelp
@@ -325,6 +336,34 @@ func (m ReplayModel) updatePicker(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.picker = false
 		if m.feeder != nil {
 			m.feeder.Start()
+		}
+	}
+
+	return m, nil
+}
+
+func (m ReplayModel) updateTimeJump(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch msg.String() {
+	case "enter":
+		m.timeJumping = false
+		idx := recv.FindTimeIndex(m.lines, m.timeJumpInput)
+		if idx >= 0 {
+			m.follow = false
+			m.scrollOff = clamp(idx-m.logPaneHeight()/2, 0, m.maxScroll())
+		}
+
+	case "esc":
+		m.timeJumping = false
+		m.timeJumpInput = ""
+
+	case "backspace":
+		if len(m.timeJumpInput) > 0 {
+			m.timeJumpInput = m.timeJumpInput[:len(m.timeJumpInput)-1]
+		}
+
+	default:
+		if len(msg.String()) == 1 {
+			m.timeJumpInput += msg.String()
 		}
 	}
 
@@ -489,6 +528,7 @@ func (m ReplayModel) renderHelp() []string {
 		"",
 		h.Render("  Filter"),
 		d.Render("    l          ") + "label filter (e.g. container=api)",
+		d.Render("    t          ") + "jump to timestamp (e.g. 14:32)",
 		"",
 		h.Render("  Playback"),
 		d.Render("    Space      ") + "pause/resume",
@@ -719,7 +759,13 @@ func (m ReplayModel) View() string {
 
 	// status bar
 	var status strings.Builder
+	if m.timeJumping {
+		status.WriteString(rSearchBadge.Render(fmt.Sprintf("t:%s", m.timeJumpInput)))
+	}
 	if m.filtering {
+		if status.Len() > 0 {
+			status.WriteString(" ")
+		}
 		status.WriteString(rFilterBadge.Render(fmt.Sprintf("filter: %s", m.filterInput)))
 	} else if m.filterActive {
 		status.WriteString(rFilterBadge.Render(fmt.Sprintf("FILTER: %s=%s", m.filterKey, m.filterVal)))
