@@ -65,6 +65,9 @@ type TUIModel struct {
 	width  int
 	height int
 
+	// help overlay
+	showHelp bool
+
 	// quit signal
 	quitting bool
 }
@@ -152,6 +155,12 @@ func (m TUIModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, tickCmd()
 
 	case tea.KeyMsg:
+		if m.showHelp {
+			if msg.String() == "?" || msg.String() == "esc" || msg.String() == "q" {
+				m.showHelp = false
+			}
+			return m, nil
+		}
 		if m.filtering {
 			return m.updateFilter(msg)
 		}
@@ -221,6 +230,9 @@ func (m TUIModel) updateNormal(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "l":
 		m.filtering = true
 		m.filterInput = ""
+
+	case "?":
+		m.showHelp = !m.showHelp
 	}
 
 	return m, nil
@@ -469,49 +481,60 @@ func (m TUIModel) View() string {
 	b.WriteString(sepStyle.Render(strings.Repeat("─", m.width)))
 	b.WriteString("\n")
 
-	// log pane
+	// log pane (or help overlay)
 	paneH := m.logPaneHeight()
-	end := m.scrollOff + paneH
-	if end > len(m.lines) {
-		end = len(m.lines)
-	}
-	start := m.scrollOff
-	if start < 0 {
-		start = 0
-	}
 
-	matchSet := make(map[int]bool, len(m.matches))
-	for _, idx := range m.matches {
-		matchSet[idx] = true
-	}
-
-	for i := start; i < end; i++ {
-		entry := m.lines[i]
-		ts := entry.Timestamp.Format("2006-01-02T15:04:05Z")
-		app := entry.Labels["app"]
-		if app == "" {
-			for _, v := range entry.Labels {
-				app = v
-				break
+	if m.showHelp {
+		helpLines := m.renderHelp()
+		for i := 0; i < paneH; i++ {
+			if i < len(helpLines) {
+				b.WriteString(helpLines[i])
 			}
+			b.WriteString("\n")
+		}
+	} else {
+		end := m.scrollOff + paneH
+		if end > len(m.lines) {
+			end = len(m.lines)
+		}
+		start := m.scrollOff
+		if start < 0 {
+			start = 0
 		}
 
-		line := fmt.Sprintf("%s [%s] %s", ts, app, entry.Message)
-		if len(line) > m.width {
-			line = line[:m.width]
+		matchSet := make(map[int]bool, len(m.matches))
+		for _, idx := range m.matches {
+			matchSet[idx] = true
 		}
 
-		if matchSet[i] {
-			b.WriteString(matchStyle.Render(line))
-		} else {
-			b.WriteString(logLineStyle.Render(line))
-		}
-		b.WriteString("\n")
-	}
+		for i := start; i < end; i++ {
+			entry := m.lines[i]
+			ts := entry.Timestamp.Format("2006-01-02T15:04:05Z")
+			app := entry.Labels["app"]
+			if app == "" {
+				for _, v := range entry.Labels {
+					app = v
+					break
+				}
+			}
 
-	// pad remaining lines
-	for i := end - start; i < paneH; i++ {
-		b.WriteString("\n")
+			line := fmt.Sprintf("%s [%s] %s", ts, app, entry.Message)
+			if len(line) > m.width {
+				line = line[:m.width]
+			}
+
+			if matchSet[i] {
+				b.WriteString(matchStyle.Render(line))
+			} else {
+				b.WriteString(logLineStyle.Render(line))
+			}
+			b.WriteString("\n")
+		}
+
+		// pad remaining lines
+		for i := end - start; i < paneH; i++ {
+			b.WriteString("\n")
+		}
 	}
 
 	// status bar
@@ -611,20 +634,50 @@ func (m TUIModel) renderTalkers() string {
 	return b.String()
 }
 
+func (m TUIModel) renderHelp() []string {
+	h := helpKeyStyle
+	d := helpDescStyle
+	return []string{
+		boldStyle.Render("  Keybindings") + labelStyle.Render("  (press ? or Esc to close)"),
+		"",
+		h.Render("  Navigation"),
+		d.Render("    j/k        ") + "scroll up/down",
+		d.Render("    d/u        ") + "half-page down/up",
+		d.Render("    G          ") + "jump to bottom (follow)",
+		d.Render("    gg         ") + "jump to top",
+		d.Render("    f          ") + "toggle follow mode",
+		"",
+		h.Render("  Search"),
+		d.Render("    /pattern   ") + "highlight matches, n/N to navigate",
+		d.Render("    /!pattern  ") + "hide matching lines",
+		d.Render("    /=pattern  ") + "show only matching lines (grep)",
+		d.Render("    Esc        ") + "clear search",
+		"",
+		h.Render("  Filter"),
+		d.Render("    l          ") + "label filter (e.g. container=api)",
+		"",
+		h.Render("  General"),
+		d.Render("    ?          ") + "toggle this help",
+		d.Render("    q          ") + "quit",
+	}
+}
+
 // styles
 var (
-	headerStyle  = lipgloss.NewStyle().Bold(true)
-	labelStyle   = lipgloss.NewStyle().Faint(true)
-	boldStyle    = lipgloss.NewStyle().Bold(true)
-	sepStyle     = lipgloss.NewStyle().Faint(true)
-	logLineStyle = lipgloss.NewStyle()
-	matchStyle   = lipgloss.NewStyle().Background(lipgloss.Color("226")).Foreground(lipgloss.Color("0"))
-	droppedStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("196")).Bold(true)
-	warnStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("226")).Bold(true)
-	searchBadge  = lipgloss.NewStyle().Background(lipgloss.Color("226")).Foreground(lipgloss.Color("0")).Padding(0, 1)
-	followBadge  = lipgloss.NewStyle().Background(lipgloss.Color("34")).Foreground(lipgloss.Color("15")).Padding(0, 1)
-	filterBadge  = lipgloss.NewStyle().Background(lipgloss.Color("63")).Foreground(lipgloss.Color("15")).Padding(0, 1)
-	grepBadge    = lipgloss.NewStyle().Background(lipgloss.Color("28")).Foreground(lipgloss.Color("15")).Padding(0, 1)
+	headerStyle   = lipgloss.NewStyle().Bold(true)
+	labelStyle    = lipgloss.NewStyle().Faint(true)
+	boldStyle     = lipgloss.NewStyle().Bold(true)
+	sepStyle      = lipgloss.NewStyle().Faint(true)
+	logLineStyle  = lipgloss.NewStyle()
+	matchStyle    = lipgloss.NewStyle().Background(lipgloss.Color("226")).Foreground(lipgloss.Color("0"))
+	droppedStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("196")).Bold(true)
+	warnStyle     = lipgloss.NewStyle().Foreground(lipgloss.Color("226")).Bold(true)
+	searchBadge   = lipgloss.NewStyle().Background(lipgloss.Color("226")).Foreground(lipgloss.Color("0")).Padding(0, 1)
+	followBadge   = lipgloss.NewStyle().Background(lipgloss.Color("34")).Foreground(lipgloss.Color("15")).Padding(0, 1)
+	filterBadge   = lipgloss.NewStyle().Background(lipgloss.Color("63")).Foreground(lipgloss.Color("15")).Padding(0, 1)
+	grepBadge     = lipgloss.NewStyle().Background(lipgloss.Color("28")).Foreground(lipgloss.Color("15")).Padding(0, 1)
+	helpKeyStyle  = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("75"))
+	helpDescStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("250"))
 )
 
 // helpers
