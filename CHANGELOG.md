@@ -4,6 +4,13 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [1.7.0] - 2026-03-06
+
+### Fixed
+
+- TUI negated search (`/!pattern`) now hides matching lines instead of highlighting non-matches — status bar shows `HIDE: /pattern`
+- `logtap inspect` now shows label breakdown for captures with no rotated files (orphan file scan parses labels and time range)
+
 ## [1.6.0] - 2026-03-06
 
 ### Added

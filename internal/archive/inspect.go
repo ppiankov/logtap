@@ -103,13 +103,35 @@ func Inspect(dir string) (*Summary, error) {
 		}
 	}
 
-	// count lines from orphan files not yet in index
+	// count lines from orphan files not yet in index (including labels and time range)
 	orphans, oErr := discoverOrphans(dir, indexedFiles)
 	if oErr == nil {
 		for _, orph := range orphans {
-			lines, bytes := countFileLines(orph.Path)
-			s.TotalLines += lines
-			s.TotalBytes += bytes
+			os := scanOrphanFile(orph.Path)
+			s.TotalLines += os.Lines
+			s.TotalBytes += os.Bytes
+
+			if !os.MinTS.IsZero() && (minTime.IsZero() || os.MinTS.Before(minTime)) {
+				minTime = os.MinTS
+			}
+			if os.MaxTS.After(maxTime) {
+				maxTime = os.MaxTS
+			}
+
+			for key, vals := range os.Labels {
+				if labelAcc[key] == nil {
+					labelAcc[key] = make(map[string]*LabelVal)
+				}
+				for val, count := range vals {
+					if labelAcc[key][val] == nil {
+						labelAcc[key][val] = &LabelVal{Value: val}
+					}
+					labelAcc[key][val].Lines += count
+					if os.Lines > 0 {
+						labelAcc[key][val].Bytes += os.Bytes * count / os.Lines
+					}
+				}
+			}
 		}
 	}
 
@@ -270,9 +292,30 @@ func diskStats(dir string) (totalSize int64, fileCount int) {
 // countFileLines counts non-empty lines and total bytes in a data file.
 // Handles both plain .jsonl and compressed .jsonl.zst files.
 func countFileLines(path string) (lines, bytes int64) {
+	lines, bytes, _ = scanFileStats(path)
+	return lines, bytes
+}
+
+// orphanStats holds aggregated data from scanning an orphan file.
+type orphanStats struct {
+	Lines  int64
+	Bytes  int64
+	Labels map[string]map[string]int64
+	MinTS  time.Time
+	MaxTS  time.Time
+}
+
+// scanFileStats counts lines, bytes, labels, and time range from a data file.
+func scanFileStats(path string) (lines, bytes int64, labels map[string]map[string]int64) {
+	stats := scanOrphanFile(path)
+	return stats.Lines, stats.Bytes, stats.Labels
+}
+
+// scanOrphanFile performs a full scan of an orphan data file.
+func scanOrphanFile(path string) orphanStats {
 	f, err := os.Open(path)
 	if err != nil {
-		return 0, 0
+		return orphanStats{}
 	}
 	defer func() { _ = f.Close() }()
 
@@ -280,23 +323,46 @@ func countFileLines(path string) (lines, bytes int64) {
 	if strings.HasSuffix(path, ".zst") {
 		dec, err := zstd.NewReader(f)
 		if err != nil {
-			return 0, 0
+			return orphanStats{}
 		}
 		defer dec.Close()
 		r = dec
 	}
 
+	var s orphanStats
+	s.Labels = make(map[string]map[string]int64)
 	scanner := bufio.NewScanner(r)
 	scanner.Buffer(make([]byte, 256*1024), 1024*1024)
 	for scanner.Scan() {
-		line := scanner.Bytes()
-		if len(line) == 0 {
+		raw := scanner.Bytes()
+		if len(raw) == 0 {
 			continue
 		}
-		lines++
-		bytes += int64(len(line))
+		s.Lines++
+		s.Bytes += int64(len(raw))
+
+		var entry struct {
+			TS     time.Time         `json:"ts"`
+			Labels map[string]string `json:"labels"`
+		}
+		if json.Unmarshal(raw, &entry) == nil {
+			for k, v := range entry.Labels {
+				if s.Labels[k] == nil {
+					s.Labels[k] = make(map[string]int64)
+				}
+				s.Labels[k][v]++
+			}
+			if !entry.TS.IsZero() {
+				if s.MinTS.IsZero() || entry.TS.Before(s.MinTS) {
+					s.MinTS = entry.TS
+				}
+				if entry.TS.After(s.MaxTS) {
+					s.MaxTS = entry.TS
+				}
+			}
+		}
 	}
-	return lines, bytes
+	return s
 }
 
 // textWriter wraps an io.Writer and captures the first error.
