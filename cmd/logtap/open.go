@@ -67,13 +67,16 @@ func runOpen(dir, speedStr, fromStr, toStr string, labels []string, grepStr stri
 		return fmt.Errorf("invalid --speed: %w", err)
 	}
 
-	// service summary for picker
-	services := reader.ServiceSummary()
-
 	// parse filters
 	filter, err := buildFilter(fromStr, toStr, labels, grepStr, meta)
 	if err != nil {
 		return err
+	}
+
+	// service summary for picker — skip if --label is set (already filtered)
+	var services []archive.ServiceEntry
+	if len(labels) == 0 {
+		services = reader.ServiceSummary()
 	}
 
 	// parse fault injection
