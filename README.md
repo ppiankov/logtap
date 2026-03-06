@@ -18,15 +18,16 @@ Ephemeral log mirror for Kubernetes load testing. Part of [SpectreHub](https://g
 
 Annotation-based opt-in. Accepts Loki push API, writes compressed JSONL to disk, shows a minimal TUI. Capture directories are portable — share them with `tar`, `rsync`, or `scp` and replay on any machine.
 
-## What it is
+## What logtap is
 
-- Accepts Loki push API payloads and writes compressed JSONL to disk
-- Injects log-forwarding sidecars into Kubernetes workloads via annotation-based opt-in
-- Provides a TUI with real-time stats, top talkers, and vim-style log navigation
-- Replays capture directories at original speed or fast-forward
-- Analyzes captures: summarize, filter, export to parquet/CSV, and triage anomalies
+- **Receiver** (`recv`) — accepts Loki push API payloads, writes rotated zstd-compressed JSONL with bounded disk usage
+- **Live TUI** — real-time stats, top talkers, scrollable log pane with vim-style navigation and regex search
+- **Sidecar injection** (`tap`/`untap`) — injects a log-forwarding sidecar into Kubernetes workloads, no logging agent config changes
+- **Replay** (`open`) — replays capture directories at original speed or fast-forward with the same TUI
+- **Analysis** (`inspect`, `slice`, `export`, `triage`) — summarize, filter, convert to parquet/CSV, or scan for anomalies
+- **Cluster safety** (`check`, `status`) — validates readiness, detects orphaned sidecars, shows what's tapped
 
-## What it is NOT
+## What logtap is NOT
 
 - Not a permanent log storage solution — ephemeral by design
 - Not a replacement for Loki/Elasticsearch — captures are load-test scoped
