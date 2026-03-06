@@ -188,8 +188,8 @@ func TestTUISearchEscape(t *testing.T) {
 	if m.searching {
 		t.Error("expected not searching after Esc")
 	}
-	if m.searchRegex != nil {
-		t.Error("expected nil searchRegex after Esc")
+	if m.highlight != nil {
+		t.Error("expected nil highlight after Esc")
 	}
 }
 
@@ -215,8 +215,8 @@ func TestTUISearchEnterAndNav(t *testing.T) {
 	}
 	m = sendSpecialKey(m, tea.KeyEnter)
 
-	if m.searchRegex == nil {
-		t.Fatal("expected searchRegex after enter")
+	if m.highlight == nil {
+		t.Fatal("expected highlight after enter")
 	}
 	if len(m.matches) != 3 {
 		t.Fatalf("matches = %d, want 3", len(m.matches))
@@ -495,6 +495,137 @@ func TestTUILabelFilterBackspace(t *testing.T) {
 	m = sendSpecialKey(m, tea.KeyBackspace)
 	if m.filterInput != "a" {
 		t.Errorf("filterInput = %q after backspace, want %q", m.filterInput, "a")
+	}
+}
+
+func TestTUIFilterStackHide(t *testing.T) {
+	m := newTestModel()
+	m.ring.Push(LogEntry{Timestamp: time.Now(), Labels: map[string]string{"app": "api"}, Message: "error in api"})
+	m.ring.Push(LogEntry{Timestamp: time.Now(), Labels: map[string]string{"app": "api"}, Message: "linkerd proxy"})
+	m.ring.Push(LogEntry{Timestamp: time.Now(), Labels: map[string]string{"app": "api"}, Message: "healthz ok"})
+	m.ring.Push(LogEntry{Timestamp: time.Now(), Labels: map[string]string{"app": "api"}, Message: "real error"})
+	m = applyTick(m)
+	if len(m.lines) != 4 {
+		t.Fatalf("lines = %d, want 4", len(m.lines))
+	}
+
+	// hide linkerd
+	m = sendKey(m, "/")
+	for _, c := range "!linkerd" {
+		m = sendKey(m, string(c))
+	}
+	m = sendSpecialKey(m, tea.KeyEnter)
+	m = applyTick(m)
+	if len(m.lines) != 3 {
+		t.Errorf("after hide linkerd: lines = %d, want 3", len(m.lines))
+	}
+	if len(m.filterStack) != 1 {
+		t.Fatalf("filterStack = %d, want 1", len(m.filterStack))
+	}
+
+	// stack: also hide healthz
+	m = sendKey(m, "/")
+	for _, c := range "!healthz" {
+		m = sendKey(m, string(c))
+	}
+	m = sendSpecialKey(m, tea.KeyEnter)
+	m = applyTick(m)
+	if len(m.lines) != 2 {
+		t.Errorf("after hide healthz: lines = %d, want 2", len(m.lines))
+	}
+	if len(m.filterStack) != 2 {
+		t.Fatalf("filterStack = %d, want 2", len(m.filterStack))
+	}
+
+	// Esc pops last filter (healthz) — should go back to 3 lines
+	m = sendSpecialKey(m, tea.KeyEscape)
+	m = applyTick(m)
+	if len(m.filterStack) != 1 {
+		t.Fatalf("after pop: filterStack = %d, want 1", len(m.filterStack))
+	}
+	if len(m.lines) != 3 {
+		t.Errorf("after pop: lines = %d, want 3", len(m.lines))
+	}
+
+	// Esc pops last filter (linkerd) — should go back to 4 lines
+	m = sendSpecialKey(m, tea.KeyEscape)
+	m = applyTick(m)
+	if len(m.filterStack) != 0 {
+		t.Fatalf("after pop all: filterStack = %d, want 0", len(m.filterStack))
+	}
+	if len(m.lines) != 4 {
+		t.Errorf("after pop all: lines = %d, want 4", len(m.lines))
+	}
+}
+
+func TestTUIFilterStackGrep(t *testing.T) {
+	m := newTestModel()
+	m.ring.Push(LogEntry{Timestamp: time.Now(), Labels: map[string]string{"app": "api"}, Message: "error in api"})
+	m.ring.Push(LogEntry{Timestamp: time.Now(), Labels: map[string]string{"app": "api"}, Message: "linkerd proxy"})
+	m.ring.Push(LogEntry{Timestamp: time.Now(), Labels: map[string]string{"app": "api"}, Message: "error critical"})
+	m = applyTick(m)
+
+	// hide linkerd, then grep error
+	m = sendKey(m, "/")
+	for _, c := range "!linkerd" {
+		m = sendKey(m, string(c))
+	}
+	m = sendSpecialKey(m, tea.KeyEnter)
+
+	m = sendKey(m, "/")
+	for _, c := range "=error" {
+		m = sendKey(m, string(c))
+	}
+	m = sendSpecialKey(m, tea.KeyEnter)
+	m = applyTick(m)
+
+	if len(m.filterStack) != 2 {
+		t.Fatalf("filterStack = %d, want 2", len(m.filterStack))
+	}
+	if len(m.lines) != 2 {
+		t.Errorf("after hide+grep: lines = %d, want 2", len(m.lines))
+	}
+}
+
+func TestTUIFilterStackHighlightSeparate(t *testing.T) {
+	m := newTestModel()
+	m.ring.Push(LogEntry{Timestamp: time.Now(), Labels: map[string]string{"app": "api"}, Message: "error in api"})
+	m.ring.Push(LogEntry{Timestamp: time.Now(), Labels: map[string]string{"app": "api"}, Message: "linkerd proxy"})
+	m.ring.Push(LogEntry{Timestamp: time.Now(), Labels: map[string]string{"app": "api"}, Message: "error critical"})
+	m = applyTick(m)
+
+	// hide linkerd
+	m = sendKey(m, "/")
+	for _, c := range "!linkerd" {
+		m = sendKey(m, string(c))
+	}
+	m = sendSpecialKey(m, tea.KeyEnter)
+	m = applyTick(m)
+
+	// highlight "critical" — should not push onto stack
+	m = sendKey(m, "/")
+	for _, c := range "critical" {
+		m = sendKey(m, string(c))
+	}
+	m = sendSpecialKey(m, tea.KeyEnter)
+
+	if len(m.filterStack) != 1 {
+		t.Errorf("filterStack = %d, want 1 (highlight should not push)", len(m.filterStack))
+	}
+	if m.highlight == nil {
+		t.Error("expected highlight to be set")
+	}
+	if len(m.matches) != 1 {
+		t.Errorf("matches = %d, want 1", len(m.matches))
+	}
+
+	// Esc clears highlight first, stack stays
+	m = sendSpecialKey(m, tea.KeyEscape)
+	if m.highlight != nil {
+		t.Error("expected highlight cleared after Esc")
+	}
+	if len(m.filterStack) != 1 {
+		t.Error("expected stack preserved after clearing highlight")
 	}
 }
 

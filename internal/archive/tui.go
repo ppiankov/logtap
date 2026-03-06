@@ -37,14 +37,13 @@ type ReplayModel struct {
 	follow      bool
 	ringVersion int
 
-	// search
-	searching    bool
-	searchInput  string
-	searchRegex  *regexp.Regexp
-	searchNegate bool // !prefix — hide matching lines
-	searchGrep   bool // =prefix — show only matching lines
-	searchIdx    int
-	matches      []int
+	// search — filter stack
+	searching   bool
+	searchInput string
+	filterStack []recv.SearchFilter // stacked hide/grep filters
+	highlight   *regexp.Regexp      // current highlight (not part of stack)
+	searchIdx   int
+	matches     []int
 
 	// label filter
 	filtering    bool
@@ -187,6 +186,16 @@ func (m ReplayModel) updateNormal(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.scrollToBottom()
 		}
 
+	case "esc":
+		// unwind: clear highlight first, then pop stack
+		if m.highlight != nil {
+			m.highlight = nil
+			m.matches = nil
+		} else if len(m.filterStack) > 0 {
+			m.filterStack = m.filterStack[:len(m.filterStack)-1]
+			m.ringVersion = -1
+		}
+
 	case "/":
 		m.searching = true
 		m.searchInput = ""
@@ -247,41 +256,42 @@ func (m ReplayModel) updateSearch(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "enter":
 		m.searching = false
 		input := m.searchInput
-		m.searchNegate = false
-		m.searchGrep = false
 		if strings.HasPrefix(input, "!") {
-			m.searchNegate = true
-			input = input[1:]
-		} else if strings.HasPrefix(input, "=") {
-			m.searchGrep = true
-			input = input[1:]
-		}
-		re, err := regexp.Compile(input)
-		if err == nil {
-			m.searchRegex = re
-			m.applySearchFilter()
-			m.updateSearchMatches()
-			m.searchIdx = 0
-			if m.searchNegate || m.searchGrep {
+			re, err := regexp.Compile(input[1:])
+			if err == nil {
+				m.filterStack = append(m.filterStack, recv.SearchFilter{Regex: re, Mode: recv.ModeHide})
+				m.applySearchFilter()
 				m.scrollOff = 0
 				if m.follow {
 					m.scrollToBottom()
 				}
-			} else if len(m.matches) > 0 {
-				m.follow = false
-				m.scrollOff = clamp(m.matches[0]-m.logPaneHeight()/2, 0, m.maxScroll())
+			}
+		} else if strings.HasPrefix(input, "=") {
+			re, err := regexp.Compile(input[1:])
+			if err == nil {
+				m.filterStack = append(m.filterStack, recv.SearchFilter{Regex: re, Mode: recv.ModeGrep})
+				m.applySearchFilter()
+				m.scrollOff = 0
+				if m.follow {
+					m.scrollToBottom()
+				}
+			}
+		} else {
+			re, err := regexp.Compile(input)
+			if err == nil {
+				m.highlight = re
+				m.updateSearchMatches()
+				m.searchIdx = 0
+				if len(m.matches) > 0 {
+					m.follow = false
+					m.scrollOff = clamp(m.matches[0]-m.logPaneHeight()/2, 0, m.maxScroll())
+				}
 			}
 		}
 
 	case "esc":
 		m.searching = false
 		m.searchInput = ""
-		m.searchRegex = nil
-		m.searchNegate = false
-		m.searchGrep = false
-		m.matches = nil
-		// restore unfiltered lines
-		m.ringVersion = -1
 
 	case "backspace":
 		if len(m.searchInput) > 0 {
@@ -297,52 +307,37 @@ func (m ReplayModel) updateSearch(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-// applySearchFilter removes or keeps lines based on search mode.
+// applySearchFilter applies the full filter stack to m.lines in order.
 func (m *ReplayModel) applySearchFilter() {
-	if m.searchRegex == nil {
-		return
-	}
-	if m.searchGrep {
-		filtered := make([]recv.LogEntry, 0)
-		for _, entry := range m.lines {
-			if m.entryMatchesSearch(entry) {
-				filtered = append(filtered, entry)
+	for _, f := range m.filterStack {
+		switch f.Mode {
+		case recv.ModeGrep:
+			filtered := make([]recv.LogEntry, 0)
+			for _, entry := range m.lines {
+				if recv.EntryMatchesRegex(entry, f.Regex) {
+					filtered = append(filtered, entry)
+				}
 			}
-		}
-		m.lines = filtered
-	} else if m.searchNegate {
-		filtered := make([]recv.LogEntry, 0, len(m.lines))
-		for _, entry := range m.lines {
-			if !m.entryMatchesSearch(entry) {
-				filtered = append(filtered, entry)
+			m.lines = filtered
+		case recv.ModeHide:
+			filtered := make([]recv.LogEntry, 0, len(m.lines))
+			for _, entry := range m.lines {
+				if !recv.EntryMatchesRegex(entry, f.Regex) {
+					filtered = append(filtered, entry)
+				}
 			}
-		}
-		m.lines = filtered
-	}
-}
-
-func (m *ReplayModel) entryMatchesSearch(entry recv.LogEntry) bool {
-	if m.searchRegex == nil {
-		return false
-	}
-	if m.searchRegex.MatchString(entry.Message) {
-		return true
-	}
-	for _, v := range entry.Labels {
-		if m.searchRegex.MatchString(v) {
-			return true
+			m.lines = filtered
 		}
 	}
-	return false
 }
 
 func (m *ReplayModel) updateSearchMatches() {
 	m.matches = nil
-	if m.searchRegex == nil || m.searchNegate || m.searchGrep {
+	if m.highlight == nil {
 		return
 	}
 	for i, entry := range m.lines {
-		if m.entryMatchesSearch(entry) {
+		if recv.EntryMatchesRegex(entry, m.highlight) {
 			m.matches = append(m.matches, i)
 		}
 	}
@@ -593,22 +588,34 @@ func (m ReplayModel) View() string {
 	} else if m.filterActive {
 		status.WriteString(rFilterBadge.Render(fmt.Sprintf("FILTER: %s=%s", m.filterKey, m.filterVal)))
 	}
+	// filter stack badges
+	for _, f := range m.filterStack {
+		if status.Len() > 0 {
+			status.WriteString(" ")
+		}
+		switch f.Mode {
+		case recv.ModeHide:
+			status.WriteString(rFilterBadge.Render(fmt.Sprintf("HIDE: /%s", f.Regex.String())))
+		case recv.ModeGrep:
+			status.WriteString(rGrepBadge.Render(fmt.Sprintf("GREP: /%s", f.Regex.String())))
+		}
+	}
+	if len(m.filterStack) > 0 {
+		if status.Len() > 0 {
+			status.WriteString(" ")
+		}
+		status.WriteString(rFilterBadge.Render(fmt.Sprintf("[%d lines]", len(m.lines))))
+	}
 	if m.searching {
 		if status.Len() > 0 {
 			status.WriteString(" ")
 		}
 		status.WriteString(rSearchBadge.Render(fmt.Sprintf("/%s", m.searchInput)))
-	} else if m.searchRegex != nil {
+	} else if m.highlight != nil {
 		if status.Len() > 0 {
 			status.WriteString(" ")
 		}
-		if m.searchGrep {
-			status.WriteString(rGrepBadge.Render(fmt.Sprintf("GREP: /%s [%d lines]", m.searchRegex.String(), len(m.lines))))
-		} else if m.searchNegate {
-			status.WriteString(rFilterBadge.Render(fmt.Sprintf("HIDE: /%s [%d lines]", m.searchRegex.String(), len(m.lines))))
-		} else {
-			status.WriteString(rSearchBadge.Render(fmt.Sprintf("[%d/%d] /%s", m.searchIdx+1, len(m.matches), m.searchRegex.String())))
-		}
+		status.WriteString(rSearchBadge.Render(fmt.Sprintf("[%d/%d] /%s", m.searchIdx+1, len(m.matches), m.highlight.String())))
 	}
 
 	// speed badge

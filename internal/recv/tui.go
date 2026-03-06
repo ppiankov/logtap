@@ -11,6 +11,20 @@ import (
 	"github.com/muesli/termenv"
 )
 
+// SearchMode identifies the type of search filter.
+type SearchMode int
+
+const (
+	ModeHide SearchMode = iota // /!pattern — remove matching lines
+	ModeGrep                   // /=pattern — keep only matching lines
+)
+
+// SearchFilter is one entry in the filter stack.
+type SearchFilter struct {
+	Regex *regexp.Regexp
+	Mode  SearchMode
+}
+
 // DiskReporter provides disk usage for the TUI.
 type DiskReporter interface {
 	DiskUsage() int64
@@ -42,14 +56,13 @@ type TUIModel struct {
 	follow      bool
 	ringVersion int
 
-	// search
-	searching    bool
-	searchInput  string
-	searchRegex  *regexp.Regexp
-	searchNegate bool  // !prefix — hide matching lines
-	searchGrep   bool  // =prefix — show only matching lines
-	searchIdx    int   // current match index in filtered results
-	matches      []int // indices into lines
+	// search — filter stack
+	searching   bool
+	searchInput string
+	filterStack []SearchFilter // stacked hide/grep filters
+	highlight   *regexp.Regexp // current highlight (not part of stack)
+	searchIdx   int            // current match index in highlight results
+	matches     []int          // indices into lines for highlight
 
 	// label filter
 	filtering    bool
@@ -217,6 +230,16 @@ func (m TUIModel) updateNormal(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.scrollToBottom()
 		}
 
+	case "esc":
+		// unwind: clear highlight first, then pop stack
+		if m.highlight != nil {
+			m.highlight = nil
+			m.matches = nil
+		} else if len(m.filterStack) > 0 {
+			m.filterStack = m.filterStack[:len(m.filterStack)-1]
+			m.ringVersion = -1
+		}
+
 	case "/":
 		m.searching = true
 		m.searchInput = ""
@@ -290,42 +313,46 @@ func (m TUIModel) updateSearch(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "enter":
 		m.searching = false
 		input := m.searchInput
-		m.searchNegate = false
-		m.searchGrep = false
 		if strings.HasPrefix(input, "!") {
-			m.searchNegate = true
-			input = input[1:]
-		} else if strings.HasPrefix(input, "=") {
-			m.searchGrep = true
-			input = input[1:]
-		}
-		re, err := regexp.Compile(input)
-		if err == nil {
-			m.searchRegex = re
-			m.applySearchFilter()
-			m.updateSearchMatches()
-			m.searchIdx = 0
-			if m.searchNegate || m.searchGrep {
-				// filtered view — reset scroll
+			// hide mode — push onto stack
+			re, err := regexp.Compile(input[1:])
+			if err == nil {
+				m.filterStack = append(m.filterStack, SearchFilter{Regex: re, Mode: ModeHide})
+				m.applySearchFilter()
 				m.scrollOff = 0
 				if m.follow {
 					m.scrollToBottom()
 				}
-			} else if len(m.matches) > 0 {
-				m.follow = false
-				m.scrollOff = clamp(m.matches[0]-m.logPaneHeight()/2, 0, m.maxScroll())
+			}
+		} else if strings.HasPrefix(input, "=") {
+			// grep mode — push onto stack
+			re, err := regexp.Compile(input[1:])
+			if err == nil {
+				m.filterStack = append(m.filterStack, SearchFilter{Regex: re, Mode: ModeGrep})
+				m.applySearchFilter()
+				m.scrollOff = 0
+				if m.follow {
+					m.scrollToBottom()
+				}
+			}
+		} else {
+			// highlight mode — replaces current highlight, not part of stack
+			re, err := regexp.Compile(input)
+			if err == nil {
+				m.highlight = re
+				m.updateSearchMatches()
+				m.searchIdx = 0
+				if len(m.matches) > 0 {
+					m.follow = false
+					m.scrollOff = clamp(m.matches[0]-m.logPaneHeight()/2, 0, m.maxScroll())
+				}
 			}
 		}
 
 	case "esc":
+		// cancel search input — just close the prompt
 		m.searching = false
 		m.searchInput = ""
-		m.searchRegex = nil
-		m.searchNegate = false
-		m.searchGrep = false
-		m.matches = nil
-		// restore unfiltered lines
-		m.ringVersion = -1
 
 	case "backspace":
 		if len(m.searchInput) > 0 {
@@ -341,40 +368,37 @@ func (m TUIModel) updateSearch(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-// applySearchFilter removes or keeps lines based on search mode.
-// Negated (!): removes matching lines. Grep (=): keeps only matching lines.
+// applySearchFilter applies the full filter stack to m.lines in order.
 func (m *TUIModel) applySearchFilter() {
-	if m.searchRegex == nil {
-		return
-	}
-	if m.searchGrep {
-		filtered := make([]LogEntry, 0)
-		for _, entry := range m.lines {
-			if m.entryMatchesSearch(entry) {
-				filtered = append(filtered, entry)
+	for _, f := range m.filterStack {
+		switch f.Mode {
+		case ModeGrep:
+			filtered := make([]LogEntry, 0)
+			for _, entry := range m.lines {
+				if EntryMatchesRegex(entry, f.Regex) {
+					filtered = append(filtered, entry)
+				}
 			}
-		}
-		m.lines = filtered
-	} else if m.searchNegate {
-		filtered := make([]LogEntry, 0, len(m.lines))
-		for _, entry := range m.lines {
-			if !m.entryMatchesSearch(entry) {
-				filtered = append(filtered, entry)
+			m.lines = filtered
+		case ModeHide:
+			filtered := make([]LogEntry, 0, len(m.lines))
+			for _, entry := range m.lines {
+				if !EntryMatchesRegex(entry, f.Regex) {
+					filtered = append(filtered, entry)
+				}
 			}
+			m.lines = filtered
 		}
-		m.lines = filtered
 	}
 }
 
-func (m *TUIModel) entryMatchesSearch(entry LogEntry) bool {
-	if m.searchRegex == nil {
-		return false
-	}
-	if m.searchRegex.MatchString(entry.Message) {
+// EntryMatchesRegex checks whether a log entry matches the given regex.
+func EntryMatchesRegex(entry LogEntry, re *regexp.Regexp) bool {
+	if re.MatchString(entry.Message) {
 		return true
 	}
 	for _, v := range entry.Labels {
-		if m.searchRegex.MatchString(v) {
+		if re.MatchString(v) {
 			return true
 		}
 	}
@@ -383,11 +407,11 @@ func (m *TUIModel) entryMatchesSearch(entry LogEntry) bool {
 
 func (m *TUIModel) updateSearchMatches() {
 	m.matches = nil
-	if m.searchRegex == nil || m.searchNegate || m.searchGrep {
+	if m.highlight == nil {
 		return
 	}
 	for i, entry := range m.lines {
-		if m.entryMatchesSearch(entry) {
+		if EntryMatchesRegex(entry, m.highlight) {
 			m.matches = append(m.matches, i)
 		}
 	}
@@ -544,22 +568,35 @@ func (m TUIModel) View() string {
 	} else if m.filterActive {
 		status.WriteString(filterBadge.Render(fmt.Sprintf("FILTER: %s=%s", m.filterKey, m.filterVal)))
 	}
+	// filter stack badges
+	for _, f := range m.filterStack {
+		if status.Len() > 0 {
+			status.WriteString(" ")
+		}
+		switch f.Mode {
+		case ModeHide:
+			status.WriteString(filterBadge.Render(fmt.Sprintf("HIDE: /%s", f.Regex.String())))
+		case ModeGrep:
+			status.WriteString(grepBadge.Render(fmt.Sprintf("GREP: /%s", f.Regex.String())))
+		}
+	}
+	// line count after stack
+	if len(m.filterStack) > 0 {
+		if status.Len() > 0 {
+			status.WriteString(" ")
+		}
+		status.WriteString(filterBadge.Render(fmt.Sprintf("[%d lines]", len(m.lines))))
+	}
 	if m.searching {
 		if status.Len() > 0 {
 			status.WriteString(" ")
 		}
 		status.WriteString(searchBadge.Render(fmt.Sprintf("/%s", m.searchInput)))
-	} else if m.searchRegex != nil {
+	} else if m.highlight != nil {
 		if status.Len() > 0 {
 			status.WriteString(" ")
 		}
-		if m.searchGrep {
-			status.WriteString(grepBadge.Render(fmt.Sprintf("GREP: /%s [%d lines]", m.searchRegex.String(), len(m.lines))))
-		} else if m.searchNegate {
-			status.WriteString(filterBadge.Render(fmt.Sprintf("HIDE: /%s [%d lines]", m.searchRegex.String(), len(m.lines))))
-		} else {
-			status.WriteString(searchBadge.Render(fmt.Sprintf("[%d/%d] /%s", m.searchIdx+1, len(m.matches), m.searchRegex.String())))
-		}
+		status.WriteString(searchBadge.Render(fmt.Sprintf("[%d/%d] /%s", m.searchIdx+1, len(m.matches), m.highlight.String())))
 	}
 	if m.follow {
 		if status.Len() > 0 {
