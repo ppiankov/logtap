@@ -66,6 +66,8 @@ logtap tap deploy/my-app && logtap recv --port 3100
 | `logtap check` | Validate cluster readiness |
 | `logtap status` | Show what is currently tapped |
 
+See [TUI keybindings](docs/tui.md) for the full list of keyboard shortcuts in the live dashboard.
+
 ## SpectreHub integration
 
 logtap feeds load test log capture summaries into [SpectreHub](https://github.com/ppiankov/spectrehub) for unified visibility across your infrastructure.
