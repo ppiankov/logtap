@@ -67,6 +67,19 @@ Press `l` to enter label filter mode.
 
 Label filter and search/grep can be combined — label filter applies first.
 
+## Time jump
+
+Press `t` to jump to a specific timestamp.
+
+| Input | Action |
+|-------|--------|
+| `t` then `14:32` | Jump to first line at 14:32 |
+| `t` then `14:32:05` | Jump to first line at 14:32:05 |
+| `t` then `2026-03-05T14:32` | Jump to specific date+time |
+| `Esc` | Cancel time jump |
+
+Partial matches work — the input is matched against the formatted timestamp string.
+
 ## General
 
 | Key | Action |

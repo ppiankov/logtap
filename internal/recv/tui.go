@@ -71,6 +71,10 @@ type TUIModel struct {
 	filterVal    string // parsed value
 	filterActive bool
 
+	// time jump
+	timeJumping   bool
+	timeJumpInput string
+
 	// gg detection
 	lastGPress time.Time
 
@@ -174,6 +178,9 @@ func (m TUIModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			return m, nil
 		}
+		if m.timeJumping {
+			return m.updateTimeJump(msg)
+		}
 		if m.filtering {
 			return m.updateFilter(msg)
 		}
@@ -254,6 +261,10 @@ func (m TUIModel) updateNormal(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.filtering = true
 		m.filterInput = ""
 
+	case "t":
+		m.timeJumping = true
+		m.timeJumpInput = ""
+
 	case "?":
 		m.showHelp = !m.showHelp
 	}
@@ -298,6 +309,51 @@ func (m TUIModel) updateFilter(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	}
 
 	return m, nil
+}
+
+func (m TUIModel) updateTimeJump(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch msg.String() {
+	case "enter":
+		m.timeJumping = false
+		idx := FindTimeIndex(m.lines, m.timeJumpInput)
+		if idx >= 0 {
+			m.follow = false
+			m.scrollOff = clamp(idx-m.logPaneHeight()/2, 0, m.maxScroll())
+		}
+
+	case "esc":
+		m.timeJumping = false
+		m.timeJumpInput = ""
+
+	case "backspace":
+		if len(m.timeJumpInput) > 0 {
+			m.timeJumpInput = m.timeJumpInput[:len(m.timeJumpInput)-1]
+		}
+
+	default:
+		if len(msg.String()) == 1 {
+			m.timeJumpInput += msg.String()
+		}
+	}
+
+	return m, nil
+}
+
+// FindTimeIndex finds the first line whose formatted timestamp contains the input fragment.
+// Supports fragments like: "14:32", "14:32:05", "2026-03-05T14:32".
+// Returns -1 if no match.
+func FindTimeIndex(lines []LogEntry, input string) int {
+	input = strings.TrimSpace(input)
+	if input == "" || len(lines) == 0 {
+		return -1
+	}
+	for i, entry := range lines {
+		ts := entry.Timestamp.Format("2006-01-02T15:04:05Z")
+		if strings.Contains(ts, input) {
+			return i
+		}
+	}
+	return -1
 }
 
 func (m TUIModel) labelPredicate() func(LogEntry) bool {
@@ -563,7 +619,13 @@ func (m TUIModel) View() string {
 
 	// status bar
 	var status strings.Builder
+	if m.timeJumping {
+		status.WriteString(searchBadge.Render(fmt.Sprintf("t:%s", m.timeJumpInput)))
+	}
 	if m.filtering {
+		if status.Len() > 0 {
+			status.WriteString(" ")
+		}
 		status.WriteString(filterBadge.Render(fmt.Sprintf("filter: %s", m.filterInput)))
 	} else if m.filterActive {
 		status.WriteString(filterBadge.Render(fmt.Sprintf("FILTER: %s=%s", m.filterKey, m.filterVal)))
@@ -692,6 +754,7 @@ func (m TUIModel) renderHelp() []string {
 		"",
 		h.Render("  Filter"),
 		d.Render("    l          ") + "label filter (e.g. container=api)",
+		d.Render("    t          ") + "jump to timestamp (e.g. 14:32)",
 		"",
 		h.Render("  General"),
 		d.Render("    ?          ") + "toggle this help",

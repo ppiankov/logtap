@@ -629,6 +629,76 @@ func TestTUIFilterStackHighlightSeparate(t *testing.T) {
 	}
 }
 
+func TestFindTimeIndex(t *testing.T) {
+	lines := []LogEntry{
+		{Timestamp: time.Date(2026, 3, 5, 14, 30, 0, 0, time.UTC)},
+		{Timestamp: time.Date(2026, 3, 5, 14, 31, 0, 0, time.UTC)},
+		{Timestamp: time.Date(2026, 3, 5, 14, 32, 0, 0, time.UTC)},
+		{Timestamp: time.Date(2026, 3, 5, 14, 32, 30, 0, time.UTC)},
+		{Timestamp: time.Date(2026, 3, 5, 14, 33, 0, 0, time.UTC)},
+	}
+
+	tests := []struct {
+		input string
+		want  int
+	}{
+		{"14:32", 2},
+		{"14:32:30", 3},
+		{"14:30", 0},
+		{"14:33", 4},
+		{"14:35", -1},
+		{"", -1},
+	}
+	for _, tt := range tests {
+		got := FindTimeIndex(lines, tt.input)
+		if got != tt.want {
+			t.Errorf("FindTimeIndex(%q) = %d, want %d", tt.input, got, tt.want)
+		}
+	}
+}
+
+func TestTUITimeJumpMode(t *testing.T) {
+	m := newTestModel()
+	for i := 0; i < 50; i++ {
+		m.ring.Push(LogEntry{
+			Timestamp: time.Date(2026, 3, 5, 14, 30, i, 0, time.UTC),
+			Labels:    map[string]string{"app": "api"},
+			Message:   "line",
+		})
+	}
+	m = applyTick(m)
+
+	m = sendKey(m, "t")
+	if !m.timeJumping {
+		t.Error("expected timeJumping after 't'")
+	}
+
+	for _, c := range "14:30:25" {
+		m = sendKey(m, string(c))
+	}
+	if m.timeJumpInput != "14:30:25" {
+		t.Errorf("timeJumpInput = %q, want %q", m.timeJumpInput, "14:30:25")
+	}
+
+	m = sendSpecialKey(m, tea.KeyEnter)
+	if m.timeJumping {
+		t.Error("expected not timeJumping after enter")
+	}
+	if m.follow {
+		t.Error("expected follow disabled after time jump")
+	}
+}
+
+func TestTUITimeJumpEscape(t *testing.T) {
+	m := newTestModel()
+	m = sendKey(m, "t")
+	m = sendKey(m, "1")
+	m = sendSpecialKey(m, tea.KeyEscape)
+	if m.timeJumping {
+		t.Error("expected not timeJumping after Esc")
+	}
+}
+
 func containsStr(s, sub string) bool {
 	return len(s) >= len(sub) && searchStr(s, sub)
 }
