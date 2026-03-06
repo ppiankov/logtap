@@ -194,8 +194,8 @@ func TestReplaySearchEscape(t *testing.T) {
 	if m.searching {
 		t.Error("expected not searching after Esc")
 	}
-	if m.searchRegex != nil {
-		t.Error("expected nil searchRegex after Esc")
+	if m.highlight != nil {
+		t.Error("expected nil highlight after Esc")
 	}
 }
 
@@ -220,8 +220,8 @@ func TestReplaySearchEnterAndNav(t *testing.T) {
 	}
 	m = sendReplaySpecialKey(m, tea.KeyEnter)
 
-	if m.searchRegex == nil {
-		t.Fatal("expected searchRegex after enter")
+	if m.highlight == nil {
+		t.Fatal("expected highlight after enter")
 	}
 	if len(m.matches) != 3 {
 		t.Fatalf("matches = %d, want 3", len(m.matches))

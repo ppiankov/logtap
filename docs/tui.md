@@ -28,15 +28,31 @@ Press `/` to enter search mode, then type a pattern and press `Enter`.
 - Matches against both the log message and label values
 - `n` — jump to next match (search mode only)
 - `N` — jump to previous match (search mode only)
-- `Esc` — clear search/filter and restore all lines
+- `Esc` — unwind filters one at a time (clear highlight first, then pop last filter)
+
+### Filter stacking
+
+Hide (`/!`) and grep (`/=`) filters **stack** — each new filter narrows the previous result:
+
+```
+/!linkerd        → hides linkerd lines
+/!healthz        → also hides healthz lines
+/=error          → from remainder, show only error lines
+/trace-abc       → highlight trace-abc within the filtered view
+```
+
+- `Esc` pops one filter at a time (highlight first, then stack top-down)
+- Highlight (`/pattern`) is separate from the stack — it doesn't filter, just marks matches
+- Label filter (`l`) is independent — applied before the search stack
 
 ### Status bar badges
 
 | Badge | Meaning |
 |-------|---------|
 | `[1/42] /error` | Search mode — match 1 of 42 |
-| `HIDE: /healthz [8421 lines]` | Hide mode — 8421 lines remaining |
-| `GREP: /trace-abc [3 lines]` | Grep mode — 3 lines matching |
+| `HIDE: /healthz` | Hide filter in stack |
+| `GREP: /trace-abc` | Grep filter in stack |
+| `[42 lines]` | Lines remaining after all filters |
 | `FOLLOW` | Auto-scrolling to new lines |
 
 ## Label filter
