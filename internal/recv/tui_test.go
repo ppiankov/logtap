@@ -699,6 +699,95 @@ func TestTUITimeJumpEscape(t *testing.T) {
 	}
 }
 
+func TestExportFilteredLines(t *testing.T) {
+	entries := []LogEntry{
+		{Timestamp: time.Date(2024, 1, 15, 10, 0, 0, 0, time.UTC), Labels: map[string]string{"app": "api"}, Message: "hello"},
+		{Timestamp: time.Date(2024, 1, 15, 10, 0, 1, 0, time.UTC), Labels: map[string]string{"app": "web"}, Message: "world"},
+	}
+
+	dir := t.TempDir()
+	outDir := dir + "/exported"
+
+	n, err := ExportFilteredLines(entries, outDir)
+	if err != nil {
+		t.Fatalf("ExportFilteredLines: %v", err)
+	}
+	if n != 2 {
+		t.Errorf("expected 2 lines, got %d", n)
+	}
+
+	// verify metadata exists
+	meta, err := ReadMetadata(outDir)
+	if err != nil {
+		t.Fatalf("read metadata: %v", err)
+	}
+	if meta.TotalLines != 2 {
+		t.Errorf("metadata lines: got %d, want 2", meta.TotalLines)
+	}
+}
+
+func TestExportFilteredLinesEmpty(t *testing.T) {
+	_, err := ExportFilteredLines(nil, t.TempDir()+"/empty")
+	if err == nil {
+		t.Error("expected error for empty entries")
+	}
+}
+
+func TestTUIExportMode(t *testing.T) {
+	m := newTestModel()
+	feedLines(&m, 5)
+
+	// press w to enter export mode
+	m = sendKey(m, "w")
+	if !m.exporting {
+		t.Fatal("expected exporting=true after w")
+	}
+	if m.exportInput == "" {
+		t.Fatal("expected non-empty default export path")
+	}
+
+	// Esc cancels
+	m = sendSpecialKey(m, tea.KeyEsc)
+	if m.exporting {
+		t.Fatal("expected exporting=false after Esc")
+	}
+}
+
+func TestTUIExportWrite(t *testing.T) {
+	m := newTestModel()
+	feedLines(&m, 3)
+
+	// press w, clear default, type path, enter
+	m = sendKey(m, "w")
+
+	// clear default input
+	for range m.exportInput {
+		m = sendSpecialKey(m, tea.KeyBackspace)
+	}
+
+	outDir := t.TempDir() + "/out"
+	for _, c := range outDir {
+		m = sendKey(m, string(c))
+	}
+
+	m = sendSpecialKey(m, tea.KeyEnter)
+	if m.exporting {
+		t.Fatal("expected exporting=false after Enter")
+	}
+	if m.exportMsg == "" {
+		t.Fatal("expected non-empty export message")
+	}
+
+	// verify output
+	meta, err := ReadMetadata(outDir)
+	if err != nil {
+		t.Fatalf("read exported metadata: %v", err)
+	}
+	if meta.TotalLines != 3 {
+		t.Errorf("exported lines: got %d, want 3", meta.TotalLines)
+	}
+}
+
 func containsStr(s, sub string) bool {
 	return len(s) >= len(sub) && searchStr(s, sub)
 }

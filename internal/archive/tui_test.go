@@ -521,3 +521,51 @@ func TestReplayViewDoneBadge(t *testing.T) {
 		t.Error("expected COMPLETE badge in view when done")
 	}
 }
+
+func TestReplayExportMode(t *testing.T) {
+	m := newTestReplayModel()
+	feedReplayLines(&m, 5)
+
+	m = sendReplayKey(m, "w")
+	if !m.exporting {
+		t.Fatal("expected exporting=true after w")
+	}
+
+	m = sendReplaySpecialKey(m, tea.KeyEsc)
+	if m.exporting {
+		t.Fatal("expected exporting=false after Esc")
+	}
+}
+
+func TestReplayExportWrite(t *testing.T) {
+	m := newTestReplayModel()
+	feedReplayLines(&m, 3)
+
+	m = sendReplayKey(m, "w")
+
+	// clear default input
+	for range m.exportInput {
+		m = sendReplaySpecialKey(m, tea.KeyBackspace)
+	}
+
+	outDir := t.TempDir() + "/out"
+	for _, c := range outDir {
+		m = sendReplayKey(m, string(c))
+	}
+
+	m = sendReplaySpecialKey(m, tea.KeyEnter)
+	if m.exporting {
+		t.Fatal("expected exporting=false after Enter")
+	}
+	if m.exportMsg == "" {
+		t.Fatal("expected non-empty export message")
+	}
+
+	meta, err := recv.ReadMetadata(outDir)
+	if err != nil {
+		t.Fatalf("read exported metadata: %v", err)
+	}
+	if meta.TotalLines != 3 {
+		t.Errorf("exported lines: got %d, want 3", meta.TotalLines)
+	}
+}

@@ -80,6 +80,18 @@ Press `t` to jump to a specific timestamp.
 
 Partial matches work — the input is matched against the formatted timestamp string.
 
+## Export
+
+Press `w` to export the current filtered view as a new capture directory.
+
+| Input | Action |
+|-------|--------|
+| `w` | Enter export mode — type output directory path |
+| `Enter` | Write filtered lines to the specified directory |
+| `Esc` | Cancel export |
+
+The exported directory is a valid logtap capture (metadata.json + index.jsonl + data) that can be opened with `logtap open`, inspected, or shared.
+
 ## General
 
 | Key | Action |
