@@ -58,6 +58,12 @@ type ReplayModel struct {
 	filterVal    string
 	filterActive bool
 
+	// bookmarks
+	marks       map[rune]int
+	markSetting bool
+	markJumping bool
+	markMsg     string
+
 	// export
 	exporting   bool
 	exportInput string
@@ -148,6 +154,12 @@ func (m ReplayModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.KeyMsg:
 		if m.picker {
 			return m.updatePicker(msg)
+		}
+		if m.markSetting {
+			return m.updateMarkSet(msg)
+		}
+		if m.markJumping {
+			return m.updateMarkJump(msg)
 		}
 		if m.exporting {
 			return m.updateExport(msg)
@@ -247,6 +259,14 @@ func (m ReplayModel) updateNormal(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "t":
 		m.timeJumping = true
 		m.timeJumpInput = ""
+
+	case "m":
+		m.markSetting = true
+		m.markMsg = ""
+
+	case "'":
+		m.markJumping = true
+		m.markMsg = ""
 
 	case "w":
 		m.exporting = true
@@ -352,6 +372,34 @@ func (m ReplayModel) updatePicker(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 	}
 
+	return m, nil
+}
+
+func (m ReplayModel) updateMarkSet(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	m.markSetting = false
+	key := msg.String()
+	if len(key) == 1 && key[0] >= 'a' && key[0] <= 'z' {
+		if m.marks == nil {
+			m.marks = make(map[rune]int)
+		}
+		m.marks[rune(key[0])] = m.scrollOff
+		m.markMsg = fmt.Sprintf("mark %s set", key)
+	}
+	return m, nil
+}
+
+func (m ReplayModel) updateMarkJump(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	m.markJumping = false
+	key := msg.String()
+	if len(key) == 1 && key[0] >= 'a' && key[0] <= 'z' {
+		if idx, ok := m.marks[rune(key[0])]; ok {
+			m.follow = false
+			m.scrollOff = clamp(idx, 0, m.maxScroll())
+			m.markMsg = ""
+		} else {
+			m.markMsg = fmt.Sprintf("mark %s not set", key)
+		}
+	}
 	return m, nil
 }
 
@@ -571,6 +619,10 @@ func (m ReplayModel) renderHelp() []string {
 		h.Render("  Filter"),
 		d.Render("    l          ") + "label filter (e.g. container=api)",
 		d.Render("    t          ") + "jump to timestamp (e.g. 14:32)",
+		"",
+		h.Render("  Bookmarks"),
+		d.Render("    m + a-z    ") + "set bookmark at current position",
+		d.Render("    ' + a-z    ") + "jump to bookmark",
 		"",
 		h.Render("  Export"),
 		d.Render("    w          ") + "export filtered view to capture dir",
@@ -804,6 +856,13 @@ func (m ReplayModel) View() string {
 
 	// status bar
 	var status strings.Builder
+	if m.markSetting {
+		status.WriteString(rSearchBadge.Render("m:_"))
+	} else if m.markJumping {
+		status.WriteString(rSearchBadge.Render("':_"))
+	} else if m.markMsg != "" {
+		status.WriteString(rFilterBadge.Render(m.markMsg))
+	}
 	if m.exporting {
 		status.WriteString(rSearchBadge.Render(fmt.Sprintf("w:%s", m.exportInput)))
 	} else if m.exportMsg != "" {

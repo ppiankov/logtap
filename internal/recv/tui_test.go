@@ -788,6 +788,58 @@ func TestTUIExportWrite(t *testing.T) {
 	}
 }
 
+func TestTUIBookmarkSetAndJump(t *testing.T) {
+	m := newTestModel()
+	feedLines(&m, 100)
+
+	// scroll down
+	m.follow = false
+	m.scrollOff = 50
+
+	// set mark 'a' at position 50
+	m = sendKey(m, "m")
+	if !m.markSetting {
+		t.Fatal("expected markSetting=true after m")
+	}
+	m = sendKey(m, "a")
+	if m.markSetting {
+		t.Fatal("expected markSetting=false after letter")
+	}
+	if m.marks['a'] != 50 {
+		t.Errorf("mark a: got %d, want 50", m.marks['a'])
+	}
+	if m.markMsg != "mark a set" {
+		t.Errorf("markMsg: got %q", m.markMsg)
+	}
+
+	// scroll away
+	m.scrollOff = 10
+
+	// jump to mark 'a'
+	m = sendKey(m, "'")
+	if !m.markJumping {
+		t.Fatal("expected markJumping=true after '")
+	}
+	m = sendKey(m, "a")
+	if m.markJumping {
+		t.Fatal("expected markJumping=false after letter")
+	}
+	if m.scrollOff != 50 {
+		t.Errorf("scrollOff after jump: got %d, want 50", m.scrollOff)
+	}
+}
+
+func TestTUIBookmarkNotSet(t *testing.T) {
+	m := newTestModel()
+	feedLines(&m, 10)
+
+	m = sendKey(m, "'")
+	m = sendKey(m, "z")
+	if m.markMsg != "mark z not set" {
+		t.Errorf("markMsg: got %q", m.markMsg)
+	}
+}
+
 func containsStr(s, sub string) bool {
 	return len(s) >= len(sub) && searchStr(s, sub)
 }
