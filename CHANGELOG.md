@@ -4,6 +4,12 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [1.9.6] - 2026-03-07
+
+### Added
+
+- TUI export filtered view — press `w` to save current filtered lines as a new capture directory
+
 ## [1.9.5] - 2026-03-07
 
 ### Added
