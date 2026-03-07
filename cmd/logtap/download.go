@@ -40,6 +40,7 @@ func newDownloadCmd() *cobra.Command {
 	cmd.Flags().StringVarP(&outDir, "out", "o", "", "output directory (required)")
 	cmd.Flags().IntVar(&concurrency, "concurrency", 4, "number of parallel downloads")
 	cmd.Flags().BoolVar(&jsonOutput, "json", false, "output summary as JSON")
+	addFormatAlias(cmd, &jsonOutput)
 
 	return cmd
 }

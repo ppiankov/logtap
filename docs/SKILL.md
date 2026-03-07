@@ -8,7 +8,25 @@ Ephemeral log capture and incident triage for Kubernetes — tap in, grab logs, 
 brew install ppiankov/tap/logtap
 ```
 
+## Conventions
+
+- **JSON output**: Use `--json` or `--format json` (both accepted) for machine-readable output
+- **Exit codes**: See table below — non-zero exit codes are structured
+- Commands that already have `--format` for other purposes (grep, export) use their own format values
+
 ## Commands
+
+### logtap init
+
+Initialize logtap configuration. Creates `~/.logtap/config.yaml` with commented defaults if it does not exist.
+
+**Flags:**
+- `--json` / `--format json` — JSON output
+
+**JSON output:**
+```json
+{"config_path": "/home/user/.logtap/config.yaml", "created": true, "local_path": ".logtap.yaml", "local_found": false}
+```
 
 ### logtap recv
 
@@ -234,11 +252,11 @@ Delete old capture directories.
 
 ### logtap check
 
-Validate cluster readiness and detect leftover sidecars.
+Validate cluster readiness and detect leftover sidecars. Also available as `logtap doctor`.
 
 **Flags:**
 - `-n, --namespace` — namespace (defaults to current context)
-- `--json` — output as JSON
+- `--json` / `--format json` — output as JSON
 
 ### logtap status
 

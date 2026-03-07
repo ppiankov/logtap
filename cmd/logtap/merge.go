@@ -30,6 +30,7 @@ func newMergeCmd() *cobra.Command {
 
 	cmd.Flags().StringVarP(&outDir, "out", "o", "", "output directory (required)")
 	cmd.Flags().BoolVar(&jsonOutput, "json", false, "output summary as JSON")
+	addFormatAlias(cmd, &jsonOutput)
 	cmd.Flags().BoolVar(&clockCorrect, "clock-correct", false, "detect and correct clock skew between sources")
 	_ = cmd.MarkFlagRequired("out")
 

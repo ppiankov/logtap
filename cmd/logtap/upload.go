@@ -43,6 +43,7 @@ func newUploadCmd() *cobra.Command {
 	cmd.Flags().StringVar(&to, "to", "", "destination URL (s3://bucket/prefix or gs://bucket/prefix)")
 	cmd.Flags().IntVar(&concurrency, "concurrency", 4, "number of parallel uploads")
 	cmd.Flags().BoolVar(&jsonOutput, "json", false, "output summary as JSON")
+	addFormatAlias(cmd, &jsonOutput)
 	cmd.Flags().BoolVar(&share, "share", false, "generate presigned URLs after upload")
 	cmd.Flags().DurationVar(&expiry, "expiry", 24*time.Hour, "presigned URL expiry (max 168h)")
 	cmd.Flags().BoolVar(&force, "force", false, "allow sharing unredacted captures")

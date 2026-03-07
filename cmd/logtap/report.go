@@ -33,6 +33,7 @@ func newReportCmd() *cobra.Command {
 
 	cmd.Flags().StringVar(&outDir, "out", "", "output directory for report artifacts")
 	cmd.Flags().BoolVar(&jsonOutput, "json", false, "output report.json to stdout")
+	addFormatAlias(cmd, &jsonOutput)
 	cmd.Flags().BoolVar(&htmlOutput, "html", true, "include HTML report")
 	cmd.Flags().IntVar(&jobs, "jobs", runtime.NumCPU(), "parallel scan workers")
 	cmd.Flags().IntVar(&top, "top", 20, "number of top error signatures")

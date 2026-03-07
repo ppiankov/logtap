@@ -23,6 +23,7 @@ func newInspectCmd() *cobra.Command {
 	}
 
 	cmd.Flags().BoolVar(&jsonOutput, "json", false, "output as JSON")
+	addFormatAlias(cmd, &jsonOutput)
 
 	return cmd
 }

@@ -28,6 +28,7 @@ func newSignCmd() *cobra.Command {
 
 	cmd.Flags().BoolVar(&verify, "verify", false, "verify existing manifest instead of signing")
 	cmd.Flags().BoolVar(&jsonOutput, "json", false, "output as JSON")
+	addFormatAlias(cmd, &jsonOutput)
 
 	return cmd
 }

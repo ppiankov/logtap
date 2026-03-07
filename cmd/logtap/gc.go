@@ -32,6 +32,7 @@ func newGCCmd() *cobra.Command {
 	cmd.Flags().StringVar(&maxTotalStr, "max-total", "", "delete oldest captures until total size under limit (e.g. 100GB)")
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "show what would be deleted without removing")
 	cmd.Flags().BoolVar(&jsonOutput, "json", false, "output deletion list as JSON")
+	addFormatAlias(cmd, &jsonOutput)
 
 	return cmd
 }
