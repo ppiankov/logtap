@@ -48,6 +48,7 @@ func newOpenCmd() *cobra.Command {
 	cmd.Flags().StringVar(&injectDur, "duration", "1m", "injection duration (e.g. 30s, 1m, 5m)")
 	cmd.Flags().StringVar(&injectOut, "inject-out", "", "write injected stream to new capture directory (skip TUI)")
 	cmd.Flags().BoolVar(&jsonOutput, "json", false, "output as JSON (with --inject-out)")
+	addFormatAlias(cmd, &jsonOutput)
 
 	return cmd
 }

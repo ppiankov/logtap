@@ -31,9 +31,10 @@ func newCheckCmd() *cobra.Command {
 	)
 
 	cmd := &cobra.Command{
-		Use:   "check",
-		Short: "Validate cluster readiness and detect leftovers",
-		Long:  "Check verifies RBAC permissions, resource quotas, and detects orphaned logtap sidecars or stale annotations.",
+		Use:     "check",
+		Aliases: []string{"doctor"},
+		Short:   "Validate cluster readiness and detect leftovers",
+		Long:    "Check verifies RBAC permissions, resource quotas, and detects orphaned logtap sidecars or stale annotations.",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runCheck(namespace, jsonOutput)
 		},
@@ -41,6 +42,7 @@ func newCheckCmd() *cobra.Command {
 
 	cmd.Flags().StringVarP(&namespace, "namespace", "n", "", "namespace (defaults to current context)")
 	cmd.Flags().BoolVar(&jsonOutput, "json", false, "output as JSON")
+	addFormatAlias(cmd, &jsonOutput)
 	return cmd
 }
 

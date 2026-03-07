@@ -43,6 +43,7 @@ func newTriageCmd() *cobra.Command {
 	cmd.Flags().IntVar(&top, "top", 50, "number of top error signatures")
 	cmd.Flags().IntVar(&maxSignatures, "max-signatures", 10000, "cap on unique error signatures kept in memory")
 	cmd.Flags().BoolVar(&jsonOutput, "json", false, "output as JSON to stdout")
+	addFormatAlias(cmd, &jsonOutput)
 	cmd.Flags().BoolVar(&htmlOutput, "html", false, "generate self-contained HTML report")
 
 	return cmd

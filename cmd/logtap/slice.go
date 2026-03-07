@@ -106,6 +106,7 @@ func newSliceCmd() *cobra.Command {
 	cmd.Flags().StringVar(&sliceGrep, "grep", "", "regex filter on message content")
 	cmd.Flags().StringVarP(&sliceOut, "out", "o", "", "output directory for the new capture (required)")
 	cmd.Flags().BoolVar(&sliceJSON, "json", false, "output summary as JSON")
+	addFormatAlias(cmd, &sliceJSON)
 	_ = cmd.MarkFlagRequired("out")
 
 	return cmd

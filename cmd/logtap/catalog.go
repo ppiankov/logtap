@@ -29,6 +29,7 @@ func newCatalogCmd() *cobra.Command {
 	}
 
 	cmd.Flags().BoolVar(&jsonOutput, "json", false, "output as JSON")
+	addFormatAlias(cmd, &jsonOutput)
 	cmd.Flags().BoolVarP(&recursive, "recursive", "r", false, "scan subdirectories recursively")
 
 	return cmd

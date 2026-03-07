@@ -26,6 +26,10 @@ func TestHasJSONFlag(t *testing.T) {
 		{[]string{"logtap", "--json", "version"}, true},
 		{nil, false},
 		{[]string{"--json"}, true},
+		{[]string{"logtap", "version", "--format", "json"}, true},
+		{[]string{"logtap", "version", "--format=json"}, true},
+		{[]string{"logtap", "--format", "text"}, false},
+		{[]string{"logtap", "--format"}, false},
 	}
 	for _, tt := range tests {
 		got := hasJSONFlag(tt.args)
@@ -1117,5 +1121,58 @@ func TestCheckResult_JSON(t *testing.T) {
 	}
 	if !strings.Contains(string(data), "{}") && !strings.Contains(string(data), "null") {
 		t.Errorf("unexpected JSON: %s", data)
+	}
+}
+
+func TestInit(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
+	// First run creates config
+	if err := runInit(false); err != nil {
+		t.Fatalf("init: %v", err)
+	}
+	configPath := filepath.Join(home, ".logtap", "config.yaml")
+	if _, err := os.Stat(configPath); err != nil {
+		t.Fatal("config file not created")
+	}
+
+	// Second run is idempotent
+	if err := runInit(false); err != nil {
+		t.Fatalf("init idempotent: %v", err)
+	}
+
+	// JSON output
+	if err := runInit(true); err != nil {
+		t.Fatalf("init json: %v", err)
+	}
+}
+
+func TestFormatAlias(t *testing.T) {
+	root := execute
+	_ = root
+
+	// Test --format json on version via cobra
+	r := &cobra.Command{Use: "logtap"}
+	r.AddCommand(newVersionCmd())
+	r.SetArgs([]string{"version", "--format", "json"})
+	if err := r.Execute(); err != nil {
+		t.Errorf("version --format json: %v", err)
+	}
+}
+
+func TestDoctorAlias(t *testing.T) {
+	r := &cobra.Command{Use: "logtap"}
+	cmd := newCheckCmd()
+	r.AddCommand(cmd)
+
+	found := false
+	for _, a := range cmd.Aliases {
+		if a == "doctor" {
+			found = true
+		}
+	}
+	if !found {
+		t.Error("check command missing 'doctor' alias")
 	}
 }

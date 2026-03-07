@@ -41,10 +41,16 @@ func main() {
 	}
 }
 
-// hasJSONFlag checks if --json appears in the command-line arguments.
+// hasJSONFlag checks if --json or --format json appears in the command-line arguments.
 func hasJSONFlag(args []string) bool {
-	for _, a := range args {
+	for i, a := range args {
 		if a == "--json" {
+			return true
+		}
+		if a == "--format=json" {
+			return true
+		}
+		if a == "--format" && i+1 < len(args) && args[i+1] == "json" {
 			return true
 		}
 	}
@@ -116,6 +122,7 @@ func execute() error {
 	root.AddCommand(newCatalogCmd())
 	root.AddCommand(newReportCmd())
 	root.AddCommand(newSignCmd())
+	root.AddCommand(newInitCmd())
 	return root.Execute()
 }
 
@@ -144,5 +151,6 @@ func newVersionCmd() *cobra.Command {
 	}
 
 	cmd.Flags().BoolVar(&jsonOutput, "json", false, "output version as JSON")
+	addFormatAlias(cmd, &jsonOutput)
 	return cmd
 }

@@ -37,6 +37,7 @@ func newDiffCmd() *cobra.Command {
 	}
 
 	cmd.Flags().BoolVar(&jsonOutput, "json", false, "output as JSON")
+	addFormatAlias(cmd, &jsonOutput)
 	cmd.Flags().BoolVar(&baseline, "baseline", false, "treat first capture as baseline and produce a verdict")
 	cmd.Flags().BoolVar(&ci, "ci", false, "CI mode: exit code encodes verdict (0=pass, 6=fail)")
 	cmd.Flags().StringSliceVar(&failOn, "fail-on", []string{"regression"}, "verdicts that cause exit 6 in --ci mode")

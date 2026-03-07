@@ -33,6 +33,7 @@ func newSnapshotCmd() *cobra.Command {
 	cmd.Flags().StringVarP(&output, "output", "o", "", "output path (required)")
 	cmd.Flags().BoolVar(&extract, "extract", false, "extract archive to directory")
 	cmd.Flags().BoolVar(&jsonOutput, "json", false, "output summary as JSON")
+	addFormatAlias(cmd, &jsonOutput)
 
 	return cmd
 }

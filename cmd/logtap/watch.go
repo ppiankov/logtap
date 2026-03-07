@@ -40,6 +40,7 @@ For completed captures, it shows the last N lines and exits.`,
 	cmd.Flags().StringVar(&grepStr, "grep", "", "regex filter on message content")
 	cmd.Flags().StringVar(&labelStr, "label", "", "label filter (key=value)")
 	cmd.Flags().BoolVar(&jsonOutput, "json", false, "output as JSON")
+	addFormatAlias(cmd, &jsonOutput)
 
 	return cmd
 }
