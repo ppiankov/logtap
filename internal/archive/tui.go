@@ -58,6 +58,11 @@ type ReplayModel struct {
 	filterVal    string
 	filterActive bool
 
+	// export
+	exporting   bool
+	exportInput string
+	exportMsg   string
+
 	// time jump
 	timeJumping   bool
 	timeJumpInput string
@@ -143,6 +148,9 @@ func (m ReplayModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.KeyMsg:
 		if m.picker {
 			return m.updatePicker(msg)
+		}
+		if m.exporting {
+			return m.updateExport(msg)
 		}
 		if m.timeJumping {
 			return m.updateTimeJump(msg)
@@ -240,6 +248,11 @@ func (m ReplayModel) updateNormal(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.timeJumping = true
 		m.timeJumpInput = ""
 
+	case "w":
+		m.exporting = true
+		m.exportInput = fmt.Sprintf("./filtered-%s", time.Now().Format("20060102-150405"))
+		m.exportMsg = ""
+
 	case "?":
 		m.showHelp = !m.showHelp
 
@@ -336,6 +349,35 @@ func (m ReplayModel) updatePicker(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.picker = false
 		if m.feeder != nil {
 			m.feeder.Start()
+		}
+	}
+
+	return m, nil
+}
+
+func (m ReplayModel) updateExport(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch msg.String() {
+	case "enter":
+		m.exporting = false
+		n, err := recv.ExportFilteredLines(m.lines, m.exportInput)
+		if err != nil {
+			m.exportMsg = fmt.Sprintf("Export error: %s", err)
+		} else {
+			m.exportMsg = fmt.Sprintf("Exported %d lines to %s", n, m.exportInput)
+		}
+
+	case "esc":
+		m.exporting = false
+		m.exportInput = ""
+
+	case "backspace":
+		if len(m.exportInput) > 0 {
+			m.exportInput = m.exportInput[:len(m.exportInput)-1]
+		}
+
+	default:
+		if len(msg.String()) == 1 {
+			m.exportInput += msg.String()
 		}
 	}
 
@@ -529,6 +571,9 @@ func (m ReplayModel) renderHelp() []string {
 		h.Render("  Filter"),
 		d.Render("    l          ") + "label filter (e.g. container=api)",
 		d.Render("    t          ") + "jump to timestamp (e.g. 14:32)",
+		"",
+		h.Render("  Export"),
+		d.Render("    w          ") + "export filtered view to capture dir",
 		"",
 		h.Render("  Playback"),
 		d.Render("    Space      ") + "pause/resume",
@@ -759,6 +804,11 @@ func (m ReplayModel) View() string {
 
 	// status bar
 	var status strings.Builder
+	if m.exporting {
+		status.WriteString(rSearchBadge.Render(fmt.Sprintf("w:%s", m.exportInput)))
+	} else if m.exportMsg != "" {
+		status.WriteString(rExportBadge.Render(m.exportMsg))
+	}
 	if m.timeJumping {
 		status.WriteString(rSearchBadge.Render(fmt.Sprintf("t:%s", m.timeJumpInput)))
 	}
@@ -846,6 +896,7 @@ var (
 	rSpeedBadge        = lipgloss.NewStyle().Background(lipgloss.Color("33")).Foreground(lipgloss.Color("15")).Padding(0, 1)
 	rPauseBadge        = lipgloss.NewStyle().Background(lipgloss.Color("208")).Foreground(lipgloss.Color("0")).Padding(0, 1)
 	rDoneBadge         = lipgloss.NewStyle().Background(lipgloss.Color("34")).Foreground(lipgloss.Color("15")).Padding(0, 1)
+	rExportBadge       = lipgloss.NewStyle().Background(lipgloss.Color("34")).Foreground(lipgloss.Color("15")).Padding(0, 1)
 	rHelpKeyStyle      = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("75"))
 	rHelpDescStyle     = lipgloss.NewStyle().Foreground(lipgloss.Color("250"))
 	rPickerCursorStyle = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("75"))

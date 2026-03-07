@@ -71,6 +71,11 @@ type TUIModel struct {
 	filterVal    string // parsed value
 	filterActive bool
 
+	// export
+	exporting   bool
+	exportInput string
+	exportMsg   string // brief confirmation shown in status bar
+
 	// time jump
 	timeJumping   bool
 	timeJumpInput string
@@ -178,6 +183,9 @@ func (m TUIModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			return m, nil
 		}
+		if m.exporting {
+			return m.updateExport(msg)
+		}
 		if m.timeJumping {
 			return m.updateTimeJump(msg)
 		}
@@ -265,8 +273,42 @@ func (m TUIModel) updateNormal(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.timeJumping = true
 		m.timeJumpInput = ""
 
+	case "w":
+		m.exporting = true
+		m.exportInput = fmt.Sprintf("./filtered-%s", time.Now().Format("20060102-150405"))
+		m.exportMsg = ""
+
 	case "?":
 		m.showHelp = !m.showHelp
+	}
+
+	return m, nil
+}
+
+func (m TUIModel) updateExport(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch msg.String() {
+	case "enter":
+		m.exporting = false
+		n, err := ExportFilteredLines(m.lines, m.exportInput)
+		if err != nil {
+			m.exportMsg = fmt.Sprintf("Export error: %s", err)
+		} else {
+			m.exportMsg = fmt.Sprintf("Exported %d lines to %s", n, m.exportInput)
+		}
+
+	case "esc":
+		m.exporting = false
+		m.exportInput = ""
+
+	case "backspace":
+		if len(m.exportInput) > 0 {
+			m.exportInput = m.exportInput[:len(m.exportInput)-1]
+		}
+
+	default:
+		if len(msg.String()) == 1 {
+			m.exportInput += msg.String()
+		}
 	}
 
 	return m, nil
@@ -619,6 +661,11 @@ func (m TUIModel) View() string {
 
 	// status bar
 	var status strings.Builder
+	if m.exporting {
+		status.WriteString(searchBadge.Render(fmt.Sprintf("w:%s", m.exportInput)))
+	} else if m.exportMsg != "" {
+		status.WriteString(exportBadge.Render(m.exportMsg))
+	}
 	if m.timeJumping {
 		status.WriteString(searchBadge.Render(fmt.Sprintf("t:%s", m.timeJumpInput)))
 	}
@@ -756,6 +803,9 @@ func (m TUIModel) renderHelp() []string {
 		d.Render("    l          ") + "label filter (e.g. container=api)",
 		d.Render("    t          ") + "jump to timestamp (e.g. 14:32)",
 		"",
+		h.Render("  Export"),
+		d.Render("    w          ") + "export filtered view to capture dir",
+		"",
 		h.Render("  General"),
 		d.Render("    ?          ") + "toggle this help",
 		d.Render("    q          ") + "quit",
@@ -776,6 +826,7 @@ var (
 	followBadge   = lipgloss.NewStyle().Background(lipgloss.Color("34")).Foreground(lipgloss.Color("15")).Padding(0, 1)
 	filterBadge   = lipgloss.NewStyle().Background(lipgloss.Color("63")).Foreground(lipgloss.Color("15")).Padding(0, 1)
 	grepBadge     = lipgloss.NewStyle().Background(lipgloss.Color("28")).Foreground(lipgloss.Color("15")).Padding(0, 1)
+	exportBadge   = lipgloss.NewStyle().Background(lipgloss.Color("34")).Foreground(lipgloss.Color("15")).Padding(0, 1)
 	helpKeyStyle  = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("75"))
 	helpDescStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("250"))
 )
