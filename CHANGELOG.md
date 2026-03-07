@@ -4,6 +4,14 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [1.9.5] - 2026-03-07
+
+### Added
+
+- `--format json` alias for `--json` on all commands (ANCC compliance)
+- `logtap init` command — creates default config at `~/.logtap/config.yaml`
+- `logtap doctor` alias for `logtap check`
+
 ## [1.9.0] - 2026-03-06
 
 ### Added
