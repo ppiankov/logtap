@@ -522,6 +522,27 @@ func TestReplayViewDoneBadge(t *testing.T) {
 	}
 }
 
+func TestReplayBookmarkSetAndJump(t *testing.T) {
+	m := newTestReplayModel()
+	feedReplayLines(&m, 100)
+
+	m.follow = false
+	m.scrollOff = 40
+
+	m = sendReplayKey(m, "m")
+	m = sendReplayKey(m, "b")
+	if m.marks['b'] != 40 {
+		t.Errorf("mark b: got %d, want 40", m.marks['b'])
+	}
+
+	m.scrollOff = 5
+	m = sendReplayKey(m, "'")
+	m = sendReplayKey(m, "b")
+	if m.scrollOff != 40 {
+		t.Errorf("scrollOff after jump: got %d, want 40", m.scrollOff)
+	}
+}
+
 func TestReplayExportMode(t *testing.T) {
 	m := newTestReplayModel()
 	feedReplayLines(&m, 5)

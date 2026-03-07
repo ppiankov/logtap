@@ -80,6 +80,17 @@ Press `t` to jump to a specific timestamp.
 
 Partial matches work — the input is matched against the formatted timestamp string.
 
+## Bookmarks
+
+Vim-style marks for navigating between points of interest.
+
+| Input | Action |
+|-------|--------|
+| `m` then `a`-`z` | Set bookmark at current scroll position |
+| `'` then `a`-`z` | Jump to bookmark |
+
+Bookmarks persist for the session. Status bar shows confirmation when set.
+
 ## Export
 
 Press `w` to export the current filtered view as a new capture directory.

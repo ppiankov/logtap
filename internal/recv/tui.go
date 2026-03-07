@@ -71,6 +71,12 @@ type TUIModel struct {
 	filterVal    string // parsed value
 	filterActive bool
 
+	// bookmarks
+	marks       map[rune]int // letter -> line index
+	markSetting bool         // waiting for letter after 'm'
+	markJumping bool         // waiting for letter after "'"
+	markMsg     string       // brief confirmation
+
 	// export
 	exporting   bool
 	exportInput string
@@ -183,6 +189,12 @@ func (m TUIModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			return m, nil
 		}
+		if m.markSetting {
+			return m.updateMarkSet(msg)
+		}
+		if m.markJumping {
+			return m.updateMarkJump(msg)
+		}
 		if m.exporting {
 			return m.updateExport(msg)
 		}
@@ -273,6 +285,14 @@ func (m TUIModel) updateNormal(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.timeJumping = true
 		m.timeJumpInput = ""
 
+	case "m":
+		m.markSetting = true
+		m.markMsg = ""
+
+	case "'":
+		m.markJumping = true
+		m.markMsg = ""
+
 	case "w":
 		m.exporting = true
 		m.exportInput = fmt.Sprintf("./filtered-%s", time.Now().Format("20060102-150405"))
@@ -282,6 +302,34 @@ func (m TUIModel) updateNormal(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.showHelp = !m.showHelp
 	}
 
+	return m, nil
+}
+
+func (m TUIModel) updateMarkSet(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	m.markSetting = false
+	key := msg.String()
+	if len(key) == 1 && key[0] >= 'a' && key[0] <= 'z' {
+		if m.marks == nil {
+			m.marks = make(map[rune]int)
+		}
+		m.marks[rune(key[0])] = m.scrollOff
+		m.markMsg = fmt.Sprintf("mark %s set", key)
+	}
+	return m, nil
+}
+
+func (m TUIModel) updateMarkJump(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	m.markJumping = false
+	key := msg.String()
+	if len(key) == 1 && key[0] >= 'a' && key[0] <= 'z' {
+		if idx, ok := m.marks[rune(key[0])]; ok {
+			m.follow = false
+			m.scrollOff = clamp(idx, 0, m.maxScroll())
+			m.markMsg = ""
+		} else {
+			m.markMsg = fmt.Sprintf("mark %s not set", key)
+		}
+	}
 	return m, nil
 }
 
@@ -661,6 +709,13 @@ func (m TUIModel) View() string {
 
 	// status bar
 	var status strings.Builder
+	if m.markSetting {
+		status.WriteString(searchBadge.Render("m:_"))
+	} else if m.markJumping {
+		status.WriteString(searchBadge.Render("':_"))
+	} else if m.markMsg != "" {
+		status.WriteString(filterBadge.Render(m.markMsg))
+	}
 	if m.exporting {
 		status.WriteString(searchBadge.Render(fmt.Sprintf("w:%s", m.exportInput)))
 	} else if m.exportMsg != "" {
@@ -802,6 +857,10 @@ func (m TUIModel) renderHelp() []string {
 		h.Render("  Filter"),
 		d.Render("    l          ") + "label filter (e.g. container=api)",
 		d.Render("    t          ") + "jump to timestamp (e.g. 14:32)",
+		"",
+		h.Render("  Bookmarks"),
+		d.Render("    m + a-z    ") + "set bookmark at current position",
+		d.Render("    ' + a-z    ") + "jump to bookmark",
 		"",
 		h.Render("  Export"),
 		d.Render("    w          ") + "export filtered view to capture dir",
