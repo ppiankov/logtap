@@ -704,7 +704,7 @@ func (m *ReplayModel) scrollToBottom() {
 }
 
 func (m ReplayModel) logPaneHeight() int {
-	// header(1) + blank(1) + progress(4) + separator(1) = 7 lines overhead
+	// header(1) + services(1) + blank(1) + progress(3) + separator(1) = 7 lines overhead
 	h := m.height - 7
 	if h < 1 {
 		h = 1
@@ -746,7 +746,21 @@ func (m ReplayModel) View() string {
 	header := rHeaderStyle.Render(fmt.Sprintf("logtap open | %s%s | %s lines",
 		m.dir, timeRange, formatRate(float64(m.totalLines))))
 	b.WriteString(header)
-	b.WriteString("\n\n")
+	b.WriteString("\n")
+
+	// service summary
+	if len(m.services) > 0 {
+		var parts []string
+		for _, svc := range m.services {
+			parts = append(parts, fmt.Sprintf("%s (%s)", svc.Value, formatRate(float64(svc.Lines))))
+		}
+		summary := strings.Join(parts, " · ")
+		if len(summary) > m.width-12 {
+			summary = summary[:m.width-15] + "..."
+		}
+		b.WriteString(rLabelStyle.Render(fmt.Sprintf(" Services: %s", summary)))
+	}
+	b.WriteString("\n")
 
 	// progress section
 	var emitted int64
