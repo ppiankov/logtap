@@ -522,6 +522,47 @@ func TestReplayViewDoneBadge(t *testing.T) {
 	}
 }
 
+func TestReplayServiceSummaryHeader(t *testing.T) {
+	ring := recv.NewLogRing(100)
+	meta := &recv.Metadata{
+		Version: 1,
+		Format:  "jsonl",
+		Started: time.Date(2024, 1, 15, 10, 0, 0, 0, time.UTC),
+		Stopped: time.Date(2024, 1, 15, 11, 24, 0, 0, time.UTC),
+	}
+	services := []ServiceEntry{
+		{Label: "app", Value: "api", Lines: 420000},
+		{Label: "app", Value: "worker", Lines: 380000},
+		{Label: "app", Value: "redis", Lines: 50000},
+	}
+	m := NewReplayModel(nil, ring, meta, "/tmp/capture", 850000, services)
+	m.width = 120
+	m.height = 30
+	m.startTime = time.Now()
+	m.picker = false // simulate picker already dismissed
+
+	view := m.View()
+	if !strings.Contains(view, "api") || !strings.Contains(view, "420.0K") {
+		t.Errorf("expected api service in header, got:\n%s", view)
+	}
+	if !strings.Contains(view, "worker") || !strings.Contains(view, "380.0K") {
+		t.Error("expected worker service in header")
+	}
+	if !strings.Contains(view, "redis") || !strings.Contains(view, "50.0K") {
+		t.Error("expected redis service in header")
+	}
+}
+
+func TestReplayServiceSummaryNoServices(t *testing.T) {
+	m := newTestReplayModel()
+	m.startTime = time.Now()
+	view := m.View()
+	// should not crash, and should not contain "Services:"
+	if strings.Contains(view, "Services:") {
+		t.Error("should not show Services header when no services")
+	}
+}
+
 func TestReplayBookmarkSetAndJump(t *testing.T) {
 	m := newTestReplayModel()
 	feedReplayLines(&m, 100)
