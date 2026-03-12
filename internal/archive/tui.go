@@ -32,11 +32,14 @@ type ReplayModel struct {
 	startTime  time.Time
 
 	// service picker
-	picker       bool // true while picker is shown
-	services     []ServiceEntry
-	pickerSel    []bool // selection state per service
-	pickerCursor int
-	pickerOffset int // scroll offset for long service lists
+	picker         bool // true while picker is shown
+	services       []ServiceEntry
+	pickerSel      []bool // selection state per service
+	pickerCursor   int
+	pickerOffset   int    // scroll offset for long service lists
+	pickerSearch   bool   // true while typing search
+	pickerFilter   string // current filter text
+	pickerFiltered []int  // indices into services matching filter (nil = show all)
 
 	// log display
 	lines       []recv.LogEntry
@@ -337,14 +340,81 @@ func (m *ReplayModel) pickerScrollIntoView() {
 	}
 }
 
+// pickerView returns the indices of services currently visible (filtered or all).
+func (m ReplayModel) pickerView() []int {
+	if m.pickerFiltered != nil {
+		return m.pickerFiltered
+	}
+	idx := make([]int, len(m.services))
+	for i := range idx {
+		idx[i] = i
+	}
+	return idx
+}
+
+// pickerApplyFilter rebuilds pickerFiltered from pickerFilter, resets cursor.
+func (m *ReplayModel) pickerApplyFilter() {
+	if m.pickerFilter == "" {
+		m.pickerFiltered = nil
+	} else {
+		lower := strings.ToLower(m.pickerFilter)
+		m.pickerFiltered = nil
+		for i, svc := range m.services {
+			if strings.Contains(strings.ToLower(svc.Value), lower) {
+				m.pickerFiltered = append(m.pickerFiltered, i)
+			}
+		}
+	}
+	m.pickerCursor = 0
+	m.pickerOffset = 0
+}
+
 func (m ReplayModel) updatePicker(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	// search input mode
+	if m.pickerSearch {
+		switch msg.String() {
+		case "esc":
+			m.pickerSearch = false
+			m.pickerFilter = ""
+			m.pickerFiltered = nil
+			m.pickerCursor = 0
+			m.pickerOffset = 0
+		case "enter":
+			m.pickerSearch = false
+		case "backspace":
+			if len(m.pickerFilter) > 0 {
+				m.pickerFilter = m.pickerFilter[:len(m.pickerFilter)-1]
+				m.pickerApplyFilter()
+			}
+		default:
+			r := msg.String()
+			if len(r) == 1 && r[0] >= 32 {
+				m.pickerFilter += r
+				m.pickerApplyFilter()
+			}
+		}
+		return m, nil
+	}
+
+	view := m.pickerView()
 	switch msg.String() {
 	case "q", "ctrl+c":
 		m.quitting = true
 		return m, tea.Quit
 
+	case "esc":
+		if m.pickerFilter != "" {
+			m.pickerFilter = ""
+			m.pickerFiltered = nil
+			m.pickerCursor = 0
+			m.pickerOffset = 0
+		}
+
+	case "/":
+		m.pickerSearch = true
+
 	case "j", "down":
-		if m.pickerCursor < len(m.services)-1 {
+		if m.pickerCursor < len(view)-1 {
 			m.pickerCursor++
 		}
 		m.pickerScrollIntoView()
@@ -356,21 +426,22 @@ func (m ReplayModel) updatePicker(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.pickerScrollIntoView()
 
 	case " ":
-		if m.pickerCursor < len(m.pickerSel) {
-			m.pickerSel[m.pickerCursor] = !m.pickerSel[m.pickerCursor]
+		if m.pickerCursor < len(view) {
+			idx := view[m.pickerCursor]
+			m.pickerSel[idx] = !m.pickerSel[idx]
 		}
 
 	case "a":
-		// toggle all
+		// toggle all visible
 		allSelected := true
-		for _, s := range m.pickerSel {
-			if !s {
+		for _, idx := range view {
+			if !m.pickerSel[idx] {
 				allSelected = false
 				break
 			}
 		}
-		for i := range m.pickerSel {
-			m.pickerSel[i] = !allSelected
+		for _, idx := range view {
+			m.pickerSel[idx] = !allSelected
 		}
 
 	case "enter":
@@ -687,43 +758,56 @@ func (m ReplayModel) renderPicker() string {
 	b.WriteString(rLabelStyle.Render(fmt.Sprintf("  Total:   %s lines", formatRate(float64(m.totalLines)))))
 	b.WriteString("\n\n")
 
+	view := m.pickerView()
 	visible := m.pickerVisibleLines()
 	end := m.pickerOffset + visible
-	if end > len(m.services) {
-		end = len(m.services)
+	if end > len(view) {
+		end = len(view)
 	}
 	if m.pickerOffset > 0 {
 		b.WriteString(rLabelStyle.Render(fmt.Sprintf("  ↑ %d more", m.pickerOffset)))
 		b.WriteString("\n")
 	}
-	for i := m.pickerOffset; i < end; i++ {
-		svc := m.services[i]
+	for vi := m.pickerOffset; vi < end; vi++ {
+		idx := view[vi]
+		svc := m.services[idx]
 		cursor := "  "
-		if i == m.pickerCursor {
+		if vi == m.pickerCursor {
 			cursor = "> "
 		}
 		check := "[ ]"
-		if m.pickerSel[i] {
+		if m.pickerSel[idx] {
 			check = "[x]"
 		}
 		line := fmt.Sprintf("%s%s %s (%s lines)", cursor, check, svc.Value, formatRate(float64(svc.Lines)))
-		if i == m.pickerCursor {
+		if vi == m.pickerCursor {
 			b.WriteString(rPickerCursorStyle.Render(line))
-		} else if m.pickerSel[i] {
+		} else if m.pickerSel[idx] {
 			b.WriteString(rPickerSelStyle.Render(line))
 		} else {
 			b.WriteString(line)
 		}
 		b.WriteString("\n")
 	}
-	if remaining := len(m.services) - end; remaining > 0 {
+	if remaining := len(view) - end; remaining > 0 {
 		b.WriteString(rLabelStyle.Render(fmt.Sprintf("  ↓ %d more", remaining)))
 		b.WriteString("\n")
 	}
 
 	b.WriteString("\n")
-	b.WriteString(rLabelStyle.Render("  j/k: navigate  |  Space: toggle  |  a: toggle all  |  Enter: confirm  |  q: quit"))
-	b.WriteString("\n")
+	if m.pickerSearch {
+		b.WriteString(fmt.Sprintf("  /%-20s", m.pickerFilter+"▌"))
+		if m.pickerFiltered != nil {
+			b.WriteString(rLabelStyle.Render(fmt.Sprintf("  (%d/%d)", len(m.pickerFiltered), len(m.services))))
+		}
+		b.WriteString("\n")
+	} else if m.pickerFilter != "" {
+		b.WriteString(rLabelStyle.Render(fmt.Sprintf("  filter: %s (%d/%d)  |  /: search  |  Esc: clear", m.pickerFilter, len(view), len(m.services))))
+		b.WriteString("\n")
+	} else {
+		b.WriteString(rLabelStyle.Render("  /: search  |  j/k: navigate  |  Space: toggle  |  a: toggle all  |  Enter: confirm  |  q: quit"))
+		b.WriteString("\n")
+	}
 
 	return b.String()
 }
