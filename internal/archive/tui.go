@@ -1,8 +1,11 @@
 package archive
 
 import (
+	"encoding/json"
 	"fmt"
+	"os/exec"
 	"regexp"
+	"sort"
 	"strings"
 	"time"
 
@@ -87,6 +90,11 @@ type ReplayModel struct {
 	// help overlay
 	showHelp bool
 
+	// line detail overlay
+	showDetail   bool
+	detailIdx    int // index into m.lines
+	detailScroll int
+
 	// quit signal
 	quitting bool
 }
@@ -170,6 +178,9 @@ func (m ReplayModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		if m.timeJumping {
 			return m.updateTimeJump(msg)
+		}
+		if m.showDetail {
+			return m.updateDetail(msg)
 		}
 		if m.showHelp {
 			if msg.String() == "?" || msg.String() == "esc" || msg.String() == "q" {
@@ -279,6 +290,14 @@ func (m ReplayModel) updateNormal(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 	case "?":
 		m.showHelp = !m.showHelp
+
+	case "enter":
+		// open detail overlay for first visible line
+		if len(m.lines) > 0 && m.scrollOff < len(m.lines) {
+			m.showDetail = true
+			m.detailIdx = m.scrollOff
+			m.detailScroll = 0
+		}
 
 	case " ":
 		if m.feeder != nil {
@@ -745,9 +764,123 @@ func (m ReplayModel) renderHelp() []string {
 		d.Render("    [/]        ") + "decrease/increase speed",
 		d.Render("    0          ") + "instant speed (load all)",
 		"",
+		h.Render("  Detail"),
+		d.Render("    Enter      ") + "show full line detail",
+		d.Render("    y          ") + "copy line to clipboard (in detail)",
+		"",
 		h.Render("  General"),
 		d.Render("    ?          ") + "toggle this help",
 		d.Render("    q          ") + "quit",
+	}
+}
+
+func (m ReplayModel) updateDetail(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch msg.String() {
+	case "esc", "enter", "q":
+		m.showDetail = false
+	case "j", "down":
+		m.detailScroll++
+	case "k", "up":
+		if m.detailScroll > 0 {
+			m.detailScroll--
+		}
+	case "n":
+		// next line
+		if m.detailIdx < len(m.lines)-1 {
+			m.detailIdx++
+			m.detailScroll = 0
+		}
+	case "N":
+		// previous line
+		if m.detailIdx > 0 {
+			m.detailIdx--
+			m.detailScroll = 0
+		}
+	case "y":
+		// copy full line as JSON to clipboard
+		if m.detailIdx < len(m.lines) {
+			e := m.lines[m.detailIdx]
+			data, _ := json.Marshal(e)
+			copyToClipboard(string(data))
+		}
+	}
+	return m, nil
+}
+
+func (m ReplayModel) renderDetail() string {
+	if m.detailIdx >= len(m.lines) {
+		return ""
+	}
+	e := m.lines[m.detailIdx]
+
+	var lines []string
+	lines = append(lines, rBoldStyle.Render("  Line Detail")+"  "+rLabelStyle.Render("(Esc to close, n/N next/prev, y copy)"))
+	lines = append(lines, "")
+	lines = append(lines, rLabelStyle.Render(fmt.Sprintf("  Timestamp: %s", e.Timestamp.Format(time.RFC3339Nano))))
+	lines = append(lines, "")
+
+	if len(e.Labels) > 0 {
+		lines = append(lines, rLabelStyle.Render("  Labels:"))
+		// sort keys for stable output
+		keys := make([]string, 0, len(e.Labels))
+		for k := range e.Labels {
+			keys = append(keys, k)
+		}
+		sort.Strings(keys)
+		for _, k := range keys {
+			lines = append(lines, fmt.Sprintf("    %s = %s", k, e.Labels[k]))
+		}
+		lines = append(lines, "")
+	}
+
+	lines = append(lines, rLabelStyle.Render("  Message:"))
+	// wrap message to terminal width
+	msg := e.Message
+	wrapWidth := m.width - 4
+	if wrapWidth < 20 {
+		wrapWidth = 20
+	}
+	for len(msg) > 0 {
+		end := wrapWidth
+		if end > len(msg) {
+			end = len(msg)
+		}
+		lines = append(lines, "    "+msg[:end])
+		msg = msg[end:]
+	}
+
+	lines = append(lines, "")
+	lines = append(lines, rLabelStyle.Render(fmt.Sprintf("  [%d / %d]", m.detailIdx+1, len(m.lines))))
+
+	// apply scroll
+	if m.detailScroll >= len(lines) {
+		m.detailScroll = len(lines) - 1
+	}
+	visible := lines[m.detailScroll:]
+	maxLines := m.height - 2
+	if len(visible) > maxLines {
+		visible = visible[:maxLines]
+	}
+
+	return strings.Join(visible, "\n") + "\n"
+}
+
+func copyToClipboard(s string) {
+	// try pbcopy (macOS), then xclip, then xsel
+	for _, cmd := range []struct{ name, arg string }{
+		{"pbcopy", ""},
+		{"xclip", "-selection clipboard"},
+		{"xsel", "--clipboard --input"},
+	} {
+		args := []string{}
+		if cmd.arg != "" {
+			args = strings.Fields(cmd.arg)
+		}
+		c := exec.Command(cmd.name, args...)
+		c.Stdin = strings.NewReader(s)
+		if c.Run() == nil {
+			return
+		}
 	}
 }
 
@@ -956,7 +1089,9 @@ func (m ReplayModel) View() string {
 	// log pane (or help overlay)
 	paneH := m.logPaneHeight()
 
-	if m.showHelp {
+	if m.showDetail {
+		b.WriteString(m.renderDetail())
+	} else if m.showHelp {
 		helpLines := m.renderHelp()
 		for i := 0; i < paneH; i++ {
 			if i < len(helpLines) {

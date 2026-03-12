@@ -1,6 +1,8 @@
 package main
 
 import (
+	"bufio"
+	"encoding/json"
 	"fmt"
 	"os"
 	"strings"
@@ -20,6 +22,7 @@ func newOpenCmd() *cobra.Command {
 		toStr       string
 		labels      []string
 		grepStr     string
+		dumpMode    bool
 		injectSpecs []string
 		injectAt    string
 		injectDur   string
@@ -37,7 +40,7 @@ func newOpenCmd() *cobra.Command {
 			if grepStr != "" && !cmd.Flags().Changed("speed") {
 				speedStr = "0"
 			}
-			return runOpen(args[0], speedStr, fromStr, toStr, labels, grepStr,
+			return runOpen(args[0], speedStr, fromStr, toStr, labels, grepStr, dumpMode,
 				injectSpecs, injectAt, injectDur, injectOut, jsonOutput)
 		},
 	}
@@ -47,6 +50,7 @@ func newOpenCmd() *cobra.Command {
 	cmd.Flags().StringVar(&toStr, "to", "", "end time filter (RFC3339, HH:MM, or -30m)")
 	cmd.Flags().StringSliceVar(&labels, "label", nil, "label filter (key=value, repeatable)")
 	cmd.Flags().StringVar(&grepStr, "grep", "", "regex filter on log message")
+	cmd.Flags().BoolVar(&dumpMode, "dump", false, "print matching lines to stdout (no TUI)")
 	cmd.Flags().StringArrayVar(&injectSpecs, "inject", nil, "fault to inject (error-spike, service-down=<svc>, latency-spike=<svc>)")
 	cmd.Flags().StringVar(&injectAt, "at", "", "injection start time (RFC3339, HH:MM, or -30m)")
 	cmd.Flags().StringVar(&injectDur, "duration", "1m", "injection duration (e.g. 30s, 1m, 5m)")
@@ -57,7 +61,7 @@ func newOpenCmd() *cobra.Command {
 	return cmd
 }
 
-func runOpen(dir, speedStr, fromStr, toStr string, labels []string, grepStr string,
+func runOpen(dir, speedStr, fromStr, toStr string, labels []string, grepStr string, dumpMode bool,
 	injectSpecs []string, injectAt, injectDur, injectOut string, jsonOutput bool) error {
 
 	reader, err := archive.NewReader(dir)
@@ -76,6 +80,11 @@ func runOpen(dir, speedStr, fromStr, toStr string, labels []string, grepStr stri
 	filter, err := buildFilter(fromStr, toStr, labels, grepStr, meta)
 	if err != nil {
 		return err
+	}
+
+	// dump mode — print to stdout, no TUI
+	if dumpMode {
+		return runDump(reader, filter, jsonOutput)
 	}
 
 	// service summary for picker — skip if --label is set (already filtered)
@@ -175,4 +184,29 @@ func parseSpeed(s string) (archive.Speed, error) {
 		return 0, fmt.Errorf("speed must be >= 0")
 	}
 	return archive.Speed(val), nil
+}
+
+func runDump(reader *archive.Reader, filter *archive.Filter, jsonOutput bool) error {
+	w := bufio.NewWriter(os.Stdout)
+	defer func() { _ = w.Flush() }()
+
+	enc := json.NewEncoder(w)
+	enc.SetEscapeHTML(false)
+
+	_, err := reader.Scan(filter, func(e recv.LogEntry) bool {
+		if jsonOutput {
+			_ = enc.Encode(e)
+		} else {
+			app := e.Labels["app"]
+			if app == "" {
+				for _, v := range e.Labels {
+					app = v
+					break
+				}
+			}
+			_, _ = fmt.Fprintf(w, "%s [%s] %s\n", e.Timestamp.Format("2006-01-02T15:04:05Z"), app, e.Message)
+		}
+		return true
+	})
+	return err
 }

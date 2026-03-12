@@ -659,7 +659,7 @@ func TestInjectOutJSON_Contract(t *testing.T) {
 	outDir := filepath.Join(t.TempDir(), "injected")
 
 	out := captureStdout(t, func() {
-		if err := runOpen(dir, "0", "", "", nil, "",
+		if err := runOpen(dir, "0", "", "", nil, "", false,
 			[]string{"error-spike"}, base.Format(time.RFC3339), "1m", outDir, true); err != nil {
 			t.Fatalf("runOpen inject-out: %v", err)
 		}
