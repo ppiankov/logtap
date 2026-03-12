@@ -4,6 +4,12 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [1.9.11] - 2026-03-12
+
+### Fixed
+
+- Clipboard paste now works in all TUI text inputs (search, filter, export, time jump, picker) — enables bracketed paste for Ghostty and other modern terminals
+
 ## [1.9.10] - 2026-03-12
 
 ### Added
