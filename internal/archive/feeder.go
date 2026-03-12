@@ -169,6 +169,7 @@ func (f *Feeder) run() {
 	defer f.wg.Done()
 	defer f.done.Store(true)
 
+	var batchCount int
 	_, err := f.reader.Scan(f.filter, func(e recv.LogEntry) bool {
 		// check stop
 		select {
@@ -251,6 +252,22 @@ func (f *Feeder) run() {
 			f.ring.Push(out)
 			f.linesEmitted.Add(1)
 		}
+
+		// yield periodically in instant mode so the TUI can process events
+		if speed == 0 {
+			batchCount++
+			if batchCount >= 10000 {
+				batchCount = 0
+				// check for stop during yield
+				select {
+				case <-f.stopCh:
+					return false
+				default:
+				}
+				time.Sleep(time.Millisecond)
+			}
+		}
+
 		return true
 	})
 
