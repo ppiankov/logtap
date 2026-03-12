@@ -4,6 +4,13 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [1.9.9] - 2026-03-12
+
+### Fixed
+
+- Service picker in replay TUI now scrolls when list exceeds terminal height — cursor stays visible with `↑/↓ N more` indicators
+- Added `j/k: navigate` to picker status bar legend
+
 ## [1.9.8] - 2026-03-07
 
 ### Added
