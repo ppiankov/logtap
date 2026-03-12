@@ -4,6 +4,18 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [1.9.15] - 2026-03-12
+
+### Added
+
+- `--color` flag on `--dump` — auto-detects TTY, highlights grep matches in red (`--color=always` for `less -R`)
+- `--context N` / `-C N` on `--dump` — show N lines before/after each grep match with `--` separators
+- `--before N` / `-B N` and `--after N` / `-A N` — asymmetric context
+- `--head N` on `--dump` — print first N matches and exit (early termination, fast)
+- `--tail N` on `--dump` — print last N matches
+- `--count` on `--dump` — print match count only, skips formatting for speed
+- `--fields` on `--dump` — choose output columns: `ts,msg`, `ts,container,msg`, `all` for all labels
+
 ## [1.9.14] - 2026-03-12
 
 ### Added
