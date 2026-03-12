@@ -103,6 +103,40 @@ Press `w` to export the current filtered view as a new capture directory.
 
 The exported directory is a valid logtap capture (metadata.json + index.jsonl + data) that can be opened with `logtap open`, inspected, or shared.
 
+## Line detail
+
+Press `Enter` to open a detail overlay for the top visible line.
+
+| Key | Action |
+|-----|--------|
+| `Enter` | Open detail for top visible line |
+| `n` / `N` | Next / previous line (within detail) |
+| `j` / `k` | Scroll detail content |
+| `y` | Copy full line as JSON to clipboard |
+| `Esc` / `Enter` / `q` | Close detail overlay |
+
+## Playback (replay only)
+
+| Key | Action |
+|-----|--------|
+| `Space` | Pause / resume |
+| `]` | Increase speed (1x → 2x → 4x → ... → instant) |
+| `[` | Decrease speed (instant → 64x → 32x → ... → 1x) |
+| `0` | Jump to instant speed (load all lines) |
+
+## Service picker (replay only)
+
+When opening a capture with multiple services, a picker appears before replay starts.
+
+| Key | Action |
+|-----|--------|
+| `j` / `k` | Navigate services |
+| `Space` | Toggle selection |
+| `a` | Toggle all |
+| `/` | Type-to-filter (substring, case-insensitive) |
+| `Esc` | Clear filter |
+| `Enter` | Confirm selection and start replay |
+
 ## General
 
 | Key | Action |

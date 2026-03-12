@@ -53,7 +53,22 @@ logtap untap --deployment api-gateway
 ```bash
 logtap open ./capture --speed 10x
 logtap open ./capture --from 10:32 --to 10:45 --label app=gateway
+logtap open ./capture --grep "error" --dump            # print matches to stdout (no TUI)
+logtap open ./capture --grep "error" --dump --json      # JSONL output for jq
+logtap open ./capture --grep "timeout" --dump | wc -l   # count matches
 ```
+
+Flags:
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--speed` | `1` (`0` with `--grep`) | Replay speed: `0`=instant, `1`=realtime, `10`=fast-forward |
+| `--from` | | Start time filter (RFC3339, HH:MM, or -30m) |
+| `--to` | | End time filter |
+| `--label` | | Label filter (key=value, repeatable) |
+| `--grep` | | Regex filter on log message |
+| `--dump` | `false` | Print matching lines to stdout, skip TUI |
+| `--json` | `false` | JSONL output (with `--dump` or `--inject-out`) |
 
 ### Export
 

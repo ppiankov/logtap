@@ -80,6 +80,8 @@ logtap untap --deployment api-gateway
 # Replay with filters
 logtap open ./capture --speed 10x
 logtap open ./capture --from 10:32 --to 10:45 --label app=gateway
+logtap open ./capture --grep "error" --dump              # print to stdout, no TUI
+logtap open ./capture --grep "error" --dump --json | jq . # pipe JSONL
 
 # Export and search
 logtap export ./capture --format parquet --out capture.parquet
