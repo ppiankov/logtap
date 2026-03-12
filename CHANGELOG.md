@@ -4,6 +4,12 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [1.9.13] - 2026-03-12
+
+### Fixed
+
+- TUI no longer freezes in instant speed mode with large captures (18M+ lines) — feeder yields periodically to keep event loop responsive
+
 ## [1.9.12] - 2026-03-12
 
 ### Added
