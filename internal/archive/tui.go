@@ -36,6 +36,7 @@ type ReplayModel struct {
 	services     []ServiceEntry
 	pickerSel    []bool // selection state per service
 	pickerCursor int
+	pickerOffset int // scroll offset for long service lists
 
 	// log display
 	lines       []recv.LogEntry
@@ -314,6 +315,28 @@ func (m ReplayModel) updateNormal(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
+// pickerVisibleLines returns how many service rows fit in the terminal.
+// Reserves lines for header (title, capture, time, total, blank) and footer.
+func (m ReplayModel) pickerVisibleLines() int {
+	const headerLines = 6 // title + blank + capture + time + total + blank
+	const footerLines = 2 // blank + status bar
+	visible := m.height - headerLines - footerLines
+	if visible < 1 {
+		visible = 1
+	}
+	return visible
+}
+
+func (m *ReplayModel) pickerScrollIntoView() {
+	visible := m.pickerVisibleLines()
+	if m.pickerCursor < m.pickerOffset {
+		m.pickerOffset = m.pickerCursor
+	}
+	if m.pickerCursor >= m.pickerOffset+visible {
+		m.pickerOffset = m.pickerCursor - visible + 1
+	}
+}
+
 func (m ReplayModel) updatePicker(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
 	case "q", "ctrl+c":
@@ -324,11 +347,13 @@ func (m ReplayModel) updatePicker(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if m.pickerCursor < len(m.services)-1 {
 			m.pickerCursor++
 		}
+		m.pickerScrollIntoView()
 
 	case "k", "up":
 		if m.pickerCursor > 0 {
 			m.pickerCursor--
 		}
+		m.pickerScrollIntoView()
 
 	case " ":
 		if m.pickerCursor < len(m.pickerSel) {
@@ -662,7 +687,17 @@ func (m ReplayModel) renderPicker() string {
 	b.WriteString(rLabelStyle.Render(fmt.Sprintf("  Total:   %s lines", formatRate(float64(m.totalLines)))))
 	b.WriteString("\n\n")
 
-	for i, svc := range m.services {
+	visible := m.pickerVisibleLines()
+	end := m.pickerOffset + visible
+	if end > len(m.services) {
+		end = len(m.services)
+	}
+	if m.pickerOffset > 0 {
+		b.WriteString(rLabelStyle.Render(fmt.Sprintf("  ↑ %d more", m.pickerOffset)))
+		b.WriteString("\n")
+	}
+	for i := m.pickerOffset; i < end; i++ {
+		svc := m.services[i]
 		cursor := "  "
 		if i == m.pickerCursor {
 			cursor = "> "
@@ -681,9 +716,13 @@ func (m ReplayModel) renderPicker() string {
 		}
 		b.WriteString("\n")
 	}
+	if remaining := len(m.services) - end; remaining > 0 {
+		b.WriteString(rLabelStyle.Render(fmt.Sprintf("  ↓ %d more", remaining)))
+		b.WriteString("\n")
+	}
 
 	b.WriteString("\n")
-	b.WriteString(rLabelStyle.Render("  Space: toggle  |  a: toggle all  |  Enter: confirm  |  q: quit"))
+	b.WriteString(rLabelStyle.Render("  j/k: navigate  |  Space: toggle  |  a: toggle all  |  Enter: confirm  |  q: quit"))
 	b.WriteString("\n")
 
 	return b.String()
