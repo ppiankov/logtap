@@ -4,6 +4,12 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [1.9.10] - 2026-03-12
+
+### Added
+
+- Type-to-filter search in service picker — press `/` to search, narrows list by substring, `Esc` clears
+
 ## [1.9.9] - 2026-03-12
 
 ### Fixed
