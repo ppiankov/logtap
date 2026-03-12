@@ -4,6 +4,14 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [1.9.12] - 2026-03-12
+
+### Added
+
+- `--grep` now defaults to instant speed (load all lines immediately) — use `--speed 1` to override
+- `0` key in replay TUI jumps to instant speed
+- `]` past 64x now reaches instant speed
+
 ## [1.9.11] - 2026-03-12
 
 ### Fixed
