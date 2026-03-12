@@ -4,6 +4,15 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [1.9.14] - 2026-03-12
+
+### Added
+
+- `--dump` flag on `open` — prints matching lines to stdout without TUI, pipe to `grep`, `less`, `wc`, `jq`
+- `Enter` key in replay TUI opens line detail overlay — full timestamp, all labels, unwrapped message
+- `y` in detail overlay copies line as JSON to clipboard (pbcopy/xclip/xsel)
+- `n`/`N` in detail overlay navigates to next/previous line
+
 ## [1.9.13] - 2026-03-12
 
 ### Fixed
