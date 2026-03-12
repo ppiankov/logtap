@@ -33,6 +33,10 @@ func newOpenCmd() *cobra.Command {
 		Long:  "Open a capture directory written by logtap recv and replay it in a TUI with speed control and filters.\nUse --inject to add synthetic faults to the replay stream.\nUse --inject-out to write the modified stream as a new capture directory.",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			// default to instant speed when --grep is set and --speed was not explicit
+			if grepStr != "" && !cmd.Flags().Changed("speed") {
+				speedStr = "0"
+			}
 			return runOpen(args[0], speedStr, fromStr, toStr, labels, grepStr,
 				injectSpecs, injectAt, injectDur, injectOut, jsonOutput)
 		},

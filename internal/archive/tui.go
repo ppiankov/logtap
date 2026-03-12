@@ -285,6 +285,11 @@ func (m ReplayModel) updateNormal(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.feeder.TogglePause()
 		}
 
+	case "0":
+		if m.feeder != nil {
+			m.feeder.SetSpeed(SpeedInstant)
+		}
+
 	case "]":
 		if m.feeder != nil {
 			s := m.feeder.Speed()
@@ -292,6 +297,8 @@ func (m ReplayModel) updateNormal(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				// already instant, no faster
 			} else if s < 1 {
 				m.feeder.SetSpeed(SpeedRealtime)
+			} else if s >= 64 {
+				m.feeder.SetSpeed(SpeedInstant)
 			} else {
 				m.feeder.SetSpeed(s * 2)
 			}
@@ -736,6 +743,7 @@ func (m ReplayModel) renderHelp() []string {
 		h.Render("  Playback"),
 		d.Render("    Space      ") + "pause/resume",
 		d.Render("    [/]        ") + "decrease/increase speed",
+		d.Render("    0          ") + "instant speed (load all)",
 		"",
 		h.Render("  General"),
 		d.Render("    ?          ") + "toggle this help",
