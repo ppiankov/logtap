@@ -122,7 +122,7 @@ func (m ReplayModel) Init() tea.Cmd {
 	if !m.picker && m.feeder != nil {
 		m.feeder.Start()
 	}
-	return replayTickCmd()
+	return tea.Batch(replayTickCmd(), tea.EnableBracketedPaste)
 }
 
 // Update handles messages.
@@ -387,9 +387,13 @@ func (m ReplayModel) updatePicker(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				m.pickerApplyFilter()
 			}
 		default:
-			r := msg.String()
-			if len(r) == 1 && r[0] >= 32 {
-				m.pickerFilter += r
+			s := msg.String()
+			if msg.Paste {
+				// bracketed paste — append entire string
+				m.pickerFilter += s
+				m.pickerApplyFilter()
+			} else if len(s) == 1 && s[0] >= 32 {
+				m.pickerFilter += s
 				m.pickerApplyFilter()
 			}
 		}
@@ -520,8 +524,9 @@ func (m ReplayModel) updateExport(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 
 	default:
-		if len(msg.String()) == 1 {
-			m.exportInput += msg.String()
+		s := msg.String()
+		if msg.Paste || len(s) == 1 {
+			m.exportInput += s
 		}
 	}
 
@@ -548,8 +553,9 @@ func (m ReplayModel) updateTimeJump(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 
 	default:
-		if len(msg.String()) == 1 {
-			m.timeJumpInput += msg.String()
+		s := msg.String()
+		if msg.Paste || len(s) == 1 {
+			m.timeJumpInput += s
 		}
 	}
 
@@ -604,8 +610,11 @@ func (m ReplayModel) updateSearch(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 
 	default:
-		if len(msg.String()) == 1 {
-			m.searchInput += msg.String()
+		s := msg.String()
+		if msg.Paste {
+			m.searchInput += s
+		} else if len(s) == 1 {
+			m.searchInput += s
 		}
 	}
 
@@ -677,8 +686,9 @@ func (m ReplayModel) updateFilter(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 
 	default:
-		if len(msg.String()) == 1 {
-			m.filterInput += msg.String()
+		s := msg.String()
+		if msg.Paste || len(s) == 1 {
+			m.filterInput += s
 		}
 	}
 

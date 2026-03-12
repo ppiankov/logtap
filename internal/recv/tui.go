@@ -131,7 +131,7 @@ func NewTUIModel(stats *Stats, ring *LogRing, disk DiskReporter, diskCap int64, 
 
 // Init starts the tick timer.
 func (m TUIModel) Init() tea.Cmd {
-	return tickCmd()
+	return tea.Batch(tickCmd(), tea.EnableBracketedPaste)
 }
 
 // Update handles messages.
@@ -354,8 +354,9 @@ func (m TUIModel) updateExport(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 
 	default:
-		if len(msg.String()) == 1 {
-			m.exportInput += msg.String()
+		s := msg.String()
+		if msg.Paste || len(s) == 1 {
+			m.exportInput += s
 		}
 	}
 
@@ -393,8 +394,9 @@ func (m TUIModel) updateFilter(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 
 	default:
-		if len(msg.String()) == 1 {
-			m.filterInput += msg.String()
+		s := msg.String()
+		if msg.Paste || len(s) == 1 {
+			m.filterInput += s
 		}
 	}
 
@@ -421,8 +423,9 @@ func (m TUIModel) updateTimeJump(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 
 	default:
-		if len(msg.String()) == 1 {
-			m.timeJumpInput += msg.String()
+		s := msg.String()
+		if msg.Paste || len(s) == 1 {
+			m.timeJumpInput += s
 		}
 	}
 
@@ -506,8 +509,9 @@ func (m TUIModel) updateSearch(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 
 	default:
-		if len(msg.String()) == 1 {
-			m.searchInput += msg.String()
+		s := msg.String()
+		if msg.Paste || len(s) == 1 {
+			m.searchInput += s
 		}
 	}
 
