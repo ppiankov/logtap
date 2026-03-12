@@ -80,8 +80,13 @@ logtap untap --deployment api-gateway
 # Replay with filters
 logtap open ./capture --speed 10x
 logtap open ./capture --from 10:32 --to 10:45 --label app=gateway
-logtap open ./capture --grep "error" --dump              # print to stdout, no TUI
-logtap open ./capture --grep "error" --dump --json | jq . # pipe JSONL
+logtap open ./capture --grep "error" --dump                        # print to stdout, no TUI
+logtap open ./capture --grep "error" --dump --color=always | less -R # colored matches
+logtap open ./capture --grep "error" --dump -C 5                    # 5 lines context
+logtap open ./capture --grep "error" --dump --head 20               # first 20 matches
+logtap open ./capture --grep "error" --dump --count                 # match count only
+logtap open ./capture --dump --fields ts,container,msg              # custom columns
+logtap open ./capture --grep "error" --dump --json | jq .           # pipe JSONL
 
 # Export and search
 logtap export ./capture --format parquet --out capture.parquet

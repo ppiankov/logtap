@@ -53,9 +53,14 @@ logtap untap --deployment api-gateway
 ```bash
 logtap open ./capture --speed 10x
 logtap open ./capture --from 10:32 --to 10:45 --label app=gateway
-logtap open ./capture --grep "error" --dump            # print matches to stdout (no TUI)
-logtap open ./capture --grep "error" --dump --json      # JSONL output for jq
-logtap open ./capture --grep "timeout" --dump | wc -l   # count matches
+logtap open ./capture --grep "error" --dump                        # print matches to stdout
+logtap open ./capture --grep "error" --dump --color=always | less -R # colored matches
+logtap open ./capture --grep "error" --dump -C 5                    # 5 lines context
+logtap open ./capture --grep "error" --dump --head 20               # first 20 matches
+logtap open ./capture --grep "error" --dump --tail 10               # last 10 matches
+logtap open ./capture --grep "error" --dump --count                 # match count only
+logtap open ./capture --dump --fields ts,container,msg              # custom columns
+logtap open ./capture --grep "error" --dump --json | jq .           # JSONL for jq
 ```
 
 Flags:
@@ -68,6 +73,14 @@ Flags:
 | `--label` | | Label filter (key=value, repeatable) |
 | `--grep` | | Regex filter on log message |
 | `--dump` | `false` | Print matching lines to stdout, skip TUI |
+| `--color` | `auto` | Color output: `auto`, `always`, `never` (with `--dump`) |
+| `--context` / `-C` | `0` | Lines of context around each grep match (with `--dump`) |
+| `--before` / `-B` | `0` | Lines of context before each match |
+| `--after` / `-A` | `0` | Lines of context after each match |
+| `--head` | `0` | Print first N matches and exit (early termination) |
+| `--tail` | `0` | Print last N matches |
+| `--count` | `false` | Print match count only, skip formatting |
+| `--fields` | | Comma-separated columns: `ts`, `msg`, `<label-key>`, `all` |
 | `--json` | `false` | JSONL output (with `--dump` or `--inject-out`) |
 
 ### Export
